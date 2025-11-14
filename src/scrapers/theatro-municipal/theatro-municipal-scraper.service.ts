@@ -58,51 +58,71 @@ export class TheatroMunicipalScraperService
    * 🚀 INICIALIZAR BROWSER
    */
   private async initBrowser(): Promise<void> {
-    if (!this.browser) {
-      console.log('🚀 Iniciando Puppeteer...');
+    if (this.browser) {
+      this.log('⚠️ Browser já está inicializado');
+      return;
+    }
 
-      const executablePath = await this.findChrome();
+    try {
+      const chromePath = this.findChrome();
 
+      this.log('🚀 Iniciando Puppeteer...');
       this.browser = await puppeteer.launch({
-        executablePath,
-        headless: this.options.headless,
+        headless: true,
+        executablePath: chromePath,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--disable-blink-features=AutomationControlled',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--no-first-run',
+          '--mute-audio',
         ],
       });
 
-      console.log('✅ Browser iniciado');
+      this.log('✅ Browser inicializado com sucesso');
+    } catch (error) {
+      this.log(`❌ Erro ao inicializar browser: ${error.message}`, 'error');
+      throw error;
     }
   }
 
   /**
    * 🔍 ENCONTRAR CHROME
    */
-  private async findChrome(): Promise<string> {
+  private findChrome(): string {
     const possiblePaths = [
+      '/usr/bin/chromium-browser', // Alpine Linux (Docker)
+      '/usr/bin/chromium', // Algumas distros Linux
+      '/usr/bin/google-chrome-stable', // Google Chrome
       '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-      '/snap/bin/chromium',
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', // macOS
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', // Windows
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     ];
 
     for (const path of possiblePaths) {
       if (fs.existsSync(path)) {
-        console.log(`✅ Chrome encontrado em: ${path}`);
+        this.log(`✅ Chrome encontrado: ${path}`);
         return path;
       }
     }
 
+    // Usar variável de ambiente se configurada
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      this.log(
+        `✅ Usando Chrome do env: ${process.env.PUPPETEER_EXECUTABLE_PATH}`,
+      );
+      return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
     throw new Error(
-      'Chrome não encontrado. Por favor, instale o Google Chrome ou execute: npx puppeteer browsers install chrome',
+      'Chrome não encontrado. Certifique-se de que o Chromium está instalado no container.',
     );
   }
 
@@ -464,6 +484,14 @@ export class TheatroMunicipalScraperService
     const startTime = Date.now();
 
     try {
+      // ✅ RESETAR estado no início
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(), // ✅ ADICIONAR
+      };
+
       const scrapedEvents = await this.scrapeEvents();
 
       const allEvents: ScrapedEvent[] = [];
@@ -535,9 +563,15 @@ export class TheatroMunicipalScraperService
       };
     } finally {
       await this.cleanup();
+      // ✅ RESETAR estado após scraping
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(), // ✅ ADICIONAR AQUI TAMBÉM
+      };
     }
   }
-
   /**
    * 📅 HELPERS
    */

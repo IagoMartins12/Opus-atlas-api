@@ -2,6 +2,19 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
+# Instalar dependências do sistema para Puppeteer
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+# Configurar Puppeteer para usar Chromium instalado
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 # Copiar package files
 COPY package.json package-lock.json* ./
 
@@ -11,6 +24,15 @@ RUN npm ci --legacy-peer-deps
 # ==================== STAGE 2: Builder ====================
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Instalar dependências do sistema (necessário para build)
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
 
 # Copiar dependencies
 COPY --from=deps /app/node_modules ./node_modules
@@ -30,6 +52,20 @@ RUN npm prune --production --legacy-peer-deps
 # ==================== STAGE 3: Runner ====================
 FROM node:20-alpine AS runner
 WORKDIR /app
+
+# ✅ INSTALAR CHROME E DEPENDÊNCIAS
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    font-noto-emoji
+
+# ✅ CONFIGURAR PUPPETEER
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Criar usuário não-root
 RUN addgroup --system --gid 1001 nodejs && \

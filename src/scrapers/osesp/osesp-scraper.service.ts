@@ -12,12 +12,11 @@ import {
   detectEventType,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
-import { loadComposerCache } from '../../utils/composer-matcher';
 
 interface OSESPScraperOptions {
-  includeUpcomingEvents?: boolean; // Coleta de /concertos-ingressos
-  includeSeason?: boolean; // Coleta de /temporada-osesp
-  seasonYear?: number; // Ano da temporada (default: próximo ano)
+  includeUpcomingEvents?: boolean;
+  includeSeason?: boolean;
+  seasonYear?: number;
 }
 
 @Injectable()
@@ -44,71 +43,84 @@ export class OsespScraperService extends BaseScraper {
    * 🎯 MÉTODO PRINCIPAL - Scrape de eventos
    */
   async scrapeEvents(): Promise<ScrapedEvent[]> {
-    console.log('🎵 Starting OSESP Scraper...\n');
-    await loadComposerCache();
+    this.log('🎵 Starting OSESP Scraper...\n');
 
-    const allEventUrls: string[] = [];
+    try {
+      let eventCounter = 0;
 
-    // 1. Coleta eventos próximos (/concertos-ingressos)
-    if (this.options.includeUpcomingEvents) {
-      console.log('📅 Collecting upcoming events...');
-      const upcomingUrls = await this.scrapeUpcomingEvents();
-      allEventUrls.push(...upcomingUrls);
-      console.log(`   Found ${upcomingUrls.length} upcoming events`);
-    }
+      // 1. Coletar eventos próximos
+      this.log('📅 Collecting upcoming events...');
+      const upcomingEvents = await this.scrapeUpcomingEvents();
+      this.log(`   Found ${upcomingEvents.length} upcoming events`);
 
-    // 2. Coleta temporada futura (/temporada-osesp) com paginação
-    if (this.options.includeSeason) {
-      console.log(`📅 Collecting season ${this.options.seasonYear} events...`);
-      const seasonUrls = await this.scrapeSeasonEvents();
-      allEventUrls.push(...seasonUrls);
-      console.log(`   Found ${seasonUrls.length} season events`);
-    }
+      // 2. Coletar temporada
+      this.log(`📅 Collecting season ${this.options.seasonYear} events...`);
+      const seasonEvents = await this.scrapeSeasonEvents();
+      this.log(`   Found ${seasonEvents.length} season events\n`);
 
-    // Remove duplicatas
-    const uniqueUrls = [...new Set(allEventUrls)];
-    this.state.eventsFound = uniqueUrls.length;
+      // 3. Combinar e remover duplicatas
+      const allEventUrls = this.removeDuplicateUrls([
+        ...upcomingEvents,
+        ...seasonEvents,
+      ]);
 
-    console.log(`\n📋 Total unique events found: ${uniqueUrls.length}\n`);
+      this.log(`📋 Total unique events found: ${allEventUrls.length}\n`);
 
-    const events: ScrapedEvent[] = [];
-    let composerMatchCount = 0;
+      // 4. Processar cada evento
+      const processedEvents: ScrapedEvent[] = [];
 
-    for (const url of uniqueUrls) {
-      try {
-        await this.delay();
-        const event = await this.scrapeEventDetails(url);
+      for (const eventUrl of allEventUrls) {
+        eventCounter++;
 
-        if (event) {
-          events.push(event);
-          this.state.eventsScraped++;
+        try {
+          const event = await this.scrapeEventDetails(eventUrl);
 
-          if (event.composerNames.length > 0) {
-            composerMatchCount++;
-            console.log(
-              `✅ [${this.state.eventsScraped}/${uniqueUrls.length}] ${event.title} (${event.composerNames.length} composer(s))`,
-            );
-          } else {
-            console.log(
-              `⚠️  [${this.state.eventsScraped}/${uniqueUrls.length}] ${event.title} (no composers)`,
+          if (event) {
+            processedEvents.push(event);
+            const composerInfo =
+              event.composerNames.length > 0
+                ? `(${event.composerNames.length} composer(s))`
+                : '(no composers)';
+
+            this.log(
+              `${event.composerNames.length > 0 ? '✅' : '⚠️ '} [${eventCounter}/${allEventUrls.length}] ${event.title} ${composerInfo}`,
             );
           }
+
+          // Delay entre requisições
+          await this.delay(this.config.delayBetweenRequests);
+        } catch (error) {
+          this.state.errors.push(
+            `Error processing event ${eventCounter}: ${error.message}`,
+          );
+          this.log(
+            `❌ [${eventCounter}/${allEventUrls.length}] ${eventUrl}: ${error.message}`,
+          );
         }
-      } catch (error: any) {
-        console.error(`❌ Error scraping ${url}:`, error.message);
-        this.state.errors.push(`Failed to scrape ${url}: ${error.message}`);
       }
+
+      // ✅ Estatísticas finais
+      const eventsWithComposers = processedEvents.filter(
+        (e) => e.composerNames.length > 0,
+      ).length;
+
+      this.log(
+        `\n🎼 Composer detection: ${eventsWithComposers}/${processedEvents.length} events`,
+      );
+      this.log(`[${this.config.venueName}] `);
+
+      this.state.eventsFound = allEventUrls.length;
+      this.state.eventsScraped = processedEvents.length;
+
+      return processedEvents;
+    } catch (error) {
+      this.log(`❌ Fatal error in scrapeEvents: ${error.message}`);
+      throw error;
     }
-
-    console.log(
-      `\n🎼 Composer detection: ${composerMatchCount}/${events.length} events`,
-    );
-
-    return events;
   }
 
   /**
-   * ✅ Coleta eventos da página "Concertos e Ingressos" (eventos próximos)
+   * ✅ Coleta eventos da página "Concertos e Ingressos"
    */
   private async scrapeUpcomingEvents(): Promise<string[]> {
     const html = await this.fetchWithRetry(
@@ -119,7 +131,7 @@ export class OsespScraperService extends BaseScraper {
   }
 
   /**
-   * ✅ NOVO: Coleta eventos da "Temporada" com paginação automática
+   * ✅ Coleta eventos da "Temporada" com paginação
    */
   private async scrapeSeasonEvents(): Promise<string[]> {
     const allUrls: string[] = [];
@@ -129,32 +141,32 @@ export class OsespScraperService extends BaseScraper {
     while (hasMorePages) {
       try {
         const url = `${this.config.baseUrl}/osesp/pt/temporada-osesp?pageconcerts=${currentPage}`;
-        console.log(`   📄 Fetching page ${currentPage}...`);
+        this.log(`   📄 Fetching page ${currentPage}...`);
 
         const html = await this.fetchWithRetry(url);
         const pageUrls = this.extractEventUrlsFromPage(html);
 
         if (pageUrls.length === 0) {
-          console.log(
+          this.log(
             `   ✓ No more events found. Stopping at page ${currentPage - 1}.`,
           );
           hasMorePages = false;
         } else {
           allUrls.push(...pageUrls);
-          console.log(`   ✓ Page ${currentPage}: ${pageUrls.length} events`);
+          this.log(`   ✓ Page ${currentPage}: ${pageUrls.length} events`);
           currentPage++;
 
           // Delay entre páginas
           await this.delay(1500);
         }
 
-        // ✅ Safety check: limite máximo de páginas (evita loop infinito)
+        // Safety check
         if (currentPage > 20) {
-          console.warn(`   ⚠️  Reached max page limit (20). Stopping.`);
+          this.log(`   ⚠️  Reached max page limit (20). Stopping.`);
           hasMorePages = false;
         }
       } catch (error: any) {
-        console.error(`   ❌ Error on page ${currentPage}:`, error.message);
+        this.log(`   ❌ Error on page ${currentPage}: ${error.message}`);
         hasMorePages = false;
       }
     }
@@ -164,7 +176,6 @@ export class OsespScraperService extends BaseScraper {
 
   /**
    * ✅ Extrai URLs de eventos de uma página HTML
-   * (Funciona para ambas: /concertos-ingressos e /temporada-osesp)
    */
   private extractEventUrlsFromPage(html: string): string[] {
     const $ = cheerio.load(html);
@@ -172,7 +183,6 @@ export class OsespScraperService extends BaseScraper {
 
     $('.card[data-astro-cid-np5upjzn], .card').each((_, element) => {
       const $card = $(element);
-
       const link = $card.find('a[href*="/concerto/"]').first().attr('href');
 
       if (link) {
@@ -188,15 +198,16 @@ export class OsespScraperService extends BaseScraper {
           eventUrls.push(fullUrl);
         }
       }
-
-      // Ignora links externos
-      const externalLink = $card.find('a[href*="sympla"]').attr('href');
-      if (externalLink) {
-        console.log(`   ⏭️  Skipping external link: ${externalLink}`);
-      }
     });
 
     return eventUrls;
+  }
+
+  /**
+   * ✅ Remove URLs duplicadas
+   */
+  private removeDuplicateUrls(urls: string[]): string[] {
+    return [...new Set(urls)];
   }
 
   /**
@@ -215,12 +226,12 @@ export class OsespScraperService extends BaseScraper {
     const program = this.extractProgram($);
 
     if (!title || !date) {
-      console.warn('⚠️ Skipping event (missing title or date):', url);
+      this.log(`⚠️ Skipping event (missing title or date): ${url}`);
       return null;
     }
 
     const type = detectEventType(title, description);
-    const textForComposers = `${title}${description}${program}`;
+    const textForComposers = `${title} ${description} ${program}`;
     let composerNames = extractComposerNames(textForComposers);
 
     // Remover falsos positivos
@@ -250,8 +261,8 @@ export class OsespScraperService extends BaseScraper {
       endDate: null,
       endTime: null,
       venueDetails: venue,
-      ticketUrl: ticketUrl || url, // URL de ingressos (Sympla ou página)
-      externalUrl: url, // ✅ URL da página do evento
+      ticketUrl: ticketUrl || url,
+      externalUrl: url,
       ticketInfo: isFree ? 'Entrada gratuita' : ticketInfo,
       externalId,
       imageUrl,
@@ -417,11 +428,19 @@ export class OsespScraperService extends BaseScraper {
     const startTime = Date.now();
 
     try {
+      // ✅ RESETAR estado antes de iniciar
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(), // ✅ ADICIONAR
+      };
+
       // 1. Fazer o scraping
       const scrapedEvents = await this.scrapeEvents();
 
       // 2. Verificar duplicatas no banco
-      const allEvents: ScrapedEvent[] = []; // ✅ RETORNAR TODOS
+      const allEvents: ScrapedEvent[] = [];
       let duplicates = 0;
 
       for (const event of scrapedEvents) {
@@ -442,7 +461,6 @@ export class OsespScraperService extends BaseScraper {
 
         if (existingEvent) {
           duplicates++;
-          // ✅ Adicionar evento duplicado com flag
           allEvents.push({
             ...event,
             isDuplicate: true,
@@ -451,7 +469,6 @@ export class OsespScraperService extends BaseScraper {
           } as any);
           this.log(`⚠️ Duplicata detectada: ${event.title}`);
         } else {
-          // ✅ Adicionar evento novo
           allEvents.push({
             ...event,
             isDuplicate: false,
@@ -464,7 +481,7 @@ export class OsespScraperService extends BaseScraper {
       this.log(`
       📊 Resumo:
       - Total scraped: ${scrapedEvents.length}
-      - Novos eventos: ${allEvents.filter((e) => !e.isDuplicate).length}
+      - Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
       - Duplicatas: ${duplicates}
       - Tempo: ${executionTime}ms
     `);
@@ -475,11 +492,12 @@ export class OsespScraperService extends BaseScraper {
         eventsScraped: this.state.eventsScraped,
         newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
         duplicates,
-        events: allEvents, // ✅ RETORNAR TODOS OS EVENTOS
+        events: allEvents,
         errors: this.state.errors,
         executionTime,
       };
     } catch (error) {
+      this.log(`❌ Erro no scraping: ${error.message}`, 'error');
       return {
         success: false,
         eventsFound: 0,
@@ -489,6 +507,14 @@ export class OsespScraperService extends BaseScraper {
         events: [],
         errors: [error instanceof Error ? error.message : String(error)],
         executionTime: Date.now() - startTime,
+      };
+    } finally {
+      // ✅ RESETAR estado após scraping
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(), // ✅ ADICIONAR
       };
     }
   }
