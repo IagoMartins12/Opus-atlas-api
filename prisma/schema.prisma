@@ -1,0 +1,3472 @@
+// schema.prisma - Schema atualizado com sistema completo de cascade deletions
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Enums existentes (mantendo todos iguais)
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum PracticeFocus {
+  TECHNICAL
+  EXPRESSIVITY
+  PRECISION
+  SIGHT_READING
+  MEMORIZATION
+  PERFORMANCE
+  REVIEW
+}
+
+enum WorkType {
+  INDIVIDUAL
+  COMPLETE_WORK
+  ARRANGEMENT
+  COLLECTION
+  COLLABORATION
+  COMPOSITION
+  COLLECTED_WORKS
+  COLLECTIONS_WITH
+}
+
+enum UserType {
+  MUSIC_STUDENT
+  CASUAL_USER
+  PROFESSIONAL
+  TEACHER
+}
+
+enum AnnotationType {
+  TEXT_NOTE
+  HIGHLIGHT
+  DRAWING
+  BOOKMARK
+  FINGERING
+  BOWINGS
+  DYNAMICS
+  TEMPO_MARK
+}
+
+enum IMSLPScoreType {
+  SCORES
+  PARTS
+  ARRANGEMENTS
+  LIBRETTOS
+  OTHERS
+  SOURCES
+}
+
+enum ScoreSource {
+  IMSLP // Do IMSLP
+  CUSTOM // Adicionado manualmente
+  UPLOAD // Upload do usuário
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AnnotationCategory {
+  TECHNIQUE // Técnica (dedilhado, articulação, etc.)
+  INTERPRETATION // Interpretação (dinâmica, fraseado, etc.)
+  THEORY // Teoria (harmonia, forma, análise)
+  PRACTICE_TIP // Dicas de estudo
+  PERFORMANCE // Performance e palco
+  HISTORICAL // Contexto histórico
+  GENERAL // Anotação geral
+}
+
+enum AnnotationDifficulty {
+  BEGINNER // Para iniciantes
+  INTERMEDIATE // Para nível intermediário  
+  ADVANCED // Para avançados
+  ALL_LEVELS // Para todos os níveis
+}
+
+enum AnnotationScope {
+  SPECIFIC_MEASURE // Compasso específico
+  SECTION // Seção da obra
+  MOVEMENT // Movimento inteiro
+  ENTIRE_WORK // Obra inteira
+}
+
+enum AdType {
+  BANNER
+  VIDEO
+  CARD
+  SIDEBAR
+  NATIVE
+  POPUP
+}
+
+enum AdPlacement {
+  HEADER
+  SIDEBAR_LEFT
+  SIDEBAR_RIGHT
+  CONTENT_TOP
+  CONTENT_BOTTOM
+  BETWEEN_CONTENT
+  FOOTER
+  MODAL
+}
+
+enum AdStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  SCHEDULED
+  EXPIRED
+}
+
+enum AdTargetType {
+  GENERAL // Publicidade geral
+  INSTRUMENT // Por instrumento específico
+  USER_LEVEL // Por nível do usuário (geral, professor, estudante)
+}
+
+enum AdUserLevel {
+  ALL // Todos os usuários
+  STUDENT // Apenas estudantes (role 0)
+  TEACHER // Apenas professores (role 1)
+}
+
+enum SubscriptionStatus {
+  PENDING // Aguardando confirmação (double opt-in)
+  ACTIVE // Inscrito ativo
+  UNSUBSCRIBED // Cancelou inscrição
+  BOUNCED // Email com bounce
+  BLOCKED // Bloqueado por spam/abuse
+}
+
+enum EmailTemplateType {
+  WELCOME // Email de boas-vindas
+  WEEKLY_DIGEST // Resumo semanal
+  NEW_COMPOSER // Novo compositor adicionado
+  NEW_WORK // Nova obra adicionada
+  STUDY_REMINDER // Lembrete de estudo
+  CUSTOM_CAMPAIGN // Campanha personalizada
+  UNSUBSCRIBE // Confirmação de cancelamento
+  UNSUBSCRIBE_CONFIRMATION
+  PASSWORD_RESET
+  ACCOUNT_CONFIRMATION
+}
+
+enum CampaignStatus {
+  DRAFT // Rascunho
+  SCHEDULED // Agendada
+  SENDING // Enviando
+  SENT // Enviada
+  PAUSED // Pausada
+  CANCELLED // Cancelada
+  FAILED // Falhou
+}
+
+enum EmailEventType {
+  SENT // Email enviado
+  DELIVERED // Entregue
+  OPENED // Aberto
+  CLICKED // Clicou em link
+  BOUNCED // Retornou (bounce)
+  COMPLAINED // Marcado como spam
+  UNSUBSCRIBED // Cancelou inscrição
+}
+
+enum TokenType {
+  EMAIL_CONFIRMATION
+  PASSWORD_RESET
+  NEWSLETTER_CONFIRMATION
+  NEWSLETTER_UNSUBSCRIBE
+  EMAIL_CHANGE
+  TEACHER_INVITATION_ACCEPT
+  TEACHER_INVITATION_DECLINE
+  STUDENT_INVITATION_ACCEPT
+  STUDENT_INVITATION_DECLINE
+  STUDENT_INVITATION
+}
+
+enum StudentInviteStatus {
+  PENDING // Convite enviado, aguardando resposta
+  ACCEPTED // Convite aceito
+  DECLINED // Convite recusado
+  EXPIRED // Convite expirado
+}
+
+// ENUMS PARA O SISTEMA PROFESSOR-ALUNO
+enum LessonStatus {
+  SCHEDULED // Agendada
+  COMPLETED // Concluída
+  CANCELLED // Cancelada
+  NO_SHOW // Aluno faltou
+  RESCHEDULED // Reagendada
+}
+
+enum LessonType {
+  INDIVIDUAL // Aula individual
+  GROUP // Aula em grupo
+  THEORY // Teoria musical
+  PRACTICE // Aula prática
+  MASTERCLASS // Masterclass
+}
+
+enum RecurrenceType {
+  WEEKLY // Semanal
+  BIWEEKLY // Quinzenal
+  MONTHLY // Mensal
+  TWICE_WEEKLY // 2x por semana
+  NONE // Sem recorrência
+}
+
+enum StudentStatus {
+  ACTIVE // Ativo
+  INACTIVE // Inativo
+  PAUSED // Pausado temporariamente
+  TRIAL // Período de teste
+}
+
+enum TeacherStatus {
+  ACTIVE // Ativo
+  INACTIVE // Inativo
+  PENDING // Aguardando aprovação
+}
+
+enum AssignmentStatus {
+  PENDING // Pendente
+  IN_PROGRESS // Em andamento
+  COMPLETED // Concluída
+  OVERDUE // Atrasada
+}
+
+enum NotificationType {
+  // NOTIFICAÇÕES AUTOMÁTICAS (mantidas no check/route.ts)
+  LESSON_STARTING_SOON // 30min antes da aula
+  LESSON_TOMORROW // 24h antes da aula
+  ASSIGNMENT_DUE_SOON // 2h antes do vencimento
+  ASSIGNMENT_DUE_TOMORROW // 24h antes do vencimento
+  ASSIGNMENT_OVERDUE // Tarefa já atrasada
+  LESSON_STATUS_PENDING // Aula passou sem status atualizado
+
+  // NOTIFICAÇÕES PARA ESTUDANTES (eventos reais)
+  TEACHER_GAVE_FEEDBACK // Professor deu feedback na tarefa
+  LESSON_CANCELLED_BY_TEACHER // Professor cancelou aula
+  LESSON_RESCHEDULED_BY_TEACHER // Professor reagendou aula
+  LESSON_MARKED_NO_SHOW // Professor marcou falta
+  NEW_ASSIGNMENT_CREATED // Professor criou nova tarefa
+  ASSIGNMENT_UPDATED_BY_TEACHER // Professor alterou tarefa
+  NEW_LESSON_SCHEDULED // Nova aula agendada (só PAI ou solo)
+
+  // 🆕 NOVA: Parabéns por aceitar ser aluno
+  WELCOME_NEW_STUDENT // Parabéns por aceitar ser aluno de um professor
+
+  // NOTIFICAÇÕES PARA PROFESSORES (eventos reais)
+  STUDENT_SUBMITTED_ASSIGNMENT // Aluno enviou submissão
+  STUDENT_COMPLETED_ASSIGNMENT // Aluno completou tarefa
+  STUDENT_GAVE_LESSON_FEEDBACK // Aluno deu feedback na aula
+  STUDENT_INFORMED_ABSENCE // Aluno informou ausência
+  STUDENT_REQUESTED_RESCHEDULE // Aluno solicitou reagendamento
+
+  // 🆕 NOVAS: Para professores
+  WELCOME_NEW_TEACHER // Parabéns por se tornar professor
+  STUDENT_DECLINED_INVITE // Aluno declinou convite para ser aluno
+  STUDENT_ACCEPTED_INVITE
+  // NOTIFICAÇÕES ANTIGAS (manter para compatibilidade)
+  LESSON_NO_SHOW
+  ASSIGNMENT_FEEDBACK_NEEDED // 🗑️ SERÁ REMOVIDA do check/route.ts
+  ASSIGNMENT_COMPLETED
+  STUDENT_INVITE_PENDING
+  STUDENT_MULTIPLE_LATE
+  NEW_STUDENT_FEEDBACK // 🗑️ SERÁ REMOVIDA do check/route.ts
+  WEEKLY_REPORT_AVAILABLE
+  PRACTICE_REMINDER
+  SYSTEM_MAINTENANCE
+  GENERAL_ANNOUNCEMENT
+}
+
+enum NotificationPriority {
+  LOW // Azul - informativo
+  MEDIUM // Amarelo - importante 
+  HIGH // Vermelho - urgente
+  CRITICAL // Vermelho piscando - crítico
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  DISMISSED
+  EXPIRED
+}
+
+enum SchoolActivityAction {
+  // AÇÕES DO PROFESSOR
+  STUDENT_ADDED // Cadastrou novo aluno
+  LESSON_CREATED // Criou nova aula
+  LESSON_UPDATED // Editou aula existente
+  LESSON_STATUS_CHANGED // Alterou status da aula (cancelou, deu falta, remarcou)
+  ASSIGNMENT_CREATED // Criou nova tarefa
+  ASSIGNMENT_UPDATED // Editou tarefa
+  ASSIGNMENT_FEEDBACK_GIVEN // Deu feedback e concluiu tarefa
+  LESSON_NOTES_ADDED // Adicionou anotações na aula
+  TEACHER_PROFILE_UPDATED // Alterou dados do perfil de professor
+  USER_PROFILE_UPDATED // Alterou dados do perfil de usuário
+
+  // AÇÕES DO ALUNO
+  ASSIGNMENT_SUBMISSION // Enviou video/arquivo na tarefa
+  ASSIGNMENT_COMPLETED // Completou tarefa
+  LESSON_FEEDBACK_GIVEN // Deu feedback de aula
+  LESSON_RESCHEDULE_REQUESTED // Solicitou reagendamento
+  LESSON_ABSENCE_INFORMED // Informou ausência
+  LESSON_COMPLETED // Concluiu aula
+  STUDENT_PROFILE_UPDATED // Alterou perfil de aluno
+}
+
+enum AchievementCategory {
+  LEARNING // Conquistas de aprendizado
+  FAVORITES // Conquistas de favoritos  
+  ANNOTATIONS // Conquistas de anotações
+  GENERAL // Conquistas gerais
+  SOCIAL // Conquistas sociais
+  MILESTONE // Conquistas de marco
+}
+
+enum AchievementRarity {
+  COMMON // Bronze - 10 XP
+  RARE // Prata - 25 XP  
+  EPIC // Ouro - 50 XP
+  LEGENDARY // Diamante - 100 XP
+}
+
+enum ActivityLogType {
+  // Favoritos
+  FAVORITE_COMPOSER
+  UNFAVORITE_COMPOSER
+  FAVORITE_WORK
+  UNFAVORITE_WORK
+  FAVORITE_SCORE
+  UNFAVORITE_SCORE
+  
+  // Aprendizado
+  ADD_WANT_TO_LEARN
+  REMOVE_WANT_TO_LEARN
+  UPDATE_WANT_TO_LEARN
+  ADD_LEARNED
+  REMOVE_LEARNED
+  UPDATE_LEARNED
+  SELECT_SCORE_WANT_TO_LEARN
+  SELECT_SCORE_LEARNED
+  
+  // Anotações
+  CREATE_ANNOTATION
+  UPDATE_ANNOTATION
+  DELETE_ANNOTATION
+  VOTE_ANNOTATION_HELPFUL
+  VOTE_ANNOTATION_NOT_HELPFUL
+  
+  // Moderação
+  REPORT_UPLOAD
+  
+  // Uploads
+  UPLOAD_VIDEO
+  DELETE_VIDEO
+  
+  // Perfil
+  UPDATE_PROFILE
+  
+  // Visualizações (opcional - para futuro)
+  VIEW_COMPOSER
+  VIEW_WORK
+  VIEW_SCORE
+  GENERATE_BIO
+}
+
+enum PlanType {
+  FREE
+  PLUS
+  MENTOR
+  MAESTRO
+}
+
+enum BillingPeriod {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionPlanStatus {
+  TRIAL        // Período de teste
+  ACTIVE       // Ativa e paga
+  CANCELLED    // Cancelada (acesso até o fim do período)
+  EXPIRED      // Expirada
+  PAST_DUE     // Pagamento atrasado
+}
+
+enum PaymentStatus {
+  PENDING      // Aguardando pagamento
+  APPROVED     // Aprovado
+  REJECTED     // Rejeitado
+  REFUNDED     // Reembolsado
+  CANCELLED    // Cancelado
+  IN_PROCESS   // Em processamento (MP)
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  PIX
+  BOLETO
+  MERCADO_PAGO_WALLET
+}
+
+enum InvoiceStatus {
+  PENDING      // Pendente
+  PAID         // Paga
+  OVERDUE      // Vencida
+  CANCELLED    // Cancelada
+}
+
+enum CouponType {
+  PERCENTAGE   // Desconto percentual
+  FIXED        // Valor fixo
+  FREE_TRIAL   // Trial grátis estendido
+}
+enum BillingPeriodType {
+  MONTHLY
+  QUARTERLY
+  BIANNUAL
+  YEARLY
+}
+
+// ==================== BLOG ENUMS ====================
+enum ArticleType {
+  COMPOSER_ANALYSIS      // Análise de Compositor
+  WORK_ANALYSIS         // Análise de Obra
+  INSTRUMENT_GUIDE      // Guia de Instrumentos
+  MUSIC_HISTORY         // História da Música (inclui estilos como ópera)
+  TUTORIAL              // Tutorial/Guia Prático
+  TOP_LIST              // Lista/Top 10
+  INTERVIEW             // Entrevista
+  NEWS                  // Notícia
+  CURIOSITY             // Curiosidades
+  PERFORMANCE_VIDEO     // Vídeo de Performance
+  CONCERT_GUIDE         // Guia de Concerto
+  GENERAL               // Artigo Geral (sem tipo específico)
+}
+
+enum ArticleStatus {
+  DRAFT        // Rascunho (só autor vê)
+  REVIEW       // Em revisão (co-autores podem ver)
+  SCHEDULED    // Agendado para publicação futura
+  PUBLISHED    // Publicado
+  ARCHIVED     // Arquivado (não aparece mais)
+}
+
+enum MediaType {
+  IMAGE        // Foto
+  VIDEO        // Vídeo (YouTube/Vimeo)
+  AUDIO        // Áudio (para música de fundo)
+}
+
+enum CommentStatus {
+  PENDING      // Aguardando moderação (se moderação prévia)
+  APPROVED     // Aprovado
+  REJECTED     // Rejeitado
+  FLAGGED      // Reportado por usuários
+  SPAM
+}
+
+enum BlockType {
+  // Blocos especiais do editor
+  PARAGRAPH           // Parágrafo normal
+  HEADING             // Título (H1, H2, H3)
+  IMAGE               // Imagem inline
+  VIDEO               // Vídeo inline
+  GALLERY             // Galeria de fotos
+  VIDEO_GALLERY       // Galeria de vídeos
+  SCORE_VIEWER        // Visualizador de partitura
+  AUDIO_PLAYER        // Player de obra específica
+  COMPOSER_CARD       // Card rico do compositor
+  WORK_CARD           // Card rico da obra
+  TIMELINE            // Timeline de eventos
+  VIDEO_COMPARISON    // Comparação de 2 performances
+  QUOTE_MUSICAL       // Citação com áudio de fundo
+  ACCORDION           // Acordeão/Collapsible
+  TABS                // Abas
+  COLUMNS             // Colunas (2 ou 3)
+  CODE                // Código (notação musical)
+  TABLE               // Tabela
+  BLOCKQUOTE          // Citação
+  LIST                // Lista (bullets ou números)
+}
+
+model User {
+  id             String    @id @default(auto()) @map("_id") @db.ObjectId
+  firstName      String?
+  lastName       String?
+  username       String?   @unique
+  email          String?   @unique
+  emailVerified  DateTime?
+  hashedPassword String?
+  image          String?
+  bio            String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  role Int @default(0) //0 = usuario comum 2, 1 = admin 2 = super admin
+
+  userType            UserType?
+  onboardingCompleted Boolean   @default(false)
+
+  city             String?
+  state            String?
+  country          String?
+  // 🆕 CAMPOS DE TELEFONE
+  phone            String? // Telefone completo em formato E.164 (+5511999999999)
+  phoneCountryCode String? // Código do país (BR, US, etc.)
+  phoneNumber      String? // Apenas o número sem código do país
+
+  favoriteComposerId String? @db.ObjectId
+  favoriteEpochId    String? @db.ObjectId
+
+  experienceLevel     DifficultyLevel @default(BEGINNER)
+  practiceTimePerWeek Int?
+
+  profilePublic Boolean @default(true)
+  showLocation  Boolean @default(false)
+
+  // Anotações relacionadas
+  workAnnotations   WorkAnnotation[]
+  annotationVotes   AnnotationHelpfulVote[]
+  verifiedComposers Composer[]              @relation("VerifiedComposers")
+
+  // Estatísticas de contribuição
+  helpfulAnnotationsCount Int @default(0) // Cache de anotações úteis
+  totalAnnotationsCount   Int @default(0) // Cache total de anotações
+
+  // 🔄 RELAÇÕES DE MODERAÇÃO - ATUALIZADAS COM CASCADE
+  reportedUploads     UploadModeration[]    @relation("ReportedUploads")
+  moderatedUploads    UploadModeration[]    @relation("ModeratedUploads")
+  uploadHistory       UploadHistory[]
+  generatedReports    GeneratedReport[]     @relation("GeneratedReports")
+  notifications       Notification[]        @relation("UserNotifications")
+  schoolActivities    SchoolActivity[]      @relation("UserSchoolActivities")
+  achievements        UserAchievement[]     @relation("UserAchievements")
+  achievementProgress AchievementProgress[] @relation("AchievementProgress")
+  // 🆕 RELAÇÕES DE ASSINATURA
+  subscriptions   Subscription[]  @relation("UserSubscriptions")
+  couponUsages    CouponUsage[]   @relation("UserCouponUsages")
+  
+  // 🆕 CACHE DO PLANO ATUAL (para performance)
+  currentPlan     PlanType        @default(FREE)
+  planExpiresAt   DateTime?       // Data de expiração do plano
+  isTrialActive   Boolean         @default(false)
+
+  blogArticles       BlogArticle[]      @relation("BlogAuthor")
+  blogComments       BlogComment[]      @relation("BlogComments")
+  blogCommentLikes   BlogCommentLike[]  @relation("BlogCommentLikes")
+  blogLikes          BlogLike[]         @relation("BlogLikes")
+  blogBookmarks      BlogBookmark[]     @relation("BlogBookmarks")
+  activityLogs ActivityLog[] @relation("UserActivityLogs")
+
+  // 🆕 CACHE DE XP (opcional)
+  totalXP      Int @default(0) // Cache do XP total do usuário
+  // Estatísticas de upload
+  totalUploads Int @default(0)
+  uploadScore  Int @default(0) // Score baseado na qualidade dos uploads
+
+  // Relations
+  accounts Account[]
+  sessions Session[]
+  tokens   UserToken[]
+
+  isTeacher Boolean @default(false)
+  isStudent Boolean @default(false)
+
+  // Relações:
+  teacherProfile Teacher?
+  studentProfile Student?
+
+  // 🔄 RELAÇÕES DE CRIAÇÃO - ATUALIZADAS PARA SetNull
+  createdWorks     Work[]      @relation("UserCreatedWorks")
+  createdComposers Composer[]  @relation("UserCreatedComposers")
+  createdScores    WorkScore[] @relation("UserCreatedScores")
+
+  favoriteComposer Composer? @relation("FavoriteComposer", fields: [favoriteComposerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  favoriteEpoch    Epoch?    @relation("FavoriteEpoch", fields: [favoriteEpochId], references: [id])
+
+  // 🔄 RELAÇÕES DE ANÚNCIOS - ATUALIZADAS PARA SetNull
+  adStats AdStats[] @relation("AdStatsUser")
+
+  // 🔄 RELAÇÕES DE NEWSLETTER - ATUALIZADA COM CASCADE
+  newsletterSubscription NewsletterSubscriber? @relation("NewsletterSubscriber")
+  eventReminders EventReminder[] @relation("UserEventReminders")
+
+  favoriteScores FavoriteScore[]
+
+  instruments       UserInstrument[]
+  annotations       Annotation[]
+  favoriteWorks     FavoriteWork[]
+  favoriteComposers FavoriteComposer[]
+  wantToLearn       WantToLearn[]
+  learned           Learned[]
+
+  @@index([userType])
+  @@index([onboardingCompleted])
+  @@index([uploadScore])
+}
+
+model WorkScore {
+  id       String      @id @default(auto()) @map("_id") @db.ObjectId
+  workId   String      @db.ObjectId
+  sourceId String // ID da partitura na fonte (IMSLP ID, custom ID, etc.)
+  source   ScoreSource @default(IMSLP)
+
+  // Dados básicos da partitura
+  title       String
+  downloadUrl String?
+  fileSize    String?
+  pageCount   String?
+  fileFormat  String  @default("PDF")
+
+  // Metadados IMSLP
+  editor       String?
+  publisher    String?
+  copyright    String?
+  thumbnailUrl String?
+  uploadDate   String?
+  uploader     String?
+  notes        String?
+
+  // Classificação e organização
+  type       IMSLPScoreType @default(SCORES)
+  groupIndex Int?           @default(0)
+  groupTitle String?
+
+  // Métricas do IMSLP
+  rating        Float?
+  ratingsCount  Int?
+  downloadCount Int?
+
+  // 🔄 RELAÇÃO COM USUÁRIO CRIADOR - ATUALIZADA PARA SetNull
+  createdByUser User? @relation("UserCreatedScores", fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  // 🔄 RELAÇÕES ATUALIZADAS PARA SetNull
+  wantToLearnSelections WantToLearn[] @relation("WantToLearnSelectedScore")
+  learnedSelections     Learned[]     @relation("LearnedSelectedScore")
+
+  // Campos de qualidade e verificação
+  dataQuality        String? // "high", "medium", "low"
+  verificationStatus String? // "verified", "pending", "disputed"
+  verifiedBy         String?   @db.ObjectId
+  verifiedAt         DateTime?
+
+  // Metadados de edição
+  lastEditedBy String?   @db.ObjectId
+  lastEditedAt DateTime?
+  editHistory  Json? // Histórico de edições
+
+  // Campos técnicos melhorados
+  qualityScore Int? // Score de qualidade (1-100)
+
+  // Dados customizados (para partituras não-IMSLP)
+  isCustom   Boolean @default(false)
+  uploadedBy String? @db.ObjectId // ID do usuário que fez upload
+  customData Json? // Dados extras específicos
+
+  // Cache e controle
+  isActive     Boolean  @default(true)
+  isVerified   Boolean  @default(false)
+  lastVerified DateTime @default(now())
+  lastAccessed DateTime @default(now())
+  accessCount  Int      @default(0)
+
+  // Campos para sistema incremental
+  imslpTotalCounts String? // JSON com totais reais do IMSLP por tipo
+
+  // Status de processamento
+  processingStatus ProcessingStatus @default(PENDING)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  // Índices otimizados para performance
+  @@unique([workId, sourceId, source], name: "workId_sourceId_source")
+  @@index([workId, isActive])
+  @@index([workId, type, groupIndex])
+  @@index([source, processingStatus])
+  @@index([isActive])
+  @@index([lastAccessed, isActive])
+  @@index([imslpTotalCounts])
+  @@index([uploadedBy])
+  @@index([dataQuality])
+  @@index([verificationStatus])
+  @@index([qualityScore])
+  // ÍNDICES CRÍTICOS PARA PERFORMANCE
+  @@index([workId, isActive, createdAt]) // Para contagens de scores ativos
+  @@index([isActive, workId]) // Para verificação rápida de existência
+  @@index([workId, isActive, type]) // Para contagem por tipo
+  @@index([processingStatus, isActive]) // Para manutenção
+  // PARA JOINS COM WORK
+  @@index([workId, isActive, source]) // Source filtering otimizado
+  @@map("work_scores")
+}
+
+model UserToken {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String?   @db.ObjectId // OPCIONAL para tokens anônimos
+  type      TokenType
+  token     String    @unique
+  expiresAt DateTime
+  used      Boolean   @default(false)
+  metadata  Json? // Dados extras se necessário
+  ipAddress String? // IP que solicitou
+  userAgent String? // User agent que solicitou
+
+  // NOVOS CAMPOS para identificação anônima
+  anonymousEmail String? // Email do usuário anônimo (para newsletter)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // RELAÇÃO OPCIONAL
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Índices
+  @@index([type, expiresAt])
+  @@index([userId, type])
+  @@index([anonymousEmail])
+  @@map("user_tokens")
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.String
+  access_token      String? @db.String
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.String
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Composer {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  name     String
+  fullName String
+
+  // Nomes alternativos da página IMSLP
+  alternativeNames String? // Nomes alternativos/Transliterações
+
+  // Datas melhoradas - podem conter dia/mês/ano
+  birthDate String? // Ex: "31 de janeiro de 1797", "1797", "January 31, 1797"
+  deathDate String? // Ex: "28 de novembro de 1828", "1828", "November 28, 1828"
+
+  portraitUrl   String?
+  epochId       String  @db.ObjectId
+  epochName     String?
+  bio           String?
+  videoUrl      String?
+  // Dados IMSLP
+  permLinkImslp String?
+  imslpId       String?
+  wikipediaLink String?
+
+  // Dados estatísticos e geográficos
+  nationality String? // País/nacionalidade (ex: "German", "Austrian", "Brazilian")
+  instruments String? // Instrumentos associados (ex: "Piano, Violin, Orchestra")
+
+  // Categorias e classificações IMSLP
+  imslpCategories String? // Categorias do IMSLP (ex: "Romantic composers, German composers, Pianists")
+
+  // Metadados da página IMSLP
+  pageQuality String? // Qualidade da página: "high", "medium", "low"
+
+  // Dados de cache e verificação
+  lastVerified     DateTime @default(now())
+  dataCompleteness Float? // Porcentagem de completude dos dados (0-100)
+  hasValidImage    Boolean  @default(false) // Se tem imagem válida (não placeholder)
+
+  createdBy String? @db.ObjectId
+  isCustom  Boolean @default(false)
+
+  // Campos de qualidade e verificação
+  dataQuality        String? // "high", "medium", "low"
+  verificationStatus String? // "verified", "pending", "disputed"
+  verifiedBy         String?   @db.ObjectId
+  verifiedAt         DateTime?
+  dataSource         String?   @default("none") // 'none', 'imslp', 'wikipedia'
+  isVerified         Boolean   @default(false) // Status de verificação
+  verificationNotes  String? // Notas da verificação
+
+  // Metadados de edição
+  lastEditedBy String?   @db.ObjectId
+  lastEditedAt DateTime?
+  editHistory  Json? // Histórico de edições
+
+  // Campos existentes
+  primaryRoleId String @db.ObjectId
+  primaryRole   Role   @relation("PrimaryRole", fields: [primaryRoleId], references: [id])
+  createdByUser User?  @relation("UserCreatedComposers", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  roles     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 🔄 RELAÇÕES EXISTENTES - ATUALIZADAS
+  epoch           Epoch              @relation(fields: [epochId], references: [id])
+  works           Work[] // 🔄 CASCADE - deletar obras quando deletar compositor
+  favoritedBy     FavoriteComposer[] // 🔄 CASCADE será configurado no FavoriteComposer
+  favoriteByUsers User[]             @relation("FavoriteComposer")
+
+  verifier User? @relation("VerifiedComposers", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  // Índices otimizados
+  @@index([name])
+  @@index([epochId])
+  @@index([fullName])
+  @@index([verifiedBy])
+  @@index([isVerified])
+  @@index([alternativeNames])
+  @@index([imslpCategories])
+  @@index([primaryRoleId])
+  @@index([imslpId])
+  @@index([nationality])
+  @@index([birthDate])
+  @@index([deathDate])
+  @@index([hasValidImage])
+  @@index([name, epochId])
+  @@index([epochId, primaryRoleId])
+  @@index([name, fullName])
+  @@index([nationality, epochId])
+  @@index([createdBy])
+  @@index([isCustom])
+  @@index([verificationStatus])
+  @@index([dataQuality])
+  @@index([epochId, isVerified]) // Para filtros combinados
+  @@index([createdAt, epochId]) // Para stats por período + época
+  @@index([createdAt, isVerified]) // Para stats por período + verificação
+  @@index([hasValidImage, epochId]) // Para filtros combinados
+  @@index([dataQuality, epochId]) // Para filtros de qualidade + época
+  @@index([createdAt, dataQuality]) // Para stats por período + qualidade
+  // ÍNDICES COMPOSTOS PARA ORDENAÇÃO OTIMIZADA
+  @@index([epochId, createdAt]) // Ordenação por época + data
+  @@index([isVerified, createdAt]) // Ordenação por verificação + data
+  @@index([createdBy, createdAt]) // Para auditoria ordenada
+}
+
+model Epoch {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  composers       Composer[]
+  works           Work[]
+  favoriteByUsers User[]     @relation("FavoriteEpoch")
+
+  @@index([name])
+}
+
+model Role {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  primaryComposers Composer[] @relation("PrimaryRole")
+
+  @@index([name])
+}
+
+model Instrument {
+  id         String           @id @default(auto()) @map("_id") @db.ObjectId
+  name       String           @unique
+  category   String?
+  difficulty String?
+  createdAt  DateTime         @default(now())
+  users      UserInstrument[]
+  works      Work[]
+
+  advertisements Advertisement[]
+
+  @@index([category]) // Para filtros por categoria
+  @@index([category, name]) // Para filtros por categoria
+}
+
+model WorkGenre {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Work {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  title            String
+  composerId       String   @db.ObjectId
+  instrumentId     String   @db.ObjectId
+  epochId          String   @db.ObjectId
+  videoUrl         String?
+  imslpPermlink    String
+  imslpId          String
+  opOrCatalog      String?
+  compositionYear  String?
+  firstPublishDate String?
+  tone             String?
+  mediaDuration    String?
+  workStyle        String?
+  moviment         String?
+  categoryNames    String[] @default([])
+  workGenresArr    String[] @default([])
+
+  dedicateTo      String?
+  instrumentation String?
+  workType        WorkType @default(INDIVIDUAL)
+
+  movementNumber Int?
+  parentWorkId   String? @db.ObjectId
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subtitle  String?
+  imslpTags String[] @default([])
+
+  // MÍDIA SIMPLIFICADA E MELHORADA
+  spotifyTrackId      String? // ID da track
+  spotifyTrackUrl     String? // URL da track
+  spotifyDisplayTitle String? // "Frédéric Chopin - Yuja Wang"
+  spotifyDuration     Int? // Duração em ms
+  spotifyArtists      Json? // String? → Json?
+  spotifyThumbnail    String? // URL da capa do álbum
+
+  // YouTube (essencial)
+  youtubeVideoId  String? // ID do vídeo
+  youtubeVideoUrl String? // URL do vídeo
+  youtubeTitle    String? // Título do vídeo
+
+  // Áudio customizado
+  customAudioUrl      String? // URL de áudio customizado (upload OU fonte alternativa)
+  customAudioFile     String? // Arquivo de áudio local
+  customAudioSource   String? // "upload", "internet_archive", "wikimedia", etc.
+  customAudioMetadata Json? // Metadados da fonte alternativa
+
+  // Metadados de busca (simplificado)
+  mediaSource      String?   @default("none") // "auto", "manual", "none"
+  lastMediaSearch  DateTime?
+  mediaSearchError String?
+
+  // VIDEO AULA EXPANDIDA
+  videoAulaUrl     String? // URL externa
+  videoAulaFile    String? // Arquivo local
+  videoAulaTitle   String? // Título personalizado
+  videoAulaType    String? // "video", "story", "reels", "live"
+  videoAulaSource  String? // "youtube", "instagram", "tiktok", "local", "external"
+  videoAulaAddedBy String?   @db.ObjectId
+  videoAulaAddedAt DateTime?
+
+  // Metadados específicos por tipo
+  videoAulaMetadata Json? // { duration?, aspectRatio?, platform?, embedCode? }
+
+  // 🆕 SISTEMA DETALHADO IMSLP (complementar)
+  imslpDifficultyLevel  String? // "1", "2", "3"... "12" 
+  imslpDifficultySystem String? // "IMSLP", "RCM", "ABRSM", etc.
+  imslpDifficultyRating String? // "Lvl 1", "RCM Preparatory B", etc.
+  imslpSourceId         String? // ID do IMSLP que tem essa dificuldade
+
+  // 🔄 VERIFICAÇÃO - ATUALIZADA PARA SetNull
+  verificationStatus String? // "verified", "pending", "disputed"
+  verifiedBy         String?   @db.ObjectId
+  verifiedAt         DateTime?
+  isVerified         Boolean   @default(false)
+
+  // 🔄 CAMPOS PARA RASTREAMENTO - ATUALIZADOS PARA SetNull
+  createdBy     String? @db.ObjectId
+  createdByUser User?   @relation("UserCreatedWorks", fields: [createdBy], references: [id], onDelete: SetNull)
+  isCustom      Boolean @default(false)
+
+  // Metadados de edição
+  lastEditedBy String?   @db.ObjectId
+  lastEditedAt DateTime?
+  editHistory  Json?
+
+  // 🆕 SISTEMA DE DIFICULDADE IMSLP
+  difficultyLevel    String? // "1", "2", "3"... "12"
+  difficultySystem   String? // "IMSLP", "RCM", "ABRSM", etc.
+  difficultyRating   String? // "Lvl 1", "RCM Preparatory B", etc.
+  difficultySourceId String? // ID do IMSLP que tem essa dificuldade (sourceId do WorkScore)
+
+  // 🔄 RELAÇÕES EXISTENTES - ALGUMAS ATUALIZADAS
+  composer           Composer             @relation(fields: [composerId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar compositor
+  epoch              Epoch                @relation(fields: [epochId], references: [id])
+  instrument         Instrument           @relation(fields: [instrumentId], references: [id])
+  favoriteScores     FavoriteScore[]
+  scoreFavoriteStats ScoreFavoriteStats[]
+
+  annotations     Annotation[]
+  favoriteBy      FavoriteWork[]
+  wantToLearners  WantToLearn[]
+  learners        Learned[]
+  parentWork      Work?            @relation("WorkCollection", fields: [parentWorkId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childWorks      Work[]           @relation("WorkCollection")
+  workAnnotations WorkAnnotation[]
+
+  annotationsCount        Int       @default(0)
+  helpfulAnnotationsCount Int       @default(0)
+  lastAnnotationAt        DateTime?
+
+  cachedScores WorkScore[]
+
+  // ÍNDICES ATUALIZADOS
+  @@index([title])
+  @@index([opOrCatalog])
+  @@index([composerId])
+  @@index([imslpId])
+  @@index([title, composerId])
+  @@index([composerId, title])
+  @@index([opOrCatalog, composerId])
+  @@index([title, createdAt])
+  @@index([composerId, createdAt])
+  @@index([workType])
+  @@index([composerId, instrumentId])
+  @@index([composerId, epochId])
+  @@index([instrumentId, epochId])
+  @@index([composerId, instrumentId, epochId])
+  @@index([categoryNames])
+  @@index([workGenresArr])
+  @@index([createdBy])
+  @@index([isCustom])
+  @@index([parentWorkId]) // 🆕 NOVO ÍNDICE
+  @@index([composerId, parentWorkId]) // 🆕 ÍNDICE COMPOSTO
+  // Índices para mídia
+  @@index([mediaSource])
+  @@index([lastMediaSearch])
+  @@index([spotifyTrackId])
+  @@index([youtubeVideoId])
+  @@index([videoAulaType])
+  @@index([videoAulaSource])
+  // ÍNDICES ATUALIZADOS PARA MÍDIA
+  @@index([spotifyDisplayTitle])
+  @@index([spotifyDuration])
+  @@index([spotifyThumbnail])
+  @@index([difficultyLevel]) // Enum original
+  @@index([imslpDifficultyLevel]) // Níveis IMSLP
+  @@index([imslpDifficultySystem])
+  @@index([difficultyLevel, imslpDifficultyLevel]) // Combinado
+  @@index([instrumentId, difficultyLevel])
+  @@index([instrumentId, imslpDifficultyLevel])
+  @@index([composerId, difficultyLevel])
+  @@index([createdAt, epochId, instrumentId]) // Triple para stats detalhadas
+  @@index([composerId, epochId, instrumentId]) // Para filtros compostos
+  @@index([difficultyLevel, epochId]) // Dificuldade + época
+  @@index([difficultyLevel, instrumentId]) // Dificuldade + instrumento
+  @@index([workType, epochId]) // Tipo + época
+  @@index([workType, instrumentId]) // Tipo + instrumento
+  // ÍNDICES PARA VERIFICAÇÃO DE PARTITURAS
+  @@index([id, createdAt]) // Para junções com WorkScore
+}
+
+model UserInstrument {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String @db.ObjectId
+  instrumentId String @db.ObjectId
+
+  level      DifficultyLevel @default(BEGINNER)
+  isPrimary  Boolean         @default(false)
+  isLearning Boolean         @default(true)
+  startedAt  DateTime        @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, instrumentId])
+}
+
+model Annotation {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  workId    String   @db.ObjectId
+  content   String
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+}
+
+model WantToLearn {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String   @db.ObjectId
+  workId   String   @db.ObjectId
+  priority Int      @default(0)
+  addedAt  DateTime @default(now())
+
+  notes               String?
+  targetDate          DateTime?
+  estimatedStudyTime  Int?
+  difficulty          DifficultyLevel?
+  reminder            Boolean          @default(false)
+  reminderFrequency   String?
+  motivation          String?
+  context             String?
+  progressMilestones  Json? // Milestones de progresso por instrumento
+  progress            Float?           @default(0) // Progresso calculado (0-100%)
+  // 🔄 RELAÇÃO CORRETA COM WORKSCORE - ATUALIZADA PARA SetNull
+  selectedWorkScoreId String?          @db.ObjectId
+  selectedWorkScore   WorkScore?       @relation("WantToLearnSelectedScore", fields: [selectedWorkScoreId], references: [id], onDelete: SetNull)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  @@unique([userId, workId])
+  @@index([userId, priority])
+  @@index([targetDate])
+  @@index([selectedWorkScoreId])
+  @@index([workId]) // Para groupBy por obra (counts)
+  @@index([userId]) // Para groupBy por usuário
+  @@index([workId, addedAt]) // Para trending analysis
+}
+
+model Learned {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  workId    String   @db.ObjectId
+  learnedAt DateTime @default(now())
+  mastery   Int      @default(0)
+
+  studyStartDate      DateTime?
+  studyDuration       Int?
+  notes               String?
+  wouldRecommend      Boolean          @default(true)
+  publicPerformance   Boolean          @default(false)
+  lastPracticed       DateTime?
+  difficulty          DifficultyLevel?
+  enjoyment           Int?
+  technicalChallenges String?
+  musicalInsights     String?
+  performanceCount    Int              @default(0)
+  bestPerformance     String?
+
+  videoUrl        String? // URL/caminho do vídeo
+  videoFileName   String? // Nome do arquivo original
+  videoFilePath   String? // Caminho completo no servidor
+  videoFileSize   Int? // Tamanho em bytes
+  isVideoPublic   Boolean   @default(false) // Público ou privado
+  videoUploadedAt DateTime? // Data do upload
+
+  // 🔄 RELAÇÃO CORRETA COM WORKSCORE - ATUALIZADA PARA SetNull
+  selectedWorkScoreId String?    @db.ObjectId
+  selectedWorkScore   WorkScore? @relation("LearnedSelectedScore", fields: [selectedWorkScoreId], references: [id], onDelete: SetNull)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  @@unique([userId, workId])
+  @@index([userId, mastery])
+  @@index([learnedAt])
+  @@index([lastPracticed])
+  @@index([selectedWorkScoreId])
+  @@index([workId]) // Para groupBy por obra (counts)
+  @@index([userId]) // Para groupBy por usuário
+  @@index([workId, learnedAt]) // Para análise temporal
+  @@index([learnedAt, workId]) // Para stats recentes
+}
+
+model FavoriteWork {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  workId String @db.ObjectId
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  @@unique([userId, workId])
+  @@index([userId]) // Para groupBy por usuário
+}
+
+model FavoriteComposer {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String @db.ObjectId
+  composerId String @db.ObjectId
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  composer Composer @relation(fields: [composerId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar composer
+
+  @@unique([userId, composerId])
+}
+
+model WorkAnnotation {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @db.ObjectId
+  workId String @db.ObjectId
+
+  // Conteúdo da anotação
+  title    String // Título/resumo da anotação
+  content  String // Conteúdo principal
+  category AnnotationCategory @default(GENERAL)
+
+  // Localização na obra
+  scope        AnnotationScope @default(ENTIRE_WORK)
+  measureStart Int? // Compasso inicial (se específico)
+  measureEnd   Int? // Compasso final (se range)
+  movement     String? // Nome do movimento
+  section      String? // Nome da seção (ex: "Exposição", "Desenvolvimento")
+  pageNumber   Int? // Página da partitura (se aplicável)
+
+  // Metadata musical
+  hand       String? // "left", "right", "both"
+  voice      String? // "soprano", "alto", "tenor", "bass"
+  instrument String? // Instrumento específico (para obras de conjunto)
+
+  // Classificação e utilidade
+  difficulty AnnotationDifficulty @default(ALL_LEVELS)
+  tags       String[]             @default([])
+
+  // Interação social
+  isPublic     Boolean @default(true)
+  isVerified   Boolean @default(false) // Verificado por moderador/expert
+  helpfulCount Int     @default(0) // Quantos acharam útil
+  viewCount    Int     @default(0) // Visualizações
+
+  // Moderação
+  isFlagged   Boolean   @default(false)
+  flagReason  String?
+  moderatedBy String?   @db.ObjectId
+  moderatedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  // Relações de interação
+  helpfulVotes AnnotationHelpfulVote[]
+
+  // Índices otimizados
+  @@index([workId, isPublic, category])
+  @@index([workId, scope, measureStart])
+  @@index([userId, createdAt])
+  @@index([category, difficulty])
+  @@index([isPublic, helpfulCount])
+  @@index([tags])
+  @@index([isVerified, isPublic])
+  @@index([workId, isPublic]) // Para contagem de anotações públicas
+  @@index([userId, isPublic]) // Para stats de usuário
+  @@index([workId, isPublic, createdAt]) // Para anotações recentes
+  @@map("work_annotations")
+}
+
+model AnnotationHelpfulVote {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  annotationId String   @db.ObjectId
+  isHelpful    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  annotation WorkAnnotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, annotationId])
+  @@index([annotationId, isHelpful])
+  @@map("annotation_helpful_votes")
+}
+
+model FavoriteScore {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String      @db.ObjectId
+  workId      String      @db.ObjectId
+  scoreId     String // ID da partitura no cache (WorkScore.sourceId)
+  scoreSource ScoreSource @default(IMSLP) // IMSLP, CUSTOM, etc.
+
+  // Dados da partitura no momento do favoritamento (para histórico)
+  scoreTitle  String
+  scoreType   IMSLPScoreType
+  downloadUrl String?
+  fileSize    String?
+  pageCount   String?
+
+  // Metadados do favorito
+  notes        String? // Notas pessoais do usuário sobre a partitura
+  tags         String[] @default([]) // Tags pessoais
+  addedAt      DateTime @default(now())
+  lastAccessed DateTime @default(now())
+  accessCount  Int      @default(0)
+
+  // Avaliação pessoal (opcional)
+  personalRating Int? // 1-5 estrelas
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  // Índices otimizados
+  @@unique([userId, workId, scoreId, scoreSource], name: "user_work_score_unique")
+  @@index([userId, workId])
+  @@index([workId, scoreId])
+  @@index([scoreSource, scoreType])
+  @@index([addedAt])
+  @@index([personalRating])
+  @@map("favorite_scores")
+}
+
+model ScoreFavoriteStats {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  workId      String      @db.ObjectId
+  scoreId     String
+  scoreSource ScoreSource @default(IMSLP)
+
+  // Estatísticas
+  totalFavorites Int       @default(0)
+  avgRating      Float? // Média das avaliações pessoais
+  lastFavorited  DateTime? // Última vez que foi favoritado
+
+  // Cache das informações da partitura
+  scoreTitle  String
+  scoreType   IMSLPScoreType
+  downloadUrl String?
+
+  // Metadados do cache
+  lastUpdated DateTime @default(now())
+
+  // Relação
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
+
+  // Índices
+  @@unique([workId, scoreId, scoreSource], name: "work_score_stats_unique")
+  @@index([workId, totalFavorites]) // Para buscar mais favoritadas por obra
+  @@index([scoreSource, totalFavorites]) // Para rankings globais
+  @@index([avgRating])
+  @@map("score_favorite_stats")
+}
+
+// Novo modelo para histórico de uploads
+model UploadHistory {
+  id         String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String  @db.ObjectId
+  entityType String // "composer", "work", "score"
+  entityId   String  @db.ObjectId
+  action     String // "create", "update", "delete"
+  changes    Json? // Detalhes das mudanças
+  reason     String? // Razão para a mudança
+  ipAddress  String?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@map("upload_history")
+}
+
+// 🔄 MODELO ATUALIZADO COM CASCADE PARA RESOLVER O ERRO
+model UploadModeration {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  entityType  String // "composer", "work", "score"
+  entityId    String  @db.ObjectId
+  reportedBy  String  @db.ObjectId
+  moderatedBy String? @db.ObjectId
+
+  reason      String // Motivo do report
+  description String? // Descrição detalhada
+  status      String  @default("pending") // "pending", "approved", "rejected"
+
+  // Novos campos para melhor rastreamento
+  priority String  @default("normal") // "low", "normal", "high", "urgent"
+  category String? // Categoria adicional se necessário
+
+  moderationNotes String? // Notas do moderador
+  resolution      String? // Resolução tomada
+
+  // Campos de auditoria
+  ipAddress String? // IP do usuário que reportou
+  userAgent String? // User agent do navegador
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  // 🔄 RELAÇÕES ATUALIZADAS COM CASCADE - RESOLVE O ERRO
+  reporter  User  @relation("ReportedUploads", fields: [reportedBy], references: [id], onDelete: Cascade)
+  moderator User? @relation("ModeratedUploads", fields: [moderatedBy], references: [id], onDelete: SetNull)
+
+  // Índices otimizados
+  @@index([entityType, entityId])
+  @@index([status, priority])
+  @@index([reportedBy])
+  @@index([moderatedBy])
+  @@index([createdAt])
+  @@index([reason])
+  @@index([category])
+  @@map("upload_moderation")
+}
+
+model GeneratedReport {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  name   String
+  type   String // 'users-overview', 'content-analysis', etc.
+  format String // 'pdf', 'excel', 'csv'
+  period String // '7d', '30d', '90d', '1y'
+
+  // Metadados do arquivo
+  filename      String
+  filePath      String? // Caminho no sistema de arquivos ou URL
+  fileSize      String? // Tamanho formatado (ex: "1.2 MB")
+  fileSizeBytes Int? // Tamanho em bytes
+
+  // Status e dados
+  status String  @default("generating") // 'generating', 'ready', 'failed'
+  error  String? // Mensagem de erro se falhou
+
+  // Dados estatísticos do período (cache)
+  reportData Json? // Dados estatísticos utilizados no relatório
+
+  // Metadados de geração
+  generatedBy String   @db.ObjectId
+  generatedAt DateTime @default(now())
+
+  // Controle de acesso e limpeza
+  downloadCount Int @default(0)
+
+  // Relações
+  user User @relation("GeneratedReports", fields: [generatedBy], references: [id], onDelete: Cascade)
+
+  // Índices
+  @@index([type, status])
+  @@index([status])
+  @@index([generatedAt])
+  @@map("generated_reports")
+}
+
+// 🔄 MODELO ADVERTISEMENT ATUALIZADO COM SetNull
+model Advertisement {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Informações básicas
+  title       String
+  description String?
+  content     String? // Conteúdo HTML/texto adicional
+
+  // Mídia com versões responsivas
+  // URLs principais (para compatibilidade)
+  imageUrl     String? // URL da versão desktop (principal)
+  thumbnailUrl String? // URL do thumbnail
+  videoUrl     String? // URL da versão desktop do vídeo
+
+  // Versões responsivas (JSON fields)
+  imageVersions Json? // { desktop: string, tablet: string, mobile: string, original: string, thumbnail: string }
+  videoVersions Json? // { desktop: string, tablet: string, mobile: string, original: string }
+
+  // Metadados de mídia
+  mediaMetadata Json? // { originalDimensions: { width: number, height: number }, processedAt: string, fileSize: number, format: string }
+
+  // Configurações de qualidade
+  imageQuality String @default("high") // "high", "medium", "low"
+  videoQuality String @default("high") // "high", "medium", "low"
+
+  // Links e ações
+  ctaText    String? // Texto do call-to-action
+  targetUrl  String? // URL de destino OU número WhatsApp
+  linkType   String  @default("url") // "url" ou "whatsapp"
+  isExternal Boolean @default(true)
+
+  // Configurações de exibição
+  type      AdType      @default(BANNER)
+  placement AdPlacement @default(SIDEBAR_RIGHT)
+  status    AdStatus    @default(DRAFT)
+
+  // Targeting simplificado
+  targetType      AdTargetType @default(GENERAL)
+  targetUserLevel AdUserLevel  @default(ALL)
+
+  // Apenas para targeting por instrumento
+  instrumentId String? @db.ObjectId // Apenas UM instrumento por ad
+
+  // Dados do anunciante
+  advertiserName    String
+  advertiserEmail   String?
+  advertiserPhone   String?
+  advertiserWebsite String?
+
+  // Agendamento
+  startDate DateTime?
+  endDate   DateTime?
+
+  // Configurações de responsividade
+  showOnMobile  Boolean @default(true)
+  showOnTablet  Boolean @default(true)
+  showOnDesktop Boolean @default(true)
+
+  // 🔄 CONTROLE DE ACESSO ATUALIZADO PARA SetNull
+  createdBy    String    @db.ObjectId
+  lastEditedBy String?   @db.ObjectId
+  lastEditedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  instrument Instrument? @relation(fields: [instrumentId], references: [id])
+
+  // 🔄 ESTATÍSTICAS COM CASCADE
+  stats AdStats[]
+
+  // Constraint corrigida
+  @@unique([type, placement, targetType, instrumentId], name: "unique_ad_per_complete_combination")
+  // Índices otimizados para busca
+  @@index([status, placement])
+  @@index([targetType, instrumentId])
+  @@index([createdBy])
+  @@index([imageQuality])
+  @@index([videoQuality])
+  @@map("advertisements")
+}
+
+model AdStats {
+  id              String @id @default(auto()) @map("_id") @db.ObjectId
+  advertisementId String @db.ObjectId
+
+  // Data das estatísticas (agregado por dia)
+  date DateTime @default(now())
+
+  // Métricas principais
+  impressions Int @default(0) // Visualizações
+  clicks      Int @default(0) // Cliques
+  hoverTime   Int @default(0) // Tempo de hover total em ms
+
+  // Dados contextuais
+  userAgent String? // User agent
+  referrer  String? // Página de origem
+  country   String? // País do usuário
+  device    String? // mobile, tablet, desktop
+
+  // Dados da página
+  pageUrl   String? // URL da página onde foi exibido
+  pageTitle String? // Título da página
+
+  // 🔄 DADOS DO USUÁRIO ATUALIZADOS PARA SetNull
+  userId    String?     @db.ObjectId
+  userLevel AdUserLevel @default(ALL)
+
+  // 🔄 RELAÇÕES ATUALIZADAS
+  advertisement Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar advertisement
+  user          User?         @relation("AdStatsUser", fields: [userId], references: [id], onDelete: SetNull) // 🔄 SetNull quando deletar user
+
+  @@unique([advertisementId, date, device], name: "unique_daily_stats")
+  @@index([advertisementId, date])
+  @@index([date])
+  @@index([device])
+  @@map("ad_stats")
+}
+
+// 🔄 SUBSCRIBERS DA NEWSLETTER ATUALIZADO COM CASCADE
+model NewsletterSubscriber {
+  id    String @id @default(auto()) @map("_id") @db.ObjectId
+  email String @unique
+
+  // Dados do subscriber
+  firstName String?
+  lastName  String?
+  userId    String? @unique @db.ObjectId // Se for usuário registrado
+
+  // Status da inscrição
+  status            SubscriptionStatus @default(PENDING)
+  subscribedAt      DateTime           @default(now())
+  unsubscribedAt    DateTime?
+  confirmationToken String?            @unique // Token para double opt-in
+  confirmedAt       DateTime?
+
+  // Preferências de email
+  preferences Json? // Quais tipos de email quer receber
+  frequency   String @default("weekly") // daily, weekly, monthly
+  timezone    String @default("America/Sao_Paulo")
+  language    String @default("pt-BR")
+
+  // Segmentação
+  interests           String[]         @default([]) // Interesses musicais
+  experienceLevel     DifficultyLevel?
+  favoriteInstruments String[]         @default([])
+  favoriteEpochs      String[]         @default([])
+
+  // Dados de engajamento
+  lastEmailOpenedAt  DateTime?
+  emailOpenCount     Int       @default(0)
+  emailClickCount    Int       @default(0)
+  avgEngagementScore Float?    @default(0) // Score 0-100 baseado em engajamento
+
+  // Metadados
+  sourceUrl      String? // De onde veio a inscrição
+  userAgent      String?
+  ipAddress      String?
+  referralSource String? // Google, Facebook, Direct, etc.
+
+  // Dados de unsubscribe
+  unsubscribeReason String?
+  unsubscribeToken  String? @unique
+
+  // 🔄 RELAÇÕES ATUALIZADAS
+  user          User?                    @relation("NewsletterSubscriber", fields: [userId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar user
+  emailEvents   NewsletterEmailEvent[]
+  campaignSends NewsletterCampaignSend[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices
+  @@index([status])
+  @@index([subscribedAt])
+  @@index([interests])
+  @@index([avgEngagementScore])
+  @@map("newsletter_subscribers")
+}
+
+// Templates de email
+model NewsletterTemplate {
+  id   String            @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+  type EmailTemplateType
+
+  // Conteúdo do template
+  subject     String
+  htmlContent String // HTML do email
+  textContent String // Versão texto alternativa
+
+  // Design e personalização
+  variables String[] @default([]) // Variáveis disponíveis: {{firstName}}, {{newWorks}}, etc.
+
+  // Configurações de remetente
+  senderName   String  @default("Opus Atlas")
+  senderEmail  String  @default("noreply@opusatlas.com")
+  replyToEmail String?
+
+  // Configurações
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false) // Template padrão para o tipo
+
+  // Metadados
+  description String?
+  previewText String? // Texto de preview no email client
+  tags        String[] @default([])
+
+  // Estatísticas (cache)
+  timesUsed    Int    @default(0)
+  avgOpenRate  Float? @default(0)
+  avgClickRate Float? @default(0)
+
+  // Dados de qualidade
+  qualityScore     Float? // Score de qualidade calculado (0-100)
+  lastQualityCheck DateTime? // Última verificação de qualidade
+
+  // Controle de acesso
+  lastEditedAt DateTime?
+
+  // Relações
+  campaigns NewsletterCampaign[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices otimizados
+  @@index([type, isActive])
+  @@index([isDefault, type])
+  @@index([tags])
+  @@index([qualityScore])
+  @@index([timesUsed, avgOpenRate])
+  @@map("newsletter_templates")
+}
+
+// 🔄 CAMPANHAS DE EMAIL COM CASCADE
+model NewsletterCampaign {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  // Configurações básicas
+  subject      String
+  templateId   String?        @db.ObjectId // Tornar opcional
+  templateType String? // Tipo de template usado (para built-in)
+  status       CampaignStatus @default(DRAFT)
+
+  // NOVOS CAMPOS PARA MELHOR INTEGRAÇÃO COM TEMPLATES
+  useCustomTemplate Boolean @default(false) // Se usa template personalizado
+  templateSnapshot  Json? // Snapshot do template no momento do envio
+
+  // Agendamento
+  scheduledAt DateTime?
+  sentAt      DateTime?
+
+  // Segmentação
+  targetAll           Boolean  @default(false)
+  targetSegments      Json? // Critérios de segmentação
+  targetSubscriberIds String[] @default([]) @db.ObjectId // IDs específicos
+
+  // Conteúdo personalizado (se diferente do template)
+  customSubject     String?
+  customHtmlContent String?
+  customTextContent String?
+
+  // Configurações de envio
+  senderName    String  @default("Opus Atlas")
+  senderEmail   String  @default("noreply@opusatlas.com")
+  replyToEmail  String?
+  testEmailSent Boolean @default(false)
+
+  // CONFIGURAÇÕES AVANÇADAS
+  priority        String @default("normal") // "low", "normal", "high", "urgent"
+  deliveryOptions Json? // Opções de entrega (throttling, retry, etc.)
+
+  // Estatísticas expandidas
+  totalSubscribers   Int @default(0) // Quantos vão receber
+  emailsSent         Int @default(0) // Quantos foram enviados
+  emailsDelivered    Int @default(0) // Quantos foram entregues
+  emailsOpened       Int @default(0) // Quantos foram abertos
+  emailsClicked      Int @default(0) // Quantos tiveram cliques
+  emailsBounced      Int @default(0) // Quantos retornaram
+  emailsComplained   Int @default(0) // Quantos marcaram como spam
+  emailsUnsubscribed Int @default(0) // Quantos cancelaram inscrição
+
+  // Taxas calculadas (cache)
+  deliveryRate    Float? @default(0) // emailsDelivered / emailsSent
+  openRate        Float? @default(0) // emailsOpened / emailsDelivered  
+  clickRate       Float? @default(0) // emailsClicked / emailsDelivered
+  bounceRate      Float? @default(0) // emailsBounced / emailsSent
+  unsubscribeRate Float? @default(0) // emailsUnsubscribed / emailsDelivered
+
+  // Controle de acesso
+  lastEditedAt DateTime?
+
+  // Metadados
+  notes String?
+  tags  String[] @default([])
+
+  // 🔄 RELAÇÕES COM CASCADE
+  template NewsletterTemplate?      @relation(fields: [templateId], references: [id])
+  sends    NewsletterCampaignSend[]
+  events   NewsletterEmailEvent[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices atualizados
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([sentAt])
+  @@index([tags])
+  @@index([useCustomTemplate, templateType])
+  @@index([priority, scheduledAt])
+  @@index([openRate, clickRate])
+  @@map("newsletter_campaigns")
+}
+
+// 🔄 REGISTRO DE ENVIOS COM CASCADE
+model NewsletterCampaignSend {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  campaignId   String @db.ObjectId
+  subscriberId String @db.ObjectId
+
+  // Status do envio
+  status String    @default("pending") // pending, sent, failed
+  sentAt DateTime?
+
+  // Dados do envio
+  emailId String? // ID do provedor de email (SendGrid, etc.)
+
+  // 🔄 RELAÇÕES COM CASCADE
+  campaign   NewsletterCampaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subscriber NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices
+  @@unique([campaignId, subscriberId])
+  @@index([status])
+  @@index([sentAt])
+  @@map("newsletter_campaign_sends")
+}
+
+// 🔄 EVENTOS DE EMAIL COM CASCADE
+model NewsletterEmailEvent {
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  eventType    EmailEventType
+  subscriberId String         @db.ObjectId
+  campaignId   String?        @db.ObjectId
+
+  // Dados do evento
+  timestamp DateTime @default(now())
+
+  // Metadata adicional
+  eventData Json? // Dados específicos do evento
+
+  // 🔄 RELAÇÕES COM CASCADE
+  subscriber NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  campaign   NewsletterCampaign?  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  // Índices
+  @@index([eventType, timestamp])
+  @@index([subscriberId, eventType])
+  @@index([campaignId, eventType])
+  @@index([timestamp])
+  @@map("newsletter_email_events")
+}
+
+// Modelo para múltiplas listas de teste de email
+model TestEmailList {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String // Nome da lista (ex: "Lista VIPs", "Equipe de Teste")  
+  description String? // Descrição da lista (ex: "Emails da equipe interna")
+
+  // Emails da lista
+  emails String[] @default([]) // Array de emails
+
+  // Configurações
+  isActive Boolean @default(true) // Lista ativa/inativa
+  color    String  @default("#6366f1") // Cor para identificação visual
+
+  // Metadados
+  totalEmails Int       @default(0) // Cache do total de emails
+  lastUsed    DateTime? // Última vez que foi usada para envio
+  timesUsed   Int       @default(0) // Quantas vezes foi usada
+
+  // Auditoria
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices
+  @@index([isActive])
+  @@index([name])
+  @@map("test_email_lists")
+}
+
+// NOVO MODELO: Fragmentos de template reutilizáveis
+model TemplateFragment {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+
+  // Conteúdo do fragmento
+  htmlContent String
+  textContent String?
+  variables   String[] @default([])
+
+  // Categorização
+  category String // "header", "footer", "content-block", "cta", etc.
+  tags     String[] @default([])
+
+  // Configurações
+  isActive Boolean @default(true)
+  isPublic Boolean @default(false) // Se pode ser usado por outros
+
+  // Estatísticas
+  timesUsed Int @default(0)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, isActive])
+  @@index([tags])
+  @@map("template_fragments")
+}
+
+// TABELA DE PROFESSORES COMPLETA
+model Teacher {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @unique @db.ObjectId
+
+  // Informações básicas
+  bio          String?
+  specialties  String[] @default([]) // ["Piano", "Violão", "Teoria"]
+  instruments  String[] @default([]) // Instrumentos que ensina
+  experience   String? // "10 anos", "Desde 2015"
+  education    String? // Formação acadêmica
+  achievements String? // Conquistas, prêmios, etc.
+
+  // Perfil público para "Conheça nossos professores"
+  isPublicProfile  Boolean  @default(false)
+  profileImage     String?
+  website          String?
+  socialMedia      Json? // {"instagram": "@professor", "youtube": "channel"}
+  publicBio        String? // Bio específica para o perfil público
+  highlightedWorks String[] @default([]) // Obras que o professor destaca
+
+  // Configurações de ensino
+  defaultLessonDuration Int    @default(60) // Duração padrão em minutos
+  maxStudentsPerWeek    Int    @default(50) // Limite de aulas por semana
+  timezone              String @default("America/Sao_Paulo")
+
+  // Metodologia e estilo de ensino
+  teachingMethod String? // Descrição da metodologia
+  ageGroups      String[] @default([]) // ["Crianças", "Adultos", "Terceira idade"]
+  skillLevels    String[] @default([]) // ["Iniciante", "Intermediário", "Avançado"]
+
+  // Status e aprovação
+  status     TeacherStatus @default(PENDING)
+  isVerified Boolean       @default(false) // Aprovação manual
+  verifiedAt DateTime?
+  verifiedBy String?       @db.ObjectId // Admin que aprovou
+
+  // Configurações de relatórios
+  allowProgressReports Boolean @default(true) // Se pode ver relatórios dos alunos
+  reportPreferences    Json? // Preferências de relatórios
+
+  // Métricas e estatísticas
+  totalStudents  Int    @default(0)
+  totalLessons   Int    @default(0)
+  averageRating  Float? @default(0)
+  totalReviews   Int    @default(0)
+  completionRate Float? @default(0) // Taxa de conclusão das aulas
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  user          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  students      TeacherStudent[]       @relation("TeacherStudents")
+  lessons       Lesson[]               @relation("TeacherLessons")
+  sharedReports SharedProgressReport[] @relation("TeacherSharedReports")
+
+  // Índices otimizados
+  @@index([status, isVerified])
+  @@index([isPublicProfile])
+  @@index([instruments])
+  @@index([specialties])
+  @@index([ageGroups])
+  @@index([averageRating])
+  @@map("teachers")
+}
+
+// TABELA DE ALUNOS COMPLETA
+model Student {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  userId String @unique @db.ObjectId
+
+  // Informações básicas do aluno
+  level             DifficultyLevel @default(BEGINNER)
+  mainInstrument    String?
+  musicalGoals      String? // Objetivos musicais
+  preferredGenres   String[]        @default([])
+  musicalBackground String? // Experiência anterior
+
+  // Configurações de privacidade e relatórios
+  allowPublicProgress  Boolean @default(false) // Se professor pode ver progresso público
+  allowProgressShare   Boolean @default(true) // Se permite compartilhar progresso
+  allowWhatsappMensage Boolean @default(false)
+  profileVisibility    String  @default("teacher_only") // "public", "teacher_only", "private"
+
+  // Informações de estudo
+  practiceTime     Int? // Tempo de prática semanal (minutos)
+  practiceSchedule Json? // Horários preferidos para estudo
+  learningPace     String? // "slow", "medium", "fast"
+  specialNeeds     String? // Necessidades especiais de aprendizado
+
+  // Status e datas importantes
+  status         StudentStatus @default(ACTIVE)
+  enrollmentDate DateTime      @default(now())
+  lastLessonAt   DateTime?
+  lastActiveAt   DateTime?     @default(now())
+
+  // Configurações de comunicação
+  preferredContact    String @default("whatsapp") // "whatsapp", "email", "both"
+  reminderPreferences Json? // Preferências de lembretes
+
+  // Métricas de progresso
+  totalLessonsAttended Int    @default(0)
+  totalAssignments     Int    @default(0)
+  completedAssignments Int    @default(0)
+  currentStreak        Int    @default(0) // Sequência de aulas sem faltas
+  longestStreak        Int    @default(0)
+  progressScore        Float? @default(0) // Score geral de progresso
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teachers       TeacherStudent[]       @relation("StudentTeachers")
+  lessons        Lesson[]               @relation("StudentLessons")
+  assignments    Assignment[]           @relation("StudentAssignments")
+  sharedReports  SharedProgressReport[] @relation("StudentSharedReports")
+  reportComments SharedReportComment[]  @relation("StudentReportComments")
+
+  // Índices otimizados
+  @@index([status, lastActiveAt])
+  @@index([level, mainInstrument])
+  @@index([allowPublicProgress])
+  @@index([enrollmentDate])
+  @@map("students")
+}
+
+// RELACIONAMENTO PROFESSOR-ALUNO OTIMIZADO
+model TeacherStudent {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  teacherId String @db.ObjectId
+  studentId String @db.ObjectId
+
+  // Configurações da relação
+  maxLessonsPerWeek Int      @default(1) // Limite de aulas por semana
+  lessonDuration    Int      @default(60) // Duração padrão das aulas (min)
+  preferredDays     String[] @default([]) // ["monday", "wednesday", "friday"]
+  preferredTimes    String[] @default([]) // ["09:00", "14:00"]
+
+  // Status da relação
+  isActive    Boolean   @default(true)
+  startDate   DateTime  @default(now())
+  endDate     DateTime?
+  pausedAt    DateTime? // Se foi pausada temporariamente
+  pauseReason String?
+
+  // Planejamento pedagógico
+  learningPlan String? // Plano de estudos personalizado
+  currentFocus String[] @default([]) // Foco atual dos estudos
+  nextGoals    String? // Próximos objetivos
+  teacherNotes String? // Notas privadas do professor
+  studentNotes String? // Notas que o aluno pode ver
+
+  // Configurações específicas
+  homeworkFrequency String @default("weekly") // "daily", "weekly", "biweekly"
+  reportFrequency   String @default("monthly") // Frequência de relatórios
+
+  // Métricas da relação
+  totalLessons      Int    @default(0)
+  completedLessons  Int    @default(0)
+  cancelledLessons  Int    @default(0)
+  noShowLessons     Int    @default(0)
+  relationshipScore Float? @default(0) // Score da qualidade da relação
+
+  inviteStatus     StudentInviteStatus @default(PENDING)
+  inviteAcceptedAt DateTime?
+  inviteDeclinedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  teacher Teacher @relation("TeacherStudents", fields: [teacherId], references: [id], onDelete: Cascade)
+  student Student @relation("StudentTeachers", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, studentId])
+  @@index([teacherId, isActive])
+  @@index([studentId, isActive])
+  @@index([startDate, endDate])
+  @@map("teacher_students")
+}
+
+// TABELA DE AULAS COMPLETA
+model Lesson {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  teacherId String @db.ObjectId
+  studentId String @db.ObjectId
+
+  // Informações básicas
+  title       String
+  description String?
+  objectives  String[] @default([]) // Objetivos da aula
+
+  // Agendamento e duração
+  scheduledAt     DateTime
+  duration        Int       @default(60) // em minutos
+  actualStartTime DateTime? // Hora real de início
+  actualEndTime   DateTime? // Hora real de fim
+
+  // Status e tipo
+  status   LessonStatus @default(SCHEDULED)
+  type     LessonType   @default(INDIVIDUAL)
+  location String? // "Online", "Estúdio A", "Casa do aluno"
+
+  // Sistema de recorrência
+  isRecurring    Boolean        @default(false)
+  recurrenceType RecurrenceType @default(NONE)
+  parentLessonId String?        @db.ObjectId // Aula pai da série
+  recurrenceEnd  DateTime? // Data fim da recorrência
+
+  // Conteúdo e materiais da aula
+  workScoreIds String[] @default([]) @db.ObjectId // Partituras específicas
+  worksIds     String[] @default([]) @db.ObjectId // Partituras específicas  
+  topics       String[] @default([]) // Tópicos abordados
+  techniques   String[] @default([]) // Técnicas trabalhadas
+  repertoire   String[] @default([]) // Repertório estudado
+
+  // Homework e tarefas
+  homework       String? // Lição de casa geral
+  practiceGoals  String[] @default([]) // Metas específicas de prática
+  nextLessonPrep String? // Preparação para próxima aula
+
+  // Anotações e feedback
+  teacherNotes    String? // Notas privadas do professor
+  publicNotes     String? // Notas visíveis para o aluno
+  studentFeedback String? // Feedback do aluno sobre a aula
+  lessonSummary   String? // Resumo da aula
+
+  // Avaliação e progresso
+  studentProgress Json? // Progresso específico da aula
+  skillsWorked    String[] @default([]) // Habilidades trabalhadas
+  improvements    String[] @default([]) // Melhorias observadas
+  challenges      String[] @default([]) // Desafios encontrados
+
+  // Presença e participação
+  studentPresent Boolean? // null = não marcado
+  punctuality    String? // "on_time", "late", "early"
+  engagement     Int? // 1-5 nível de engajamento
+  preparation    Int? // 1-5 quão preparado estava
+
+  // Informações de cancelamento/reagendamento
+  cancelledAt      DateTime?
+  cancelReason     String?
+  cancelledBy      String? // "teacher", "student", "system"
+  rescheduledFrom  DateTime? // Data original se foi reagendada
+  rescheduleReason String?
+
+  // Mídia e recursos
+  audioRecordings String[] @default([]) // URLs de gravações
+  videoRecordings String[] @default([]) // URLs de vídeos
+  documents       String[] @default([]) // Documentos anexos
+  images          String[] @default([]) // Fotos da aula
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  teacher      Teacher      @relation("TeacherLessons", fields: [teacherId], references: [id], onDelete: Cascade)
+  student      Student      @relation("StudentLessons", fields: [studentId], references: [id], onDelete: Cascade)
+  parentLesson Lesson?      @relation("LessonSeries", fields: [parentLessonId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  childLessons Lesson[]     @relation("LessonSeries")
+  assignments  Assignment[] @relation("LessonAssignments")
+
+  // Índices otimizados
+  @@index([teacherId, scheduledAt])
+  @@index([studentId, scheduledAt])
+  @@index([scheduledAt, status])
+  @@index([isRecurring, recurrenceType])
+  @@index([status, type])
+  @@index([teacherId, studentId, scheduledAt]) // Para detecção de conflitos
+  @@map("lessons")
+}
+
+// SISTEMA DE TAREFAS/ASSIGNMENTS MELHORADO
+model Assignment {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  lessonId  String @db.ObjectId
+  studentId String @db.ObjectId
+
+  // Informações da tarefa
+  title       String
+  description String
+  type        String @default("practice") // "practice", "theory", "listening", "composition"
+  priority    String @default("medium") // "low", "medium", "high"
+
+  // Recursos e materiais
+  workScoreIds String[] @default([]) @db.ObjectId // Partituras para estudar
+  worksIds     String[] @default([]) @db.ObjectId // Partituras para estudar
+
+  exercises String[] @default([]) // Exercícios específicos
+
+  // Metas específicas
+  practiceGoals  String[] @default([]) // Metas de prática
+  tempoTargets   Json? // Metas de tempo/andamento
+  technicalGoals String[] @default([]) // Objetivos técnicos
+  musicalGoals   String[] @default([]) // Objetivos musicais
+
+  // Status e prazos
+  status        AssignmentStatus @default(PENDING)
+  dueDate       DateTime?
+  estimatedTime Int? // Tempo estimado em minutos
+  actualTime    Int? // Tempo real gasto pelo aluno
+
+  // Progresso e completion
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  progress    Float?    @default(0) // 0-100%
+
+  // Feedback e avaliação
+  teacherFeedback String? // Feedback do professor
+  teacherRating   Int? // 1-5 avaliação do professor
+  studentNotes    String? // Notas do aluno
+  studentRating   Int? // 1-5 dificuldade percebida pelo aluno
+
+  // Submissões do aluno
+  submissions    Json? // Gravações, fotos, etc. enviadas pelo aluno
+  submissionDate DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  lesson  Lesson  @relation("LessonAssignments", fields: [lessonId], references: [id], onDelete: Cascade)
+  student Student @relation("StudentAssignments", fields: [studentId], references: [id], onDelete: Cascade)
+
+  // Índices otimizados
+  @@index([studentId, status])
+  @@index([studentId, dueDate])
+  @@index([lessonId, status])
+  @@index([status, dueDate])
+  @@index([type, priority])
+  @@map("assignments")
+}
+
+model Notification {
+  id       String               @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String               @db.ObjectId
+  type     NotificationType
+  priority NotificationPriority @default(MEDIUM)
+  status   NotificationStatus   @default(UNREAD)
+
+  // Conteúdo da notificação
+  title      String
+  message    String
+  actionText String? // Texto do botão (ex: "Ver Aula", "Marcar como Feito")
+  actionUrl  String? // URL para onde levar o usuário
+
+  // Dados relacionados (para construir links dinâmicos)
+  relatedEntityType String? // "lesson", "assignment", "student", etc.
+  relatedEntityId   String? @db.ObjectId
+
+  // 🆕 CAMPO PARA PREVENÇÃO DE DUPLICATAS
+  uniqueHash String? // Hash único baseado em tipo + entidade + metadata específicos
+
+  // Metadados adicionais
+  metadata Json? // Dados extras específicos por tipo
+
+  // Configurações de exibição
+  showInToast   Boolean @default(true) // Mostrar como toast
+  showInBrowser Boolean @default(false) // Mostrar como notificação browser
+  showInPage    Boolean @default(true) // Mostrar na página de notificações
+
+  // Controle de repetição (REMOVIDO cooldown)
+  lastShownAt DateTime? // Última vez que foi mostrada como toast
+
+  // Agendamento
+  scheduledFor DateTime? // Quando deve ser mostrada (para agendamentos futuros)
+  expiresAt    DateTime? // Data de expiração (auto-cleanup)
+
+  // Controle de entrega
+  toastShown   Boolean @default(false) // Toast já foi mostrado
+  browserShown Boolean @default(false) // Notificação browser já foi mostrada
+
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  readAt    DateTime? // Quando foi marcada como lida
+
+  // Relações
+  user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  // 🆕 CONSTRAINT OPCIONAL PARA HASH ÚNICO (se quiser garantir a nível de DB)
+  // @@unique([uniqueHash], name: "unique_notification_hash")
+
+  // 🆕 ÍNDICES OTIMIZADOS PARA PREVENÇÃO DE DUPLICATAS
+  @@index([userId, status, createdAt])
+  @@index([userId, type, status])
+  @@index([scheduledFor, status])
+  @@index([expiresAt])
+  @@index([relatedEntityType, relatedEntityId])
+  @@index([priority, status, createdAt])
+  @@index([showInToast, toastShown])
+  @@index([showInBrowser, browserShown])
+  // 🆕 ÍNDICES PARA PREVENÇÃO DE DUPLICATAS
+  @@index([userId, type, relatedEntityId, status]) // Principal para verificar duplicatas
+  @@index([uniqueHash]) // Para verificação rápida por hash
+  @@index([userId, type, relatedEntityId, expiresAt]) // Para verificação com expiração
+  @@map("notifications")
+}
+
+model SchoolActivity {
+  id       String @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String @db.ObjectId // Quem fez a ação
+  userType String // "teacher" ou "student"
+
+  // Informações da ação
+  action     SchoolActivityAction
+  entityType String // "lesson", "assignment", "profile", "student", etc.
+  entityId   String?              @db.ObjectId // ID da entidade relacionada
+  entityName String? // Nome/título da entidade para facilitar exibição
+
+  // Descrição e detalhes
+  title       String // Título amigável da ação
+  description String? // Descrição detalhada
+
+  // Dados das mudanças (para updates)
+  changes  Json? // Mudanças específicas (oldValue, newValue)
+  metadata Json? // Dados extras (IDs relacionados, contexto, etc.)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Relações
+  user User @relation("UserSchoolActivities", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Índices otimizados
+  @@index([userId, createdAt]) // Principal para buscar atividades por usuário
+  @@index([userType, action, createdAt]) // Para filtros por tipo
+  @@index([entityType, entityId]) // Para buscar por entidade
+  @@index([createdAt]) // Para limpeza/manutenção
+  @@index([userId, action, createdAt]) // Para filtros específicos
+  @@map("school_activities")
+}
+
+// Modelo para conquistas do usuário
+model UserAchievement {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Identificação
+  userId  String @db.ObjectId
+  badgeId String // ID único do badge (ex: "first-goal", "collector-bronze")
+
+  // Informações da conquista
+  name        String
+  description String
+  category    AchievementCategory
+  rarity      AchievementRarity
+
+  // Progresso e completude
+  progress    Int? // Progresso atual (se aplicável)
+  maxProgress Int? // Progresso máximo (se aplicável)
+
+  // XP e recompensas
+  xpReward Int @default(0)
+
+  // Controle de notificação
+  isNew               Boolean   @default(true) // Se é nova (não vista pelo usuário)
+  notificationShown   Boolean   @default(false) // Se toast foi mostrado
+  notificationShownAt DateTime? // Quando toast foi mostrado
+  lastViewedAt        DateTime? // Última vez que foi vista
+
+  // Timestamps
+  unlockedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  // Relações
+  user User @relation("UserAchievements", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Constraints
+  @@unique([userId, badgeId])
+  @@index([userId, category])
+  @@index([userId, rarity])
+  @@index([userId, isNew])
+  @@index([category, rarity])
+  @@index([unlockedAt])
+  @@map("user_achievements")
+}
+
+// Modelo para tracking de progresso de conquistas
+model AchievementProgress {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId  String @db.ObjectId
+  badgeId String // ID do badge sendo rastreado
+
+  // Valores de progresso
+  currentValue       Int       @default(0) // Valor atual
+  lastCheckedAt      DateTime  @default(now())
+  lastProgressUpdate DateTime? // Última vez que houve progresso
+
+  // Metadados para otimização
+  metadata Json? // Dados específicos para o cálculo
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  user User @relation("AchievementProgress", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Constraints
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@index([badgeId])
+  @@index([lastProgressUpdate])
+  @@map("achievement_progress")
+}
+
+model SharedProgressReport {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Identificação
+  teacherId String @db.ObjectId
+  studentId String @db.ObjectId
+
+  // Dados do relatório
+  title       String // Título personalizado pelo professor
+  description String? // Descrição opcional
+
+  // Período do relatório
+  periodStart DateTime
+  periodEnd   DateTime
+  periodLabel String
+
+  // Dados selecionados pelo professor (JSON com as seções escolhidas)
+  selectedSections Json // { overview: true, evolution: true, preferences: false, ... }
+
+  // Dados do relatório (snapshot dos dados no momento da criação)
+  reportData Json // Dados completos do relatório
+
+  // Configurações de visibilidade
+  isPublic      Boolean @default(false) // Se pode ser acessado sem login
+  allowComments Boolean @default(false) // Se aluno pode comentar
+
+  // Mensagem personalizada do professor
+  teacherMessage String?
+
+  // Status e controle
+  isActive     Boolean   @default(true)
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime?
+
+  // Timestamps
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  expiresAt DateTime? // Data de expiração (opcional)
+
+  // Relações
+  teacher Teacher @relation("TeacherSharedReports", fields: [teacherId], references: [id], onDelete: Cascade)
+  student Student @relation("StudentSharedReports", fields: [studentId], references: [id], onDelete: Cascade)
+
+  // Comentários do aluno (se permitido)
+  studentComments SharedReportComment[]
+
+  // Índices
+  @@index([teacherId, studentId])
+  @@index([createdAt, isActive])
+  @@index([isPublic, isActive])
+  @@map("shared_progress_reports")
+}
+
+model SharedReportComment {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  reportId  String @db.ObjectId
+  studentId String @db.ObjectId
+
+  content String
+  section String? // Seção específica do relatório que está comentando
+
+  isRead Boolean @default(false) // Se o professor leu
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  report  SharedProgressReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  student Student              @relation("StudentReportComments", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, createdAt])
+  @@index([studentId, createdAt])
+  @@map("shared_report_comments")
+}
+
+model ActivityLog {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Usuário que fez a ação (opcional para ações anônimas)
+  userId String? @db.ObjectId
+  
+  // Tipo de evento
+  type ActivityLogType
+  
+  // Ação descritiva (texto amigável)
+  action String
+  
+  // Entidade relacionada
+  entityType String? // "composer", "work", "score", "annotation", etc.
+  entityId   String? @db.ObjectId
+  entityName String? // Nome da entidade para facilitar exibição
+  
+  // Metadados flexíveis (JSON com informações específicas do evento)
+  metadata Json?
+  
+  // Dados de request
+  ipAddress String?
+  userAgent String?
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  // Relações
+  user User? @relation("UserActivityLogs", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Índices otimizados
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([userId, type, createdAt])
+  @@map("activity_logs")
+}
+
+// ==================== BLOG ARTICLE ====================
+model BlogArticle {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  // ===== CAMPOS BÁSICOS =====
+  title             String              // Título do artigo
+  slug              String              @unique // URL amigável (único)
+  description       String?             // Descrição curta (preview/SEO)
+  content           Json                // Conteúdo rico (JSON com blocos)
+  
+  // Imagem de capa
+  coverImage        String?             // URL da imagem de capa
+  coverImageAlt     String?             // Alt text da imagem
+  coverImageCredit  String?             // Crédito do fotógrafo
+  ttsAudioUrl       String?  // ✅ NOVO
+
+  // Status e visibilidade
+  status            ArticleStatus       @default(DRAFT)
+  isFeatured        Boolean             @default(false) // Artigo em destaque (máx 5)
+  featuredOrder     Int?                // Ordem no carrossel de destaques (1-5)
+  
+  // ===== TIPOS E CATEGORIAS =====
+  types             ArticleType[]       @default([]) // Múltiplos tipos possíveis
+  
+  // Autor
+  authorId          String              @db.ObjectId
+  author            User                @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  
+  // Co-autores (opcional)
+  coAuthorIds       String[]            @default([]) @db.ObjectId
+  
+  // ===== DATAS =====
+  publishedAt       DateTime?           // Data de publicação
+  scheduledFor      DateTime?           // Agendado para (se SCHEDULED)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  readTime          Int?                @default(0)
+  // ===== VINCULAÇÕES COM OPUS ATLAS =====
+  // Compositores vinculados
+  composerIds       String[]            @default([]) @db.ObjectId
+  
+  // Obras vinculadas
+  workIds           String[]            @default([]) @db.ObjectId
+  
+  // Partituras vinculadas
+  scoreIds          String[]            @default([]) // IDs das partituras (WorkScore.sourceId)
+  
+  // Instrumentos vinculados
+  instrumentIds     String[]            @default([]) @db.ObjectId
+  
+  // Épocas vinculadas (múltiplas)
+  epochIds          String[]            @default([]) @db.ObjectId
+  
+  // ===== MÚSICA DE FUNDO =====
+  backgroundMusicUrl     String?        // URL do YouTube/externa
+  backgroundMusicTitle   String?        // Título da música
+  backgroundMusicVolume  Float?         @default(0.3) // Volume (0.0 - 1.0)
+  backgroundMusicLoop    Boolean        @default(true) // Loop
+  backgroundMusicAutoplay Boolean       @default(true) // Autoplay
+  
+  // ===== MÉTRICAS =====
+  viewCount         Int                 @default(0) // Visualizações
+  readCount         Int                 @default(0) // Leituras completas
+  avgReadTime       Int?                // Tempo médio de leitura (segundos)
+  estimatedReadTime Int?                // Tempo estimado (calculado)
+  
+  // ===== SEO =====
+  metaTitle         String?             // Meta title customizado
+  metaDescription   String?             // Meta description customizada
+  keywords          String[]            @default([]) // Keywords para SEO
+  
+  // ===== VERSIONING =====
+  version           Int                 @default(1) // Versão atual
+  
+  // ===== RELAÇÕES =====
+  categories        BlogArticleCategory[]  // M-N com categorias
+  tags              BlogArticleTag[]       // M-N com tags
+  media             BlogMedia[]            // Galeria de mídia
+  comments          BlogComment[]          // Comentários
+  likes             BlogLike[]             // Curtidas
+  bookmarks         BlogBookmark[]         // Salvos
+  versions          BlogArticleVersion[]   // Histórico de versões
+  
+  // ===== ÍNDICES =====
+  @@index([status, publishedAt])
+  @@index([authorId, status])
+  @@index([isFeatured, featuredOrder])
+  @@index([status, isFeatured])
+  @@index([publishedAt])
+  @@index([types])
+  @@index([viewCount])
+  @@map("blog_articles")
+}
+
+// ==================== BLOG CATEGORY ====================
+model BlogCategory {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  name        String   // Nome da categoria
+  slug        String   @unique // URL amigável
+  description String?  // Descrição da categoria
+  
+  // Hierarquia (subcategorias)
+  parentId    String?  @db.ObjectId
+  parent      BlogCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    BlogCategory[] @relation("CategoryHierarchy")
+  showInMenu  Boolean @default(true)
+  isActive    Boolean @default(true)
+  image       String?
+  // Aparência
+  icon        String?  // Emoji ou classe de ícone
+  color       String?  // Cor hex (#000000)
+  coverImage  String?  // Imagem de capa da categoria
+  
+  // Ordem de exibição
+  order       Int      @default(0)
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  articles  BlogArticleCategory[]
+  
+  @@index([parentId])
+  @@index([order])
+  @@map("blog_categories")
+}
+
+// ==================== BLOG TAG ====================
+model BlogTag {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  name  String @unique // Nome da tag (#barroco)
+  slug  String @unique // URL amigável
+  
+  // Metadados
+  description String? // Descrição da tag
+  color       String? // Cor hex para visualização
+  
+  // Contadores (cache)
+  articleCount Int @default(0) // Quantos artigos usam essa tag
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  articles BlogArticleTag[]
+  
+  @@index([articleCount])
+  @@map("blog_tags")
+}
+
+// ==================== TABELAS DE JUNÇÃO ====================
+
+// M-N: Artigo <-> Categoria
+model BlogArticleCategory {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId  String @db.ObjectId
+  categoryId String @db.ObjectId
+  
+  article  BlogArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  category BlogCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([articleId, categoryId])
+  @@index([articleId])
+  @@index([categoryId])
+  @@map("blog_article_categories")
+}
+
+// M-N: Artigo <-> Tag
+model BlogArticleTag {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  tagId     String @db.ObjectId
+  
+  article BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     BlogTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([articleId, tagId])
+  @@index([articleId])
+  @@index([tagId])
+  @@map("blog_article_tags")
+}
+
+// ==================== BLOG MEDIA ====================
+model BlogMedia {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  // Tipo e dados
+  type      MediaType
+  url       String    // URL da mídia (YouTube, Vimeo, Cloudinary, etc)
+  title     String?   // Título/legenda
+  caption   String?   // Legenda adicional
+  credit    String?   // Crédito do autor
+  alt       String?   // Alt text (para imagens)
+  
+  // Metadados
+  thumbnailUrl String? // Thumbnail (para vídeos)
+  duration     Int?    // Duração em segundos (para vídeos)
+  width        Int?    // Largura original
+  height       Int?    // Altura original
+  fileSize     Int?    // Tamanho em bytes
+  
+  // Ordem na galeria
+  order     Int @default(0)
+  
+  // Inline ou galeria
+  isInline  Boolean @default(false) // Se está inline no conteúdo
+  inGallery Boolean @default(true)  // Se aparece na galeria
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([articleId, type])
+  @@index([articleId, order])
+  @@map("blog_media")
+}
+
+// ==================== BLOG COMMENT ====================
+model BlogComment {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("BlogComments", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Conteúdo
+  content String // Texto do comentário
+  
+  // Comentários aninhados (respostas)
+  parentId String?       @db.ObjectId
+  parent   BlogComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies  BlogComment[] @relation("CommentReplies")
+  
+  // Status e moderação
+  status CommentStatus @default(APPROVED) // Se precisa moderação
+  isEdited    Boolean    @default(false)
+  
+  // Métricas
+  likeCount Int @default(0) // Cache de curtidas
+  
+  // Flags/Reports
+  isFlagged    Boolean @default(false)
+  flagReason   String? // Motivo do report
+  flaggedBy    String? @db.ObjectId // Quem reportou
+  moderatedBy  String? @db.ObjectId // Quem moderou
+  moderatedAt  DateTime?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  likes BlogCommentLike[]
+  
+  @@index([articleId, status, createdAt])
+  @@index([userId])
+  @@index([parentId])
+  @@index([status])
+  @@map("blog_comments")
+}
+
+// ==================== BLOG COMMENT LIKE ====================
+model BlogCommentLike {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  commentId String @db.ObjectId
+  comment   BlogComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("BlogCommentLikes", fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([commentId, userId])
+  @@index([commentId])
+  @@index([userId])
+  @@map("blog_comment_likes")
+}
+
+// ==================== BLOG LIKE ====================
+model BlogLike {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("BlogLikes", fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([articleId, userId])
+  @@index([articleId])
+  @@index([userId])
+  @@map("blog_likes")
+}
+
+// ==================== BLOG BOOKMARK ====================
+model BlogBookmark {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("BlogBookmarks", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Notas pessoais
+  notes String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([articleId, userId])
+  @@index([userId, createdAt])
+  @@map("blog_bookmarks")
+}
+
+// ==================== BLOG ARTICLE VERSION ====================
+model BlogArticleVersion {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  articleId String @db.ObjectId
+  article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  // Versão
+  version Int // Número da versão
+  
+  // Snapshot completo do artigo naquela versão
+  snapshot Json // Todo o conteúdo + metadados
+  
+  // Quem fez a mudança
+  editedBy  String @db.ObjectId
+  changeLog String? // Descrição das mudanças
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  @@index([articleId, version])
+  @@index([articleId, createdAt])
+  @@map("blog_article_versions")
+}
+
+
+// ==================== MODELO DE ASSINATURA ====================
+model Subscription {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relacionamento com usuário
+  userId String @db.ObjectId
+  user   User   @relation("UserSubscriptions", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Plano e período
+  planType      PlanType       @default(FREE)
+  billingPeriod BillingPeriod? // null para FREE
+  
+  // Status
+  status SubscriptionPlanStatus @default(ACTIVE)
+  
+  // 🔁 Stripe integration
+  stripeSessionId    String?   // session.id
+  stripeCheckoutUrl  String?   // session.url
+  stripeSubscriptionId String? // depois do webhook
+  stripeCustomerId    String?
+
+  // Datas
+  startDate     DateTime  @default(now())
+  endDate       DateTime? // null = indefinido (FREE)
+  trialEndDate  DateTime? // Data fim do trial
+  cancelledAt   DateTime? // Data do cancelamento
+  
+  // Financeiro
+  price         Float?   // Preço mensal/anual
+  currency      String   @default("BRL")
+  autoRenew     Boolean  @default(true)
+  
+  // Mercado Pago
+  mpSubscriptionId   String? // ID da assinatura MP (se recorrente)
+  
+  // Cupom aplicado
+  couponId String? @db.ObjectId
+  coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  
+  // Metadados
+  metadata Json? // Dados extras (ex: features específicas)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  payments  Payment[]
+  invoices  Invoice[]
+  history   SubscriptionHistory[]
+  
+  @@index([userId, status])
+  @@index([status, endDate])
+  @@index([planType, status])
+  @@map("subscriptions")
+}
+
+// ==================== MODELO DE PAGAMENTO ====================
+model Payment {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relacionamento
+  subscriptionId String       @db.ObjectId
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  stripeSessionId String?
+  // Valores
+  amount        Float
+  currency      String  @default("BRL")
+  discountAmount Float? @default(0) // Desconto aplicado
+  finalAmount   Float   // Valor final pago
+  
+  // Status e método
+  status        PaymentStatus
+  paymentMethod PaymentMethod?
+  
+  // Mercado Pago
+  mpPaymentId        String? @unique // ID do pagamento no MP
+  mpStatus           String? // Status original do MP
+  mpStatusDetail     String? // Detalhe do status MP
+  
+  // Dados do pagamento
+  payerEmail String?
+  payerName  String?
+  payerDocument String? // CPF/CNPJ
+  
+  // Datas
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  // Metadados
+  metadata Json? // Dados extras do MP
+  
+  // Relação com nota fiscal
+  invoice Invoice?
+  
+  @@index([subscriptionId])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+// ==================== MODELO DE NOTA FISCAL ====================
+model Invoice {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relacionamentos
+  subscriptionId String       @db.ObjectId
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  paymentId String  @unique @db.ObjectId
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  
+  // Número da nota
+  invoiceNumber String @unique // Ex: NF-2024-001234
+  
+  // Valores
+  amount       Float
+  taxAmount    Float  @default(0)
+  totalAmount  Float
+  currency     String @default("BRL")
+  
+  // Status
+  status InvoiceStatus @default(PENDING)
+  
+  // Datas
+  issueDate DateTime  @default(now())
+  dueDate   DateTime
+  paidAt    DateTime?
+  
+  // Dados do cliente
+  customerName     String
+  customerEmail    String
+  customerDocument String  // CPF/CNPJ
+  customerAddress  String?
+  customerCity     String?
+  customerState    String?
+  customerZipCode  String?
+  
+  // Dados da empresa (Opus Atlas)
+  companyName     String @default("Opus Atlas Ltda")
+  companyDocument String @default("00.000.000/0000-00") // CNPJ fictício
+  companyAddress  String @default("São Paulo, SP")
+  
+  // Arquivo PDF
+  pdfUrl String? // URL do PDF gerado
+  
+  // Descrição
+  description String // Descrição do serviço
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([subscriptionId])
+  @@index([status, dueDate])
+  @@map("invoices")
+}
+
+// ==================== HISTÓRICO DE ASSINATURAS ====================
+model SubscriptionHistory {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relacionamento
+  subscriptionId String       @db.ObjectId
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  
+  // Ação realizada
+  action String // CREATED, UPGRADED, DOWNGRADED, CANCELLED, REACTIVATED, RENEWED, EXPIRED
+  
+  // Planos
+  fromPlan PlanType?
+  toPlan   PlanType?
+  
+  // Valores (se aplicável)
+  fromPrice Float?
+  toPrice   Float?
+  
+  // Motivo
+  reason String? // Motivo da mudança (ex: "upgrade manual", "trial expirado")
+  
+  // Metadados
+  metadata Json? // Dados extras
+  
+  // Timestamp
+  createdAt DateTime @default(now())
+  
+  @@index([subscriptionId, createdAt])
+  @@index([userId, createdAt])
+  @@map("subscription_history")
+}
+
+// ==================== MODELO DE CUPOM ====================
+model Coupon {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Código do cupom
+  code String @unique // Ex: "BEMVINDO20", "PROMO50"
+  
+  // Tipo e valor
+  type           CouponType
+  discountValue  Float      // 20 (para 20% ou R$ 20)
+  maxDiscount    Float?     // Desconto máximo (para percentual)
+  
+  // Aplicável a quais planos
+  applicablePlans PlanType[] @default([]) // [] = todos os planos
+  
+  // Período de validade
+  validFrom  DateTime
+  validUntil DateTime
+  
+  // Limites de uso
+  maxUses       Int?  // null = ilimitado
+  usedCount     Int   @default(0)
+  maxUsesPerUser Int? @default(1) // Quantas vezes cada usuário pode usar
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  // Trial estendido (se aplicável)
+  extraTrialDays Int? // Dias extras de trial
+  
+  // Descrição
+  description String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  subscriptions Subscription[]
+  usages        CouponUsage[]
+  
+  @@index([code, isActive])
+  @@index([validFrom, validUntil])
+  @@map("coupons")
+}
+
+// ==================== USO DE CUPONS ====================
+model CouponUsage {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Relacionamentos
+  couponId String @db.ObjectId
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("UserCouponUsages", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Valor do desconto aplicado
+  discountApplied Float
+  
+  // Timestamp
+  usedAt DateTime @default(now())
+  
+  @@unique([couponId, userId])
+  @@index([userId])
+  @@map("coupon_usages")
+}
+
+model PlanPricing {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Tipo de plano
+  planType PlanType // FREE, PLUS, MENTOR, MAESTRO
+  
+  // Preços por período
+  monthlyPrice    Float  @default(0)
+  quarterlyPrice  Float? // Trimestral
+  biannualPrice   Float? // Semestral
+  yearlyPrice     Float? // Anual
+  
+  // Descontos aplicados (%)
+  quarterlyDiscount Float @default(10) // 10% desconto
+  biannualDiscount  Float @default(15) // 15% desconto
+  yearlyDiscount    Float @default(20) // 20% desconto
+  
+  // Dias de trial
+  trialDays Int @default(0)
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  // Metadados
+  features     Json? // Features incluídas no plano
+  description  String?
+  displayOrder Int    @default(0) // Ordem de exibição
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Constraint: apenas um preço ativo por plano
+  @@index([planType])
+  @@index([isActive])
+  @@map("plan_pricing")
+}
+
+// ==================== SISTEMA DE EVENTOS ====================
+
+enum EventType {
+  CONCERT          // Concerto
+  RECITAL          // Recital
+  OPEN_REHEARSAL
+  OPERA            // Ópera
+  CHAMBER_MUSIC    // Música de Câmara
+  ORCHESTRA        // Orquestra Sinfônica
+  MASTERCLASS      // Masterclass
+  WORKSHOP         // Workshop
+  FESTIVAL         // Festival
+  COMPETITION      // Competição
+  LECTURE          // Palestra
+  EXHIBITION       // Exposição
+  OTHER            // Outro
+  CHOIR
+  BALLET
+  CHORAL
+}
+
+enum EventStatus {
+  DRAFT            // Rascunho (ainda não publicado)
+  PENDING          // Pendente aprovação (se veio de scraper ou usuário)
+  PUBLISHED        // Publicado (aprovado e visível)
+  CANCELLED        // Cancelado
+  POSTPONED        // Adiado
+  COMPLETED        // Finalizado
+}
+
+enum EventSource {
+  SCRAPER          // Vindo do scraper automático
+  ADMIN            // Cadastrado por admin
+  USER             // Cadastrado por usuário comum
+  VENUE            // Cadastrado pela própria sala
+  IMPORT           // Importado de fonte externa
+}
+
+// ==================== SALAS DE CONCERTO ====================
+model Venue {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Identificação
+  name        String              // "Sala São Paulo", "Teatro Amazonas"
+  slug        String    @unique   // URL amigável
+  shortName   String?             // Abreviação (ex: "OSESP")
+  
+  // Localização
+  city        String              // "São Paulo"
+  state       String              // "SP"
+  country     String    @default("Brasil")
+  address     String?             // Endereço completo
+  zipCode     String?
+  
+  // Informações de contato
+  website     String?
+  email       String?
+  phone       String?
+  
+  // Características da sala
+  capacity    Int?                // Capacidade total
+  description String?             // Descrição da sala
+  history     String?             // História da sala
+  
+  // Mídia
+  logoUrl       String?
+  coverImageUrl String?
+  galleryImages String[] @default([])
+  
+  // Dados para scraping
+  scrapingEnabled Boolean @default(false)
+  scrapingUrl     String?         // URL da página de eventos
+  scrapingConfig  Json?           // Config específica de scraping
+  lastScrapedAt   DateTime?
+  scrapingStatus  String?         // "success", "error", "pending"
+  scrapingError   String?
+  
+  // Metadados
+  isVerified  Boolean  @default(false) // Verificado pela equipe
+  isActive    Boolean  @default(true)
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relações
+  events Event[] @relation("VenueEvents")
+  
+  @@index([city, state])
+  @@index([isActive])
+  @@map("venues")
+}
+
+// ==================== EVENTOS ====================
+model Event {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Identificação
+  title       String
+  slug        String    @unique
+  subtitle    String?
+  description String?             // Descrição curta
+  fullDetails String?             // Detalhes completos (markdown/rich text)
+  
+  // Tipo e status
+  type        EventType
+  status      EventStatus @default(PENDING)
+  source      EventSource @default(ADMIN)
+  
+  // Local
+  venueId     String      @db.ObjectId
+  venue       Venue       @relation("VenueEvents", fields: [venueId], references: [id], onDelete: Cascade)
+  room        String?     // "Sala Principal", "Sala de Câmara"
+  
+  // Data e horário
+  startDate   DateTime
+  endDate     DateTime?   // Para eventos de múltiplos dias
+  endTime     String?
+    venueDetails     String?
+    ticketInfo     String?
+
+  startTime   String      // "20:00"
+  duration    Int?        // Duração em minutos
+  doors       String?     // Horário de abertura das portas
+  // Programa
+  program     Json?       // Estrutura detalhada do programa
+  // Exemplo: [
+  //   { composer: "ObjectId", work: "ObjectId", performer: "string" },
+  //   { composer: "ObjectId", work: "ObjectId", performer: "string" }
+  // ]
+  
+  // Vinculações com Opus Atlas
+  composerIds     String[] @default([]) @db.ObjectId
+  workIds         String[] @default([]) @db.ObjectId
+  instrumentIds   String[] @default([]) @db.ObjectId
+  epochIds        String[] @default([]) @db.ObjectId
+  
+  // Artistas e performers
+  performers      Json?    // Array de performers
+  // Exemplo: [
+  //   { name: "Yuja Wang", role: "Piano", bio: "..." },
+  //   { name: "Gustavo Dudamel", role: "Maestro", bio: "..." }
+  // ]
+  
+  conductor       String?  // Nome do maestro
+  soloists        String[] @default([]) // Nomes dos solistas
+  ensemble        String?  // Nome do grupo/orquestra
+  
+  // Ingressos
+  ticketUrl       String?  // Link para compra
+
+  ticketPrice     Json?    // Estrutura de preços
+  // Exemplo: { min: 50, max: 200, currency: "BRL", categories: [...] }
+  isFree          Boolean  @default(false)
+  
+  // Mídia
+  imageUrl       String?  // Cartaz do evento
+  coverImageUrl   String?
+  galleryImages   String[] @default([])
+  videoUrl        String?  // Trailer/teaser
+  
+  // Acessibilidade
+  ageRating       String?  // Classificação etária
+  
+  // Destaque e featured
+  isFeatured      Boolean  @default(false)
+  featuredOrder   Int?     // Ordem no carrossel
+  
+  // Dados de scraping (se aplicável)
+  externalId    String?     
+  externalUrl     String?  // URL original do evento
+  scrapedData     Json?    // Dados brutos do scraping
+  
+  // Moderação e qualidade
+  isVerified      Boolean  @default(false)
+  verifiedBy      String?  @db.ObjectId
+  verifiedAt      DateTime?
+  
+  qualityScore    Int?     // Score de qualidade dos dados (0-100)
+  completeness    Float?   // % de campos preenchidos
+  
+  // Submissão por usuário
+  submittedBy     String?  @db.ObjectId
+  submittedAt     DateTime?
+  
+  // Métricas
+  viewCount       Int      @default(0)
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  keywords        String[] @default([])
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  publishedAt DateTime?
+  
+  // Relações
+  reminders    EventReminder[] @relation("EventReminders")
+  
+  @@index([venueId, startDate])
+  @@index([externalId])
+  @@index([status, startDate])
+  @@index([type, startDate])
+  @@index([isFeatured, startDate])
+  @@index([composerIds])
+  @@index([source, status])
+  @@map("events")
+}
+
+
+// ==================== LEMBRETES DE EVENTOS ====================
+model EventReminder {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  eventId String @db.ObjectId
+  event   Event  @relation("EventReminders", fields: [eventId], references: [id], onDelete: Cascade)
+  
+  userId String @db.ObjectId
+  user   User   @relation("UserEventReminders", fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Quando lembrar
+  reminderTime DateTime  // Data/hora do lembrete
+  reminderType String    // "1_day_before", "1_hour_before", "custom"
+  
+  // Status
+  sent       Boolean   @default(false)
+  sentAt     DateTime?
+  
+  // Canal
+  channel String @default("notification") // "notification", "email", "both"
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([eventId, userId, reminderTime])
+  @@index([reminderTime, sent])
+  @@map("event_reminders")
+}
+
+// ==================== LOG DE SCRAPING ====================
+model ScrapingLog {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  venueId String? @db.ObjectId
+  
+  // Metadados do scraping
+  source      String    // "osesp", "teatro_amazonas", etc
+  status      String    // "success", "partial", "error"
+  newEvents      Int      // ✅ CORRETO (não 'eventsAdded')
+
+  // Estatísticas
+  eventsFound    Int @default(0)
+  eventsCreated  Int @default(0)
+  eventsUpdated  Int @default(0)
+  eventsSkipped  Int @default(0)
+  
+  // Dados
+  duration    Int?      // Duração em ms
+  error       String?   // Mensagem de erro (se houver)
+  details     Json?     // Detalhes adicionais
+  
+  // Timestamps
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  
+  @@index([source, startedAt])
+  @@index([status])
+  @@map("scraping_logs")
+}
