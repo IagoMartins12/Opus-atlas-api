@@ -464,11 +464,9 @@ export class TheatroMunicipalScraperService
     const startTime = Date.now();
 
     try {
-      // 1. Fazer o scraping
       const scrapedEvents = await this.scrapeEvents();
 
-      // 2. Verificar duplicatas no banco
-      const newEvents: ScrapedEvent[] = [];
+      const allEvents: ScrapedEvent[] = [];
       let duplicates = 0;
 
       for (const event of scrapedEvents) {
@@ -481,33 +479,46 @@ export class TheatroMunicipalScraperService
               },
             ],
           },
+          select: {
+            id: true,
+            slug: true,
+          },
         });
 
         if (existingEvent) {
           duplicates++;
+          allEvents.push({
+            ...event,
+            isDuplicate: true,
+            existingEventId: existingEvent.id,
+            existingEventSlug: existingEvent.slug,
+          } as any);
           this.log(`⚠️ Duplicata detectada: ${event.title}`);
         } else {
-          newEvents.push(event);
+          allEvents.push({
+            ...event,
+            isDuplicate: false,
+          } as any);
         }
       }
 
       const executionTime = Date.now() - startTime;
 
       this.log(`
-        📊 Resumo:
-        - Total scraped: ${scrapedEvents.length}
-        - Novos eventos: ${newEvents.length}
-        - Duplicatas: ${duplicates}
-        - Tempo: ${executionTime}ms
-      `);
+      📊 Resumo:
+      - Total scraped: ${scrapedEvents.length}
+      - Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
+      - Duplicatas: ${duplicates}
+      - Tempo: ${executionTime}ms
+    `);
 
       return {
         success: true,
         eventsFound: this.state.eventsFound,
         eventsScraped: this.state.eventsScraped,
-        newEvents: newEvents.length,
+        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
         duplicates,
-        events: newEvents,
+        events: allEvents,
         errors: this.state.errors,
         executionTime,
       };

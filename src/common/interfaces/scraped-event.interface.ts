@@ -16,6 +16,7 @@ export interface ScrapedEvent {
   composerNames: string[];
   performers: string[];
   program: string | null;
+  isDuplicate?: boolean;
 }
 
 export interface ScraperResponse {

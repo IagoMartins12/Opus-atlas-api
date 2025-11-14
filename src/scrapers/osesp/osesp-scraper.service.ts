@@ -421,7 +421,7 @@ export class OsespScraperService extends BaseScraper {
       const scrapedEvents = await this.scrapeEvents();
 
       // 2. Verificar duplicatas no banco
-      const newEvents: ScrapedEvent[] = [];
+      const allEvents: ScrapedEvent[] = []; // ✅ RETORNAR TODOS
       let duplicates = 0;
 
       for (const event of scrapedEvents) {
@@ -434,33 +434,48 @@ export class OsespScraperService extends BaseScraper {
               },
             ],
           },
+          select: {
+            id: true,
+            slug: true,
+          },
         });
 
         if (existingEvent) {
           duplicates++;
+          // ✅ Adicionar evento duplicado com flag
+          allEvents.push({
+            ...event,
+            isDuplicate: true,
+            existingEventId: existingEvent.id,
+            existingEventSlug: existingEvent.slug,
+          } as any);
           this.log(`⚠️ Duplicata detectada: ${event.title}`);
         } else {
-          newEvents.push(event);
+          // ✅ Adicionar evento novo
+          allEvents.push({
+            ...event,
+            isDuplicate: false,
+          } as any);
         }
       }
 
       const executionTime = Date.now() - startTime;
 
       this.log(`
-        📊 Resumo:
-        - Total scraped: ${scrapedEvents.length}
-        - Novos eventos: ${newEvents.length}
-        - Duplicatas: ${duplicates}
-        - Tempo: ${executionTime}ms
-      `);
+      📊 Resumo:
+      - Total scraped: ${scrapedEvents.length}
+      - Novos eventos: ${allEvents.filter((e) => !e.isDuplicate).length}
+      - Duplicatas: ${duplicates}
+      - Tempo: ${executionTime}ms
+    `);
 
       return {
         success: true,
         eventsFound: this.state.eventsFound,
         eventsScraped: this.state.eventsScraped,
-        newEvents: newEvents.length,
+        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
         duplicates,
-        events: newEvents,
+        events: allEvents, // ✅ RETORNAR TODOS OS EVENTOS
         errors: this.state.errors,
         executionTime,
       };
