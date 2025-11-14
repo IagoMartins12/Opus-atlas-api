@@ -6,11 +6,19 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // Habilitar CORS para o Next.js poder chamar
+  // app.enableCors({
+  //   origin: process.env.ALLOWED_ORIGINS?.split(',') || [
+  //     'http://localhost:3000',
+  //     'https://opusatlas.com.br/',
+  //     'https://opusatlas.com.br',
+  //   ],
+  //   credentials: true,
+  // });
+
   app.enableCors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || [
-      'http://localhost:3000',
-      'https://opusatlas.com.br/',
-    ],
+    origin: (origin, callback) => {
+      callback(null, true);
+    },
     credentials: true,
   });
 
