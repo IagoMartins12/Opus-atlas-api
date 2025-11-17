@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ScrapersModule } from './scrapers/scapers.module';
 import { PrismaService } from './prisma/prisma.service';
+import { ScrapersModule } from './scrapers/scrapers.module';
 
 @Module({
   imports: [

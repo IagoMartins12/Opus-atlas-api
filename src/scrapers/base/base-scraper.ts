@@ -1,3 +1,4 @@
+// base-scraper.ts
 import { Injectable } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
@@ -15,6 +16,17 @@ export interface ScraperState {
   eventsScraped: number;
   errors: string[];
   startTime: number;
+}
+
+export interface ScraperResponse {
+  success: boolean;
+  eventsFound: number;
+  eventsScraped: number;
+  newEvents: number;
+  duplicates: number;
+  events?: ScrapedEvent[]; // ✅ ADICIONAR ESTA LINHA
+  errors: string[];
+  executionTime: number; // ✅ OU 'duration' se preferir
 }
 
 @Injectable()
@@ -43,8 +55,58 @@ export abstract class BaseScraper {
     };
   }
 
+  // ✅ GETTER PÚBLICO para config
+  public getConfig(): ScraperConfig {
+    return this.config;
+  }
+
   // Métodos abstratos que DEVEM ser implementados pelas classes filhas
-  abstract scrapeEvents(): Promise<ScrapedEvent[]>;
+  abstract scrapeEvents(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScrapedEvent[]>;
+
+  /**
+   * ✅ SCRAPE AND CHECK DUPLICATES
+   * Método principal que faz scraping e verifica duplicatas no banco
+   */
+  async scrapeAndCheckDuplicates(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScraperResponse> {
+    const startTime = Date.now();
+
+    try {
+      // Fazer scraping
+      const events = await this.scrapeEvents(onProgress);
+      this.state.eventsFound = events.length;
+
+      // Retornar resposta (sem verificação de duplicatas no BaseScraper)
+      // A verificação será feita pelos scrapers filhos se necessário
+      const executionTime = Date.now() - startTime;
+
+      return {
+        success: true,
+        eventsFound: events.length,
+        eventsScraped: events.length,
+        newEvents: events.length,
+        duplicates: 0,
+        errors: this.state.errors,
+        executionTime,
+      };
+    } catch (error) {
+      this.logError(error);
+      const executionTime = Date.now() - startTime;
+
+      return {
+        success: false,
+        eventsFound: 0,
+        eventsScraped: 0,
+        newEvents: 0,
+        duplicates: 0,
+        errors: this.state.errors,
+        executionTime,
+      };
+    }
+  }
 
   /**
    * ✅ DELAY - Aguarda um tempo antes de fazer próxima requisição

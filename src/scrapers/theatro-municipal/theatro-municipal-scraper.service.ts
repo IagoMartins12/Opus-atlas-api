@@ -1,10 +1,11 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { BaseScraper, ScraperConfig } from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
 import {
-  ScrapedEvent,
+  BaseScraper,
+  ScraperConfig,
   ScraperResponse,
-} from '../../common/interfaces/scraped-event.interface';
+} from '../base/base-scraper';
+import { PrismaService } from '../../prisma/prisma.service';
+import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import * as cheerio from 'cheerio';
 import puppeteer, { Browser } from 'puppeteer-core';
 import { extractComposerNames } from '../../utils/text-cleaner';
