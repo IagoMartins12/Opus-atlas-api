@@ -87,7 +87,7 @@ export class TheatroMunicipalScraperService
 
       this.log('✅ Browser inicializado com sucesso');
     } catch (error) {
-      this.log(`❌ Erro ao inicializar browser: ${error.message}`, 'error');
+      this.log(`❌ Erro ao inicializar browser: ${error.message}`);
       throw error;
     }
   }
@@ -140,9 +140,14 @@ export class TheatroMunicipalScraperService
   /**
    * 🎯 MÉTODO PRINCIPAL - Scrape de eventos
    */
-  async scrapeEvents(): Promise<ScrapedEvent[]> {
+  async scrapeEvents(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScrapedEvent[]> {
     try {
+      // 1. Inicializar browser (0% - 10%)
+      onProgress?.(0, 100, 'Inicializando browser...');
       await this.initBrowser();
+      onProgress?.(10, 100, 'Browser inicializado');
 
       const startDateStr = this.formatDate(this.options.startDate);
       const endDateStr = this.formatDate(this.options.endDate);
@@ -151,6 +156,9 @@ export class TheatroMunicipalScraperService
 
       console.log(`🎭 Buscando eventos do Theatro Municipal...`);
       console.log(`📅 Período: ${startDateStr} a ${endDateStr}`);
+
+      // 2. Coletar URLs (10% - 40%)
+      onProgress?.(15, 100, 'Carregando página...');
 
       const page = await this.browser!.newPage();
       await page.setViewport({ width: 1920, height: 1080 });
@@ -161,7 +169,6 @@ export class TheatroMunicipalScraperService
         timeout: this.options.timeout,
       });
 
-      // Aguardar carregamento dos cards
       await page.waitForSelector('.jet-listing-grid__items', {
         timeout: 10000,
       });
@@ -172,19 +179,22 @@ export class TheatroMunicipalScraperService
       let currentPage = 1;
       let hasNextPage = true;
 
-      // ==================== COLETAR URLS DE TODOS OS EVENTOS (COM PAGINAÇÃO) ====================
+      // Coletar URLs de todos os eventos (com paginação)
       while (hasNextPage) {
+        const pageProgress = 20 + Math.min(currentPage * 5, 20);
+        onProgress?.(
+          pageProgress,
+          100,
+          `Coletando URLs da página ${currentPage}...`,
+        );
+
         console.log(`📄 Coletando URLs da página ${currentPage}...`);
 
-        // Buscar links corretos
         const eventUrls = await page.evaluate(() => {
           const urls: string[] = [];
-
-          // Procurar por todos os links dentro dos items
           const items = document.querySelectorAll('.jet-listing-grid__item');
 
           items.forEach((item) => {
-            // Buscar link do título (h3 > a)
             const titleLink = item.querySelector(
               'h3.elementor-heading-title a',
             ) as HTMLAnchorElement;
@@ -204,25 +214,20 @@ export class TheatroMunicipalScraperService
         console.log(`  ✅ ${eventUrls.length} eventos encontrados`);
         allEventUrls = [...allEventUrls, ...eventUrls];
 
-        // Verificar se existe botão "Ver mais eventos"
         const loadMoreButton = await page.$('#ver-mais-eventos');
 
         if (loadMoreButton) {
           try {
             console.log(`  ➡️ Clicando em "Ver mais eventos"...`);
-
             await loadMoreButton.click();
-
             await this.delay(3000);
 
-            // Verificar se novos eventos foram carregados
             const newCount = await page.evaluate(() => {
               return document.querySelectorAll('.jet-listing-grid__item')
                 .length;
             });
 
             console.log(`  📊 Total de ${newCount} eventos carregados`);
-
             currentPage++;
           } catch {
             console.log(`  ⚠️ Erro ao clicar em "Ver mais"`);
@@ -233,7 +238,6 @@ export class TheatroMunicipalScraperService
           console.log(`  ✅ Todos os eventos carregados`);
         }
 
-        // Limite de segurança
         if (currentPage > 10) {
           console.log(`  ⚠️ Limite de páginas atingido`);
           break;
@@ -242,25 +246,40 @@ export class TheatroMunicipalScraperService
 
       await page.close();
 
-      // Remover duplicatas
       allEventUrls = [...new Set(allEventUrls)];
       console.log(
         `📊 Total de ${allEventUrls.length} eventos únicos encontrados`,
       );
 
-      // ==================== SCRAPE DETALHES DE CADA EVENTO ====================
-      const events: ScrapedEvent[] = [];
+      onProgress?.(
+        40,
+        100,
+        `${allEventUrls.length} eventos únicos encontrados`,
+      );
 
-      for (let i = 0; i < allEventUrls.length; i++) {
+      // 3. Scrape detalhes de cada evento (40% - 100%)
+      const events: ScrapedEvent[] = [];
+      const totalUrls = allEventUrls.length;
+
+      for (let i = 0; i < totalUrls; i++) {
         const url = allEventUrls[i];
-        console.log(`\n[${i + 1}/${allEventUrls.length}] Processando: ${url}`);
+
+        const progressPercentage = 40 + Math.round((i / totalUrls) * 60);
+        onProgress?.(
+          progressPercentage,
+          100,
+          `Processando evento ${i + 1}/${totalUrls}...`,
+        );
+
+        console.log(`\n[${i + 1}/${totalUrls}] Processando: ${url}`);
 
         try {
-          const event = await this.scrapeEventDetails(url);
-          if (event) {
-            events.push(event);
-            this.state.eventsScraped++;
-            console.log(`  ✅ ${event.title}`);
+          // ✅ AGORA RETORNA ARRAY
+          const eventSessions = await this.scrapeEventDetails(url);
+
+          if (eventSessions && eventSessions.length > 0) {
+            events.push(...eventSessions); // ✅ Adicionar todas as sessões
+            this.state.eventsScraped += eventSessions.length;
           } else {
             console.log(`  ⚠️ Evento pulado (dados incompletos)`);
           }
@@ -269,11 +288,10 @@ export class TheatroMunicipalScraperService
           this.state.errors.push(`Failed to scrape ${url}: ${error}`);
         }
 
-        // Delay entre requests
         await this.delay(1500);
       }
 
-      this.state.eventsFound = allEventUrls.length;
+      this.state.eventsFound = totalUrls;
 
       console.log(
         `\n✅ Scraping concluído: ${events.length} eventos processados`,
@@ -281,14 +299,138 @@ export class TheatroMunicipalScraperService
       return events;
     } catch (error) {
       console.error('❌ Erro no scraping:', error);
+      onProgress?.(0, 100, `Erro: ${error.message}`);
       throw error;
     }
   }
 
   /**
+   * ✅ MÉTODO COMPLETO: Scrape + Verificação de Duplicatas COM PROGRESSO
+   */
+  async scrapeAndCheckDuplicates(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScraperResponse> {
+    const startTime = Date.now();
+
+    try {
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(),
+      };
+
+      onProgress?.(0, 100, 'Iniciando browser...');
+
+      // ✅ PASSAR CALLBACK DE PROGRESSO (0-80%)
+      const scrapedEvents = await this.scrapeEvents(
+        (current, total, message) => {
+          const mappedProgress = Math.round((current / 100) * 80);
+          onProgress?.(mappedProgress, 100, message);
+        },
+      );
+
+      onProgress?.(
+        80,
+        100,
+        `${scrapedEvents.length} eventos coletados. Verificando duplicatas...`,
+      );
+
+      const allEvents: ScrapedEvent[] = [];
+      let duplicates = 0;
+      const total = scrapedEvents.length;
+
+      for (let i = 0; i < scrapedEvents.length; i++) {
+        const event = scrapedEvents[i];
+
+        // ✅ PROGRESSO (80% - 100%)
+        const progressPercentage = 80 + Math.round((i / total) * 20);
+        onProgress?.(
+          progressPercentage,
+          100,
+          `Verificando duplicatas: ${i + 1}/${total}`,
+        );
+
+        const existingEvent = await this.prisma.event.findFirst({
+          where: {
+            OR: [
+              { externalId: event.externalId },
+              {
+                AND: [{ title: event.title }, { startDate: event.startDate }],
+              },
+            ],
+          },
+          select: {
+            id: true,
+            slug: true,
+          },
+        });
+
+        if (existingEvent) {
+          duplicates++;
+          allEvents.push({
+            ...event,
+            isDuplicate: true,
+            existingEventId: existingEvent.id,
+            existingEventSlug: existingEvent.slug,
+          } as any);
+          this.log(`⚠️ Duplicata detectada: ${event.title}`);
+        } else {
+          allEvents.push({
+            ...event,
+            isDuplicate: false,
+          } as any);
+        }
+      }
+
+      const executionTime = Date.now() - startTime;
+      onProgress?.(100, 100, 'Scraper concluído!');
+
+      this.log(`
+📊 Resumo:
+- Total scraped: ${scrapedEvents.length}
+- Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
+- Duplicatas: ${duplicates}
+- Tempo: ${executionTime}ms
+    `);
+
+      return {
+        success: true,
+        eventsFound: this.state.eventsFound,
+        eventsScraped: this.state.eventsScraped,
+        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
+        duplicates,
+        events: allEvents,
+        errors: this.state.errors,
+        executionTime,
+      };
+    } catch (error) {
+      onProgress?.(0, 100, `Erro: ${error.message}`);
+
+      return {
+        success: false,
+        eventsFound: 0,
+        eventsScraped: 0,
+        newEvents: 0,
+        duplicates: 0,
+        events: [],
+        errors: [error instanceof Error ? error.message : String(error)],
+        executionTime: Date.now() - startTime,
+      };
+    } finally {
+      await this.cleanup();
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(),
+      };
+    }
+  }
+  /**
    * 🎭 SCRAPE DETALHES DO EVENTO
    */
-  private async scrapeEventDetails(url: string): Promise<ScrapedEvent | null> {
+  private async scrapeEventDetails(url: string): Promise<ScrapedEvent[]> {
     const page = await this.browser!.newPage();
     await page.setUserAgent(this.config.userAgent!);
 
@@ -303,7 +445,7 @@ export class TheatroMunicipalScraperService
       const html = await page.content();
       const $ = cheerio.load(html);
 
-      // ==================== EXTRAIR INFORMAÇÕES ====================
+      // ==================== EXTRAIR INFORMAÇÕES COMUNS ====================
 
       // Título
       const title =
@@ -313,7 +455,7 @@ export class TheatroMunicipalScraperService
 
       if (!title) {
         console.warn('  ⚠️ Título não encontrado');
-        return null;
+        return [];
       }
 
       // Descrição
@@ -326,36 +468,6 @@ export class TheatroMunicipalScraperService
           }
         },
       );
-
-      // Data e horário
-      let startDate: Date | null = null;
-      let startTime: string | null = null;
-
-      // Buscar data e horário em todo o HTML
-      const dateRegex = /(\d{1,2})\/(\d{1,2})\/(\d{4})/;
-      const timeRegex = /(\d{1,2})[h:](\d{2})/i;
-
-      const fullText = $('body').text();
-      const dateMatch = fullText.match(dateRegex);
-      if (dateMatch) {
-        const [, day, month, year] = dateMatch;
-        startDate = new Date(
-          parseInt(year),
-          parseInt(month) - 1,
-          parseInt(day),
-        );
-      }
-
-      const timeMatch = fullText.match(timeRegex);
-      if (timeMatch) {
-        const [, hour, minute] = timeMatch;
-        startTime = `${hour.padStart(2, '0')}:${minute}`;
-      }
-
-      if (!startDate) {
-        console.warn('  ⚠️ Data não encontrada');
-        return null;
-      }
 
       // Tipo de evento
       let eventType = 'CONCERT';
@@ -390,9 +502,9 @@ export class TheatroMunicipalScraperService
 
       // Local
       let venueDetails = 'Theatro Municipal de São Paulo';
-      const venueMatch = fullText.match(
-        /(Praça das Artes|Central Técnica|Theatro Municipal)/i,
-      );
+      const venueMatch = $('body')
+        .text()
+        .match(/(Praça das Artes|Central Técnica|Theatro Municipal)/i);
       if (venueMatch) {
         venueDetails = venueMatch[1];
       }
@@ -409,9 +521,10 @@ export class TheatroMunicipalScraperService
 
       // Informações de ingresso
       let ticketInfo: string | null = null;
-      let ticketUrl = url; // Padrão: página do evento
+      let ticketUrl = url;
 
-      // Verificar se é gratuito
+      const fullText = $('body').text();
+
       if (
         fullText.includes('Gratuito') ||
         fullText.includes('gratuito') ||
@@ -422,7 +535,6 @@ export class TheatroMunicipalScraperService
         ticketInfo = 'Evento pago';
       }
 
-      // Buscar URL de compra de ingressos (Inti/Sympla/etc)
       const ticketButton = $(
         'a[href*="inti.com"], a[href*="sympla.com"], a[href*="ingresso"], a[href*="ticket"]',
       )
@@ -431,7 +543,6 @@ export class TheatroMunicipalScraperService
 
       if (ticketButton && ticketButton !== url) {
         ticketUrl = ticketButton;
-        console.log(`    🎫 Ticket URL: ${ticketUrl}`);
       }
 
       // Programa
@@ -447,131 +558,184 @@ export class TheatroMunicipalScraperService
       const textForComposers = `${title} ${description} ${program || ''}`;
       const composerNames = extractComposerNames(textForComposers);
 
-      // External ID
-      const externalId = `theatro-municipal-${createSlug(title)}-${startDate.getTime()}`;
+      // ==================== EXTRAIR TODAS AS DATAS E HORÁRIOS ====================
 
-      return {
-        title,
-        slug: createSlug(title),
-        description: description || title,
-        type: eventType,
-        startDate,
-        startTime,
-        endDate: null,
-        endTime: null,
-        venueDetails,
-        ticketUrl,
-        externalUrl: url,
-        ticketInfo,
-        externalId,
-        imageUrl,
-        composerNames,
-        performers: [],
-        program,
-      };
+      const sessions: { date: Date; time: string }[] = [];
+
+      // 1. Buscar DATA e HORÁRIO principais (primeira data)
+      const mainDateElement = $('.jet-listing-dynamic-field__content')
+        .filter((_, el) => {
+          const parent = $(el).parent();
+          return parent.find('.fa-calendar-alt').length > 0;
+        })
+        .first();
+
+      const mainTimeElement = $('.jet-listing-dynamic-field__content')
+        .filter((_, el) => {
+          const parent = $(el).parent();
+          return parent.find('.fa-clock').length > 0;
+        })
+        .first();
+
+      const mainDateText = mainDateElement.text().trim();
+      const mainTimeText = mainTimeElement.text().trim();
+
+      if (mainDateText) {
+        const mainDate = this.parsePortugueseDate(mainDateText);
+        const mainTime = this.parseTime(mainTimeText);
+
+        if (mainDate) {
+          sessions.push({ date: mainDate, time: mainTime || '20:00' });
+          console.log(
+            `    📅 Sessão 1: ${mainDateText} às ${mainTime || '20:00'}`,
+          );
+        }
+      }
+
+      // 2. Buscar DATAS ADICIONAIS (dentro da lista "jet-listing-grid__items")
+      $('.jet-listing-grid__item').each((index, item) => {
+        const $item = $(item);
+
+        const dateEl = $item
+          .find('.jet-listing-dynamic-field__content')
+          .filter((_, el) => {
+            const parent = $(el).parent();
+            return parent.find('.fa-calendar-alt').length > 0;
+          })
+          .first();
+
+        const timeEl = $item
+          .find('.jet-listing-dynamic-field__content')
+          .filter((_, el) => {
+            const parent = $(el).parent();
+            return parent.find('.fa-clock').length > 0;
+          })
+          .first();
+
+        const dateText = dateEl.text().trim();
+        const timeText = timeEl.text().trim();
+
+        if (dateText) {
+          const additionalDate = this.parsePortugueseDate(dateText);
+          const additionalTime = this.parseTime(timeText);
+
+          if (additionalDate) {
+            // Evitar duplicatas
+            const isDuplicate = sessions.some(
+              (s) => s.date.getTime() === additionalDate.getTime(),
+            );
+
+            if (!isDuplicate) {
+              sessions.push({
+                date: additionalDate,
+                time: additionalTime || '20:00',
+              });
+              console.log(
+                `    📅 Sessão ${sessions.length}: ${dateText} às ${additionalTime || '20:00'}`,
+              );
+            }
+          }
+        }
+      });
+
+      if (sessions.length === 0) {
+        console.warn('  ⚠️ Nenhuma data encontrada');
+        return [];
+      }
+
+      // ==================== CRIAR UM EVENTO PARA CADA SESSÃO ====================
+
+      const events: ScrapedEvent[] = [];
+
+      for (let i = 0; i < sessions.length; i++) {
+        const session = sessions[i];
+        const sessionNumber = sessions.length > 1 ? ` (Sessão ${i + 1})` : '';
+
+        const externalId = `theatro-municipal-${createSlug(title)}-${session.date.getTime()}`;
+
+        events.push({
+          title: `${title}${sessionNumber}`,
+          slug: createSlug(`${title}-${session.date.toISOString()}`),
+          description: description || title,
+          type: eventType,
+          startDate: session.date,
+          startTime: session.time,
+          endDate: null,
+          endTime: null,
+          venueDetails,
+          ticketUrl,
+          externalUrl: url,
+          ticketInfo,
+          externalId,
+          imageUrl,
+          composerNames,
+          performers: [],
+          program,
+        });
+      }
+
+      console.log(`  ✅ ${title} - ${events.length} sessão(ões)`);
+
+      return events;
     } catch (error) {
       console.error(`  ❌ Erro ao processar ${url}:`, error);
-      return null;
+      return [];
     } finally {
       await page.close();
     }
   }
 
   /**
-   * ✅ MÉTODO COMPLETO: Scrape + Verificação de Duplicatas
+   * 🕐 PARSEAR HORÁRIO
    */
-  async scrapeAndCheckDuplicates(): Promise<ScraperResponse> {
-    const startTime = Date.now();
+  private parseTime(text: string): string | null {
+    if (!text) return null;
 
-    try {
-      // ✅ RESETAR estado no início
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(), // ✅ ADICIONAR
-      };
-
-      const scrapedEvents = await this.scrapeEvents();
-
-      const allEvents: ScrapedEvent[] = [];
-      let duplicates = 0;
-
-      for (const event of scrapedEvents) {
-        const existingEvent = await this.prisma.event.findFirst({
-          where: {
-            OR: [
-              { externalId: event.externalId },
-              {
-                AND: [{ title: event.title }, { startDate: event.startDate }],
-              },
-            ],
-          },
-          select: {
-            id: true,
-            slug: true,
-          },
-        });
-
-        if (existingEvent) {
-          duplicates++;
-          allEvents.push({
-            ...event,
-            isDuplicate: true,
-            existingEventId: existingEvent.id,
-            existingEventSlug: existingEvent.slug,
-          } as any);
-          this.log(`⚠️ Duplicata detectada: ${event.title}`);
-        } else {
-          allEvents.push({
-            ...event,
-            isDuplicate: false,
-          } as any);
-        }
-      }
-
-      const executionTime = Date.now() - startTime;
-
-      this.log(`
-      📊 Resumo:
-      - Total scraped: ${scrapedEvents.length}
-      - Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
-      - Duplicatas: ${duplicates}
-      - Tempo: ${executionTime}ms
-    `);
-
-      return {
-        success: true,
-        eventsFound: this.state.eventsFound,
-        eventsScraped: this.state.eventsScraped,
-        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
-        duplicates,
-        events: allEvents,
-        errors: this.state.errors,
-        executionTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        eventsFound: 0,
-        eventsScraped: 0,
-        newEvents: 0,
-        duplicates: 0,
-        events: [],
-        errors: [error instanceof Error ? error.message : String(error)],
-        executionTime: Date.now() - startTime,
-      };
-    } finally {
-      await this.cleanup();
-      // ✅ RESETAR estado após scraping
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(), // ✅ ADICIONAR AQUI TAMBÉM
-      };
+    const timeMatch = text.match(/(\d{1,2}):?(\d{2})/);
+    if (timeMatch) {
+      const [, hour, minute] = timeMatch;
+      return `${hour.padStart(2, '0')}:${minute}`;
     }
+
+    return null;
   }
+
+  /**
+   * 📅 PARSEAR DATA EM PORTUGUÊS
+   */
+  private parsePortugueseDate(text: string): Date | null {
+    const dateRegex = /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/i;
+    const match = text.match(dateRegex);
+
+    if (!match) return null;
+
+    const [, day, monthName, year] = match;
+
+    const months: Record<string, number> = {
+      janeiro: 0,
+      fevereiro: 1,
+      março: 2,
+      abril: 3,
+      maio: 4,
+      junho: 5,
+      julho: 6,
+      agosto: 7,
+      setembro: 8,
+      outubro: 9,
+      novembro: 10,
+      dezembro: 11,
+    };
+
+    const monthIndex = months[monthName.toLowerCase()];
+
+    if (monthIndex === undefined) {
+      console.warn(`    ⚠️ Mês não reconhecido: ${monthName}`);
+      return null;
+    }
+
+    return new Date(parseInt(year), monthIndex, parseInt(day));
+  }
+
   /**
    * 📅 HELPERS
    */

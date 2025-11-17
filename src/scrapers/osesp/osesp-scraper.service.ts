@@ -42,37 +42,60 @@ export class OsespScraperService extends BaseScraper {
   /**
    * 🎯 MÉTODO PRINCIPAL - Scrape de eventos
    */
-  async scrapeEvents(): Promise<ScrapedEvent[]> {
+  async scrapeEvents(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScrapedEvent[]> {
     this.log('🎵 Starting OSESP Scraper...\n');
 
     try {
       let eventCounter = 0;
 
-      // 1. Coletar eventos próximos
+      // 1. Coletar eventos próximos (10% do progresso)
       this.log('📅 Collecting upcoming events...');
+      onProgress?.(5, 100, 'Coletando eventos próximos...');
+
       const upcomingEvents = await this.scrapeUpcomingEvents();
       this.log(`   Found ${upcomingEvents.length} upcoming events`);
 
-      // 2. Coletar temporada
+      // 2. Coletar temporada (20% do progresso)
       this.log(`📅 Collecting season ${this.options.seasonYear} events...`);
+      onProgress?.(15, 100, 'Coletando eventos da temporada...');
+
       const seasonEvents = await this.scrapeSeasonEvents();
       this.log(`   Found ${seasonEvents.length} season events\n`);
 
-      // 3. Combinar e remover duplicatas
+      // 3. Combinar e remover duplicatas (25% do progresso)
+      onProgress?.(20, 100, 'Removendo duplicatas...');
       const allEventUrls = this.removeDuplicateUrls([
         ...upcomingEvents,
         ...seasonEvents,
       ]);
 
       this.log(`📋 Total unique events found: ${allEventUrls.length}\n`);
+      onProgress?.(
+        25,
+        100,
+        `${allEventUrls.length} eventos únicos encontrados`,
+      );
 
-      // 4. Processar cada evento
+      // 4. Processar cada evento (25% - 100% do progresso)
       const processedEvents: ScrapedEvent[] = [];
+      const totalEvents = allEventUrls.length;
 
       for (const eventUrl of allEventUrls) {
         eventCounter++;
 
+        // ✅ CALCULAR PROGRESSO (de 25% a 100%)
+        const progressPercentage =
+          25 + Math.round((eventCounter / totalEvents) * 75);
+
         try {
+          onProgress?.(
+            progressPercentage,
+            100,
+            `Processando evento ${eventCounter}/${totalEvents}...`,
+          );
+
           const event = await this.scrapeEventDetails(eventUrl);
 
           if (event) {
@@ -83,7 +106,7 @@ export class OsespScraperService extends BaseScraper {
                 : '(no composers)';
 
             this.log(
-              `${event.composerNames.length > 0 ? '✅' : '⚠️ '} [${eventCounter}/${allEventUrls.length}] ${event.title} ${composerInfo}`,
+              `${event.composerNames.length > 0 ? '✅' : '⚠️ '} [${eventCounter}/${totalEvents}] ${event.title} ${composerInfo}`,
             );
           }
 
@@ -94,7 +117,7 @@ export class OsespScraperService extends BaseScraper {
             `Error processing event ${eventCounter}: ${error.message}`,
           );
           this.log(
-            `❌ [${eventCounter}/${allEventUrls.length}] ${eventUrl}: ${error.message}`,
+            `❌ [${eventCounter}/${totalEvents}] ${eventUrl}: ${error.message}`,
           );
         }
       }
@@ -107,18 +130,148 @@ export class OsespScraperService extends BaseScraper {
       this.log(
         `\n🎼 Composer detection: ${eventsWithComposers}/${processedEvents.length} events`,
       );
-      this.log(`[${this.config.venueName}] `);
+      this.log(`[${this.config.venueName}]`);
 
-      this.state.eventsFound = allEventUrls.length;
+      this.state.eventsFound = totalEvents;
       this.state.eventsScraped = processedEvents.length;
 
       return processedEvents;
     } catch (error) {
       this.log(`❌ Fatal error in scrapeEvents: ${error.message}`);
+      onProgress?.(0, 100, `Erro: ${error.message}`);
       throw error;
     }
   }
 
+  /**
+   * ✅ MÉTODO COMPLETO: Scrape + Verificação de Duplicatas COM PROGRESSO
+   */
+  async scrapeAndCheckDuplicates(
+    onProgress?: (current: number, total: number, message: string) => void,
+  ): Promise<ScraperResponse> {
+    const startTime = Date.now();
+
+    try {
+      // ✅ RESETAR estado
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(),
+      };
+
+      // 1. Fazer o scraping (0% - 80%)
+      onProgress?.(0, 100, 'Iniciando scraper...');
+
+      // ✅ PASSAR O CALLBACK DE PROGRESSO
+      const scrapedEvents = await this.scrapeEvents(
+        (current, total, message) => {
+          // Mapear progresso de scrapeEvents (0-100) para 0-80% do total
+          const mappedProgress = Math.round((current / 100) * 80);
+          onProgress?.(mappedProgress, 100, message);
+        },
+      );
+
+      onProgress?.(
+        80,
+        100,
+        `${scrapedEvents.length} eventos coletados. Verificando duplicatas...`,
+      );
+
+      // 2. Verificar duplicatas no banco (80% - 100%)
+      const allEvents: ScrapedEvent[] = [];
+      let duplicates = 0;
+      const total = scrapedEvents.length;
+
+      for (let i = 0; i < scrapedEvents.length; i++) {
+        const event = scrapedEvents[i];
+
+        // ✅ PROGRESSO DE VERIFICAÇÃO (80% - 100%)
+        const progressPercentage = 80 + Math.round((i / total) * 20);
+        onProgress?.(
+          progressPercentage,
+          100,
+          `Verificando duplicatas: ${i + 1}/${total}`,
+        );
+
+        const existingEvent = await this.prisma.event.findFirst({
+          where: {
+            OR: [
+              { externalId: event.externalId },
+              {
+                AND: [{ title: event.title }, { startDate: event.startDate }],
+              },
+            ],
+          },
+          select: {
+            id: true,
+            slug: true,
+          },
+        });
+
+        if (existingEvent) {
+          duplicates++;
+          allEvents.push({
+            ...event,
+            isDuplicate: true,
+            existingEventId: existingEvent.id,
+            existingEventSlug: existingEvent.slug,
+          } as any);
+          this.log(`⚠️ Duplicata detectada: ${event.title}`);
+        } else {
+          allEvents.push({
+            ...event,
+            isDuplicate: false,
+          } as any);
+        }
+      }
+
+      const executionTime = Date.now() - startTime;
+
+      // ✅ 100% COMPLETO
+      onProgress?.(100, 100, 'Scraper concluído!');
+
+      this.log(`
+📊 Resumo:
+- Total scraped: ${scrapedEvents.length}
+- Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
+- Duplicatas: ${duplicates}
+- Tempo: ${executionTime}ms
+    `);
+
+      return {
+        success: true,
+        eventsFound: this.state.eventsFound,
+        eventsScraped: this.state.eventsScraped,
+        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
+        duplicates,
+        events: allEvents,
+        errors: this.state.errors,
+        executionTime,
+      };
+    } catch (error) {
+      this.log(`❌ Erro no scraping: ${error.message}`);
+      onProgress?.(0, 100, `Erro: ${error.message}`);
+
+      return {
+        success: false,
+        eventsFound: 0,
+        eventsScraped: 0,
+        newEvents: 0,
+        duplicates: 0,
+        events: [],
+        errors: [error instanceof Error ? error.message : String(error)],
+        executionTime: Date.now() - startTime,
+      };
+    } finally {
+      this.state = {
+        eventsFound: 0,
+        eventsScraped: 0,
+        errors: [],
+        startTime: Date.now(),
+      };
+    }
+  }
   /**
    * ✅ Coleta eventos da página "Concertos e Ingressos"
    */
@@ -419,103 +572,5 @@ export class OsespScraperService extends BaseScraper {
     }
 
     return null;
-  }
-
-  /**
-   * ✅ MÉTODO COMPLETO: Scrape + Verificação de Duplicatas
-   */
-  async scrapeAndCheckDuplicates(): Promise<ScraperResponse> {
-    const startTime = Date.now();
-
-    try {
-      // ✅ RESETAR estado antes de iniciar
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(), // ✅ ADICIONAR
-      };
-
-      // 1. Fazer o scraping
-      const scrapedEvents = await this.scrapeEvents();
-
-      // 2. Verificar duplicatas no banco
-      const allEvents: ScrapedEvent[] = [];
-      let duplicates = 0;
-
-      for (const event of scrapedEvents) {
-        const existingEvent = await this.prisma.event.findFirst({
-          where: {
-            OR: [
-              { externalId: event.externalId },
-              {
-                AND: [{ title: event.title }, { startDate: event.startDate }],
-              },
-            ],
-          },
-          select: {
-            id: true,
-            slug: true,
-          },
-        });
-
-        if (existingEvent) {
-          duplicates++;
-          allEvents.push({
-            ...event,
-            isDuplicate: true,
-            existingEventId: existingEvent.id,
-            existingEventSlug: existingEvent.slug,
-          } as any);
-          this.log(`⚠️ Duplicata detectada: ${event.title}`);
-        } else {
-          allEvents.push({
-            ...event,
-            isDuplicate: false,
-          } as any);
-        }
-      }
-
-      const executionTime = Date.now() - startTime;
-
-      this.log(`
-      📊 Resumo:
-      - Total scraped: ${scrapedEvents.length}
-      - Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
-      - Duplicatas: ${duplicates}
-      - Tempo: ${executionTime}ms
-    `);
-
-      return {
-        success: true,
-        eventsFound: this.state.eventsFound,
-        eventsScraped: this.state.eventsScraped,
-        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
-        duplicates,
-        events: allEvents,
-        errors: this.state.errors,
-        executionTime,
-      };
-    } catch (error) {
-      this.log(`❌ Erro no scraping: ${error.message}`, 'error');
-      return {
-        success: false,
-        eventsFound: 0,
-        eventsScraped: 0,
-        newEvents: 0,
-        duplicates: 0,
-        events: [],
-        errors: [error instanceof Error ? error.message : String(error)],
-        executionTime: Date.now() - startTime,
-      };
-    } finally {
-      // ✅ RESETAR estado após scraping
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(), // ✅ ADICIONAR
-      };
-    }
   }
 }

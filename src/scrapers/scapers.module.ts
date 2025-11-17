@@ -1,19 +1,21 @@
 import { Module } from '@nestjs/common';
-import { OsespScraperModule } from './osesp/osesp-scraper.module';
-import { TheatroMunicipalScraperModule } from './theatro-municipal/theatro-municipal-scraper.module'; // ✅ NOVO
-import { APP_GUARD } from '@nestjs/core';
-import { ApiKeyGuard } from '../common/guards/api-key.guard';
+import { OsespScraperController } from './osesp/osesp-scraper.controller';
+import { OsespScraperService } from './osesp/osesp-scraper.service';
+import { TheatroMunicipalScraperController } from './theatro-municipal/theatro-municipal-scraper.controller';
+import { TheatroMunicipalScraperService } from './theatro-municipal/theatro-municipal-scraper.service';
+import { ScraperJobsService } from './jobs/scraper-jobs.service';
+import { PrismaModule } from 'src/prisma/prisma.module';
+import { ImportService } from './import/import.service';
 
 @Module({
-  imports: [
-    OsespScraperModule,
-    TheatroMunicipalScraperModule, // ✅ ADICIONAR AQUI
-  ],
+  imports: [PrismaModule],
+  controllers: [OsespScraperController, TheatroMunicipalScraperController],
   providers: [
-    {
-      provide: APP_GUARD,
-      useClass: ApiKeyGuard,
-    },
+    OsespScraperService,
+    TheatroMunicipalScraperService,
+    ScraperJobsService, // ✅ Adicionar
+    ImportService,
   ],
+  exports: [ScraperJobsService],
 })
 export class ScrapersModule {}

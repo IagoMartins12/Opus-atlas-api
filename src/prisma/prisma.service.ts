@@ -6,6 +6,7 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
+  eventComposer: any;
   async onModuleInit() {
     await this.$connect();
     console.log('✅ Prisma conectado ao banco de dados');

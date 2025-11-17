@@ -80,8 +80,8 @@ export abstract class BaseScraper {
   }
 
   // Log helper
-  protected log(message: string, error?: string): void {
-    console.log(`[${this.config.venueName}] ${message}, ${error}`);
+  protected log(message: string): void {
+    console.log(`[${this.config.venueName}] ${message}`);
   }
 
   // Error handling
