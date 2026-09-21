@@ -16,6 +16,9 @@ build
 
 # Credenciais em arquivo: montadas no container, nunca copiadas para a imagem
 .config
+# O Secret File do Render (homologação) pode aparecer na raiz do contexto de
+# build; o `COPY . .` o levaria para uma camada da imagem.
+google-tts.json
 
 # IDE
 .vscode
