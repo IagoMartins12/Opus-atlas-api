@@ -1,7 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { escapeRegex } from '../../common/utils/regex.util';
+import { AppCacheService } from '../../common/cache/cache.service';
+import { CacheNamespace } from '../../common/cache/cache-keys';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ScraperRegistry } from '../scraper-registry';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
-import { EventType, EventStatus, EventSource } from '@prisma/client';
+import { EventStatus, EventSource } from '@prisma/client';
+import { errorMessage } from '../../common/utils/error.util';
 
 export interface ImportResult {
   success: boolean;
@@ -22,7 +27,13 @@ export interface ImportDetail {
 
 @Injectable()
 export class ImportService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(ImportService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly registry: ScraperRegistry,
+    private readonly cache: AppCacheService,
+  ) {}
 
   async importEvents(
     scraperId: string,
@@ -39,7 +50,11 @@ export class ImportService {
       };
     }
 
-    console.log(`📦 Importando ${events.length} eventos de ${scraperId}...`);
+    this.logger.log(`Importando ${events.length} eventos de ${scraperId}`);
+
+    // A casa de espetáculo é a mesma para todos os eventos da rodada. Resolver
+    // dentro do laço era uma consulta (e possivelmente uma escrita) por evento.
+    const venue = await this.getOrCreateVenue(scraperId);
 
     const results: ImportDetail[] = [];
     let imported = 0;
@@ -49,10 +64,14 @@ export class ImportService {
     for (const event of events) {
       try {
         // Verificar duplicata
+        // `externalId` vazio não pode entrar no `OR`: seria um ramo que casa
+        // com qualquer evento cujo campo também esteja vazio, e a rodada
+        // inteira sairia marcada como duplicata. Sem id do provedor, sobra o
+        // par título + data, que é o que identifica o espetáculo.
         const existing = await this.prisma.event.findFirst({
           where: {
             OR: [
-              { externalId: event.externalId },
+              ...(event.externalId ? [{ externalId: event.externalId }] : []),
               {
                 AND: [
                   { title: event.title },
@@ -71,12 +90,9 @@ export class ImportService {
             status: 'duplicate',
             message: 'Evento já existe',
           });
-          console.log(`⚠️  Duplicata: ${event.title}`);
+          this.logger.debug(`Duplicata ignorada: ${event.title}`);
           continue;
         }
-
-        // Buscar ou criar venue
-        const venue = await this.getOrCreateVenue(scraperId);
 
         // Buscar compositores
         const composerIds = await this.findComposers(event.composerNames || []);
@@ -87,8 +103,9 @@ export class ImportService {
         // Mapear source
         const source = this.mapScraperToSource(scraperId);
 
-        // ✅ CAST do tipo para EventType
-        const eventType = event.type as EventType;
+        // `ScrapedEvent.type` já é `EventType` — o cast anterior mascarava
+        // valores inválidos vindos dos scrapers (ver `detectEventType`).
+        const eventType = event.type;
 
         // Criar evento
         const createdEvent = await this.prisma.event.create({
@@ -100,6 +117,14 @@ export class ImportService {
             status: EventStatus.PUBLISHED,
             source,
             startDate: new Date(event.startDate),
+            // **O horário é opcional, e isso é sobre o mundo, não sobre o
+            // banco.** `startTime` era `String` obrigatório, e a Cidade das
+            // Artes publica **temporada**, não sessão: "Wicked, 15/07 a 04/10"
+            // é um período de quase três meses, sem um horário só. Os 19
+            // eventos dela eram recusados um a um por "sem horário de início".
+            // As alternativas eram perder a casa inteira ou inventar um
+            // horário e mostrá-lo ao público como se fosse informação — a
+            // mesma escolha que a data "1º de janeiro" do IMSLP.
             startTime: event.startTime,
             endDate: event.endDate ? new Date(event.endDate) : null,
             endTime: event.endTime,
@@ -126,16 +151,18 @@ export class ImportService {
           message: 'Evento importado com sucesso',
         });
 
-        console.log(`✅ ${event.title}`);
+        this.logger.debug(`Importado: ${event.title}`);
       } catch (error) {
         errors++;
         results.push({
           externalId: event.externalId,
           title: event.title,
           status: 'error',
-          message: error.message || 'Erro ao importar evento',
+          message: errorMessage(error) || 'Erro ao importar evento',
         });
-        console.error(`❌ ${event.title}:`, error.message);
+        this.logger.warn(
+          `Falha ao importar "${event.title}": ${errorMessage(error)}`,
+        );
       }
     }
 
@@ -154,7 +181,15 @@ export class ImportService {
         },
       });
     } catch (logError) {
-      console.warn('⚠️ Não foi possível registrar log:', logError);
+      this.logger.warn(
+        `Não foi possível registrar o log de scraping: ${errorMessage(logError)}`,
+      );
+    }
+
+    // O calendário do blog tem cache; evento novo precisa aparecer nele. A
+    // importação roda no worker, mas o Redis é o mesmo da API.
+    if (imported > 0) {
+      await this.cache.invalidateMany([CacheNamespace.BLOG_CALENDAR]);
     }
 
     return {
@@ -170,53 +205,32 @@ export class ImportService {
   // ==================== HELPER FUNCTIONS ====================
 
   /**
-   * Buscar ou criar venue baseado no scraperId
+   * A casa de espetáculo desta rodada.
+   *
+   * **Os dados vêm da configuração do próprio scraper.** O `ImportService`
+   * tinha um mapa próprio com **duas das sete** casas, e a falta estourava
+   * antes do laço: importar a Sala Cecília Meireles, o Theatro da Paz ou a
+   * Cidade das Artes falhava inteira, com "Venue não configurado". As duas
+   * listas também já discordavam — o mapa dizia `theatro-municipal-sp` e o
+   * scraper dizia `theatro-municipal`, o que criaria duas casas para o mesmo
+   * teatro. Agora há uma fonte só, e ela é a mesma que o scraper usa para se
+   * identificar.
    */
   private async getOrCreateVenue(scraperId: string) {
-    const venueMap: Record<
-      string,
-      {
-        name: string;
-        slug: string;
-        address: string;
-        city: string;
-        state: string;
-        country: string;
-        zipCode?: string;
-        website?: string;
-      }
-    > = {
-      osesp: {
-        name: 'Sala São Paulo',
-        slug: 'sala-sao-paulo',
-        address: 'Praça Júlio Prestes, 16 - Campos Elíseos',
-        city: 'São Paulo',
-        state: 'SP',
-        country: 'Brasil',
-        zipCode: '01218-020',
-        website: 'https://osesp.art.br',
-      },
-      'theatro-municipal': {
-        name: 'Theatro Municipal de São Paulo',
-        slug: 'theatro-municipal-sp',
-        address: 'Praça Ramos de Azevedo, s/n - República',
-        city: 'São Paulo',
-        state: 'SP',
-        country: 'Brasil',
-        zipCode: '01037-010',
-        website: 'https://theatromunicipal.org.br',
-      },
-    };
-
-    const venueData = venueMap[scraperId];
-    if (!venueData) {
-      throw new Error(`Venue não configurado para scraper ${scraperId}`);
-    }
+    const config = this.registry.require(scraperId).getConfig();
 
     return this.prisma.venue.upsert({
-      where: { slug: venueData.slug },
+      where: { slug: config.venueSlug },
+      // **Não sobrescreve a casa existente.** Endereço e descrição podem ter
+      // sido corrigidos à mão no painel, e uma rodada de scraping não é hora
+      // de desfazer isso.
       update: {},
-      create: venueData,
+      create: {
+        name: config.venueName,
+        slug: config.venueSlug,
+        website: config.baseUrl,
+        ...config.venue,
+      },
     });
   }
 
@@ -232,8 +246,8 @@ export class ImportService {
       const composer = await this.prisma.composer.findFirst({
         where: {
           OR: [
-            { fullName: { contains: name, mode: 'insensitive' } },
-            { name: { contains: name, mode: 'insensitive' } },
+            { fullName: { contains: escapeRegex(name), mode: 'insensitive' } },
+            { name: { contains: escapeRegex(name), mode: 'insensitive' } },
           ],
         },
       });
@@ -262,14 +276,16 @@ export class ImportService {
   }
 
   /**
-   * Mapear scraperId para EventSource do Prisma
+   * De onde o evento veio.
+   *
+   * **Todo scraper registrado é `SCRAPER`.** O mapa anterior listava dois, e os
+   * outros cinco caíam em `ADMIN` — o que diria que a programação do Theatro
+   * da Paz foi cadastrada por uma pessoa no painel. Era a mesma duplicação de
+   * lista do mapa de casas, com o mesmo desfecho.
    */
   private mapScraperToSource(scraperId: string): EventSource {
-    const sourceMap: Record<string, EventSource> = {
-      osesp: EventSource.SCRAPER,
-      'theatro-municipal': EventSource.SCRAPER,
-    };
-
-    return sourceMap[scraperId] || EventSource.ADMIN;
+    return this.registry.isRegistered(scraperId)
+      ? EventSource.SCRAPER
+      : EventSource.ADMIN;
   }
 }

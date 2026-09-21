@@ -5,34 +5,31 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Reflector } from '@nestjs/core';
-import { IS_PUBLIC_KEY } from '../decorators/api-key.decorator';
 
+/**
+ * Protege rotas server-to-server (cron, webhooks, scrapers) com uma chave
+ * estática enviada no header `x-api-key`. Usado explicitamente por controller/rota
+ * via `@UseGuards(ApiKeyGuard)` — não é global (rotas de usuário usam `JwtAuthGuard`).
+ */
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(
-    private configService: ConfigService,
-    private reflector: Reflector,
-  ) {}
+  constructor(private readonly configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    // Verifica se a rota é pública
-    // const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-    //   context.getHandler(),
-    //   context.getClass(),
-    // ]);
+    const validApiKey = this.configService.get<string>('security.apiKey');
 
-    // if (isPublic) {
-    //   return true;
-    // }
+    if (!validApiKey) {
+      throw new UnauthorizedException(
+        'API Key não configurada no servidor (security.apiKey ausente)',
+      );
+    }
 
-    // const request = context.switchToHttp().getRequest();
-    // const apiKey = request.headers['x-api-key'];
-    // const validApiKey = this.configService.get<string>('API_KEY');
+    const request = context.switchToHttp().getRequest();
+    const apiKey = request.headers['x-api-key'];
 
-    // if (!apiKey || apiKey !== validApiKey) {
-    //   throw new UnauthorizedException('API Key inválida ou ausente');
-    // }
+    if (!apiKey || apiKey !== validApiKey) {
+      throw new UnauthorizedException('API Key inválida ou ausente');
+    }
 
     return true;
   }

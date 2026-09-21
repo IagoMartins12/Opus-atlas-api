@@ -35,12 +35,15 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
+# dotenv environment variable files — um por ambiente (ver src/config/env-files.ts).
+# Só os exemplos são versionados.
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+!.env.example
+!.env.*.example
+
+# Credenciais em arquivo (ex.: chave JSON do Google TTS)
+/.config/
 
 # temp directory
 .temp

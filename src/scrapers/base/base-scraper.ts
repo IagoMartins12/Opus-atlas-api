@@ -2,11 +2,34 @@
 import { Injectable } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
+import { errorMessage } from '../../common/utils/error.util';
+
+/**
+ * Onde a casa fica.
+ *
+ * **Mora aqui, junto do scraper, e não numa tabela do importador.** O
+ * `ImportService` tinha um mapa próprio de casas — com **duas das sete** — e a
+ * falta estourava antes do laço: importar a programação da Sala Cecília
+ * Meireles, do Theatro da Paz ou da Cidade das Artes falhava inteira, com
+ * "Venue não configurado". Eram duas listas que precisavam concordar e não
+ * concordavam. Agora é uma: quem declara o scraper declara a casa, e o
+ * compilador cobra.
+ */
+export interface VenueLocation {
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  zipCode?: string;
+  /** Nome curto, quando a casa tem um pelo qual é conhecida. */
+  shortName?: string;
+}
 
 export interface ScraperConfig {
   venueName: string;
   venueSlug: string;
   baseUrl: string;
+  venue: VenueLocation;
   userAgent?: string;
   delayBetweenRequests?: number;
 }
@@ -24,9 +47,9 @@ export interface ScraperResponse {
   eventsScraped: number;
   newEvents: number;
   duplicates: number;
-  events?: ScrapedEvent[]; // ✅ ADICIONAR ESTA LINHA
+  events?: ScrapedEvent[];
   errors: string[];
-  executionTime: number; // ✅ OU 'duration' se preferir
+  executionTime: number;
 }
 
 @Injectable()
@@ -55,58 +78,30 @@ export abstract class BaseScraper {
     };
   }
 
-  // ✅ GETTER PÚBLICO para config
   public getConfig(): ScraperConfig {
     return this.config;
+  }
+
+  /**
+   * Zera o estado da rodada.
+   *
+   * O scraper é um singleton do Nest: o mesmo objeto atende todas as rodadas,
+   * e `this.state` guarda contadores e a lista de erros. Sem zerar entre uma
+   * rodada e outra, os erros de ontem aparecem no relatório de hoje.
+   */
+  public resetState(): void {
+    this.state = {
+      eventsFound: 0,
+      eventsScraped: 0,
+      errors: [],
+      startTime: Date.now(),
+    };
   }
 
   // Métodos abstratos que DEVEM ser implementados pelas classes filhas
   abstract scrapeEvents(
     onProgress?: (current: number, total: number, message: string) => void,
   ): Promise<ScrapedEvent[]>;
-
-  /**
-   * ✅ SCRAPE AND CHECK DUPLICATES
-   * Método principal que faz scraping e verifica duplicatas no banco
-   */
-  async scrapeAndCheckDuplicates(
-    onProgress?: (current: number, total: number, message: string) => void,
-  ): Promise<ScraperResponse> {
-    const startTime = Date.now();
-
-    try {
-      // Fazer scraping
-      const events = await this.scrapeEvents(onProgress);
-      this.state.eventsFound = events.length;
-
-      // Retornar resposta (sem verificação de duplicatas no BaseScraper)
-      // A verificação será feita pelos scrapers filhos se necessário
-      const executionTime = Date.now() - startTime;
-
-      return {
-        success: true,
-        eventsFound: events.length,
-        eventsScraped: events.length,
-        newEvents: events.length,
-        duplicates: 0,
-        errors: this.state.errors,
-        executionTime,
-      };
-    } catch (error) {
-      this.logError(error);
-      const executionTime = Date.now() - startTime;
-
-      return {
-        success: false,
-        eventsFound: 0,
-        eventsScraped: 0,
-        newEvents: 0,
-        duplicates: 0,
-        errors: this.state.errors,
-        executionTime,
-      };
-    }
-  }
 
   /**
    * ✅ DELAY - Aguarda um tempo antes de fazer próxima requisição
@@ -124,10 +119,10 @@ export abstract class BaseScraper {
       try {
         const response = await this.httpClient.get(url);
         return response.data;
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(
           `❌ Error fetching ${url} (attempt ${i + 1}/${retries}):`,
-          error.message,
+          errorMessage(error),
         );
 
         if (i < retries - 1) {
@@ -147,10 +142,10 @@ export abstract class BaseScraper {
   }
 
   // Error handling
-  protected logError(error: any): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    this.state.errors.push(errorMessage);
-    console.error(`[${this.config.venueName}] ❌ ${errorMessage}`);
+  protected logError(error: unknown): void {
+    const message = errorMessage(error);
+    this.state.errors.push(message);
+    console.error(`[${this.config.venueName}] ❌ ${message}`);
   }
 
   // Retorna o estado atual

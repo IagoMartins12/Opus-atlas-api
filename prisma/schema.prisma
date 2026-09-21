@@ -194,6 +194,7 @@ enum TokenType {
   STUDENT_INVITATION_ACCEPT
   STUDENT_INVITATION_DECLINE
   STUDENT_INVITATION
+  REFRESH_TOKEN
 }
 
 enum StudentInviteStatus {
@@ -246,6 +247,24 @@ enum AssignmentStatus {
   IN_PROGRESS // Em andamento
   COMPLETED // Concluída
   OVERDUE // Atrasada
+}
+
+// Tipo e prioridade da tarefa. Em minúsculas porque são os valores que o front
+// grava e que a API sempre aceitou: virar enum não muda o contrato. No MongoDB o
+// enum é conferido na leitura — antes de subir esta versão numa base com
+// tarefas, rodar `npm run portal:normalize-assignments:apply`.
+enum AssignmentType {
+  practice // Prática
+  theory // Teoria
+  listening // Escuta
+  composition // Composição
+  performance // Apresentação
+}
+
+enum AssignmentPriority {
+  low
+  medium
+  high
 }
 
 enum NotificationType {
@@ -354,7 +373,7 @@ enum ActivityLogType {
   UNFAVORITE_WORK
   FAVORITE_SCORE
   UNFAVORITE_SCORE
-  
+
   // Aprendizado
   ADD_WANT_TO_LEARN
   REMOVE_WANT_TO_LEARN
@@ -364,24 +383,24 @@ enum ActivityLogType {
   UPDATE_LEARNED
   SELECT_SCORE_WANT_TO_LEARN
   SELECT_SCORE_LEARNED
-  
+
   // Anotações
   CREATE_ANNOTATION
   UPDATE_ANNOTATION
   DELETE_ANNOTATION
   VOTE_ANNOTATION_HELPFUL
   VOTE_ANNOTATION_NOT_HELPFUL
-  
+
   // Moderação
   REPORT_UPLOAD
-  
+
   // Uploads
   UPLOAD_VIDEO
   DELETE_VIDEO
-  
+
   // Perfil
   UPDATE_PROFILE
-  
+
   // Visualizações (opcional - para futuro)
   VIEW_COMPOSER
   VIEW_WORK
@@ -402,20 +421,21 @@ enum BillingPeriod {
 }
 
 enum SubscriptionPlanStatus {
-  TRIAL        // Período de teste
-  ACTIVE       // Ativa e paga
-  CANCELLED    // Cancelada (acesso até o fim do período)
-  EXPIRED      // Expirada
-  PAST_DUE     // Pagamento atrasado
+  PENDING // Checkout aberto, ainda sem pagamento — não dá acesso ao plano
+  TRIAL // Período de teste
+  ACTIVE // Ativa e paga
+  CANCELLED // Cancelada (acesso até o fim do período)
+  EXPIRED // Expirada
+  PAST_DUE // Pagamento atrasado
 }
 
 enum PaymentStatus {
-  PENDING      // Aguardando pagamento
-  APPROVED     // Aprovado
-  REJECTED     // Rejeitado
-  REFUNDED     // Reembolsado
-  CANCELLED    // Cancelado
-  IN_PROCESS   // Em processamento (MP)
+  PENDING // Aguardando pagamento
+  APPROVED // Aprovado
+  REJECTED // Rejeitado
+  REFUNDED // Reembolsado
+  CANCELLED // Cancelado
+  IN_PROCESS // Em processamento (MP)
 }
 
 enum PaymentMethod {
@@ -427,17 +447,18 @@ enum PaymentMethod {
 }
 
 enum InvoiceStatus {
-  PENDING      // Pendente
-  PAID         // Paga
-  OVERDUE      // Vencida
-  CANCELLED    // Cancelada
+  PENDING // Pendente
+  PAID // Paga
+  OVERDUE // Vencida
+  CANCELLED // Cancelada
 }
 
 enum CouponType {
-  PERCENTAGE   // Desconto percentual
-  FIXED        // Valor fixo
-  FREE_TRIAL   // Trial grátis estendido
+  PERCENTAGE // Desconto percentual
+  FIXED // Valor fixo
+  FREE_TRIAL // Trial grátis estendido
 }
+
 enum BillingPeriodType {
   MONTHLY
   QUARTERLY
@@ -447,64 +468,64 @@ enum BillingPeriodType {
 
 // ==================== BLOG ENUMS ====================
 enum ArticleType {
-  COMPOSER_ANALYSIS      // Análise de Compositor
-  WORK_ANALYSIS         // Análise de Obra
-  INSTRUMENT_GUIDE      // Guia de Instrumentos
-  MUSIC_HISTORY         // História da Música (inclui estilos como ópera)
-  TUTORIAL              // Tutorial/Guia Prático
-  TOP_LIST              // Lista/Top 10
-  INTERVIEW             // Entrevista
-  NEWS                  // Notícia
-  CURIOSITY             // Curiosidades
-  PERFORMANCE_VIDEO     // Vídeo de Performance
-  CONCERT_GUIDE         // Guia de Concerto
-  GENERAL               // Artigo Geral (sem tipo específico)
+  COMPOSER_ANALYSIS // Análise de Compositor
+  WORK_ANALYSIS // Análise de Obra
+  INSTRUMENT_GUIDE // Guia de Instrumentos
+  MUSIC_HISTORY // História da Música (inclui estilos como ópera)
+  TUTORIAL // Tutorial/Guia Prático
+  TOP_LIST // Lista/Top 10
+  INTERVIEW // Entrevista
+  NEWS // Notícia
+  CURIOSITY // Curiosidades
+  PERFORMANCE_VIDEO // Vídeo de Performance
+  CONCERT_GUIDE // Guia de Concerto
+  GENERAL // Artigo Geral (sem tipo específico)
 }
 
 enum ArticleStatus {
-  DRAFT        // Rascunho (só autor vê)
-  REVIEW       // Em revisão (co-autores podem ver)
-  SCHEDULED    // Agendado para publicação futura
-  PUBLISHED    // Publicado
-  ARCHIVED     // Arquivado (não aparece mais)
+  DRAFT // Rascunho (só autor vê)
+  REVIEW // Em revisão (co-autores podem ver)
+  SCHEDULED // Agendado para publicação futura
+  PUBLISHED // Publicado
+  ARCHIVED // Arquivado (não aparece mais)
 }
 
 enum MediaType {
-  IMAGE        // Foto
-  VIDEO        // Vídeo (YouTube/Vimeo)
-  AUDIO        // Áudio (para música de fundo)
+  IMAGE // Foto
+  VIDEO // Vídeo (YouTube/Vimeo)
+  AUDIO // Áudio (para música de fundo)
 }
 
 enum CommentStatus {
-  PENDING      // Aguardando moderação (se moderação prévia)
-  APPROVED     // Aprovado
-  REJECTED     // Rejeitado
-  FLAGGED      // Reportado por usuários
+  PENDING // Aguardando moderação (se moderação prévia)
+  APPROVED // Aprovado
+  REJECTED // Rejeitado
+  FLAGGED // Reportado por usuários
   SPAM
 }
 
 enum BlockType {
   // Blocos especiais do editor
-  PARAGRAPH           // Parágrafo normal
-  HEADING             // Título (H1, H2, H3)
-  IMAGE               // Imagem inline
-  VIDEO               // Vídeo inline
-  GALLERY             // Galeria de fotos
-  VIDEO_GALLERY       // Galeria de vídeos
-  SCORE_VIEWER        // Visualizador de partitura
-  AUDIO_PLAYER        // Player de obra específica
-  COMPOSER_CARD       // Card rico do compositor
-  WORK_CARD           // Card rico da obra
-  TIMELINE            // Timeline de eventos
-  VIDEO_COMPARISON    // Comparação de 2 performances
-  QUOTE_MUSICAL       // Citação com áudio de fundo
-  ACCORDION           // Acordeão/Collapsible
-  TABS                // Abas
-  COLUMNS             // Colunas (2 ou 3)
-  CODE                // Código (notação musical)
-  TABLE               // Tabela
-  BLOCKQUOTE          // Citação
-  LIST                // Lista (bullets ou números)
+  PARAGRAPH // Parágrafo normal
+  HEADING // Título (H1, H2, H3)
+  IMAGE // Imagem inline
+  VIDEO // Vídeo inline
+  GALLERY // Galeria de fotos
+  VIDEO_GALLERY // Galeria de vídeos
+  SCORE_VIEWER // Visualizador de partitura
+  AUDIO_PLAYER // Player de obra específica
+  COMPOSER_CARD // Card rico do compositor
+  WORK_CARD // Card rico da obra
+  TIMELINE // Timeline de eventos
+  VIDEO_COMPARISON // Comparação de 2 performances
+  QUOTE_MUSICAL // Citação com áudio de fundo
+  ACCORDION // Acordeão/Collapsible
+  TABS // Abas
+  COLUMNS // Colunas (2 ou 3)
+  CODE // Código (notação musical)
+  TABLE // Tabela
+  BLOCKQUOTE // Citação
+  LIST // Lista (bullets ou números)
 }
 
 model User {
@@ -519,6 +540,7 @@ model User {
   bio            String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  lastSeen       DateTime?
 
   role Int @default(0) //0 = usuario comum 2, 1 = admin 2 = super admin
 
@@ -561,20 +583,20 @@ model User {
   achievements        UserAchievement[]     @relation("UserAchievements")
   achievementProgress AchievementProgress[] @relation("AchievementProgress")
   // 🆕 RELAÇÕES DE ASSINATURA
-  subscriptions   Subscription[]  @relation("UserSubscriptions")
-  couponUsages    CouponUsage[]   @relation("UserCouponUsages")
-  
-  // 🆕 CACHE DO PLANO ATUAL (para performance)
-  currentPlan     PlanType        @default(FREE)
-  planExpiresAt   DateTime?       // Data de expiração do plano
-  isTrialActive   Boolean         @default(false)
+  subscriptions       Subscription[]        @relation("UserSubscriptions")
+  couponUsages        CouponUsage[]         @relation("UserCouponUsages")
 
-  blogArticles       BlogArticle[]      @relation("BlogAuthor")
-  blogComments       BlogComment[]      @relation("BlogComments")
-  blogCommentLikes   BlogCommentLike[]  @relation("BlogCommentLikes")
-  blogLikes          BlogLike[]         @relation("BlogLikes")
-  blogBookmarks      BlogBookmark[]     @relation("BlogBookmarks")
-  activityLogs ActivityLog[] @relation("UserActivityLogs")
+  // 🆕 CACHE DO PLANO ATUAL (para performance)
+  currentPlan   PlanType  @default(FREE)
+  planExpiresAt DateTime? // Data de expiração do plano
+  isTrialActive Boolean   @default(false)
+
+  blogArticles     BlogArticle[]     @relation("BlogAuthor")
+  blogComments     BlogComment[]     @relation("BlogComments")
+  blogCommentLikes BlogCommentLike[] @relation("BlogCommentLikes")
+  blogLikes        BlogLike[]        @relation("BlogLikes")
+  blogBookmarks    BlogBookmark[]    @relation("BlogBookmarks")
+  activityLogs     ActivityLog[]     @relation("UserActivityLogs")
 
   // 🆕 CACHE DE XP (opcional)
   totalXP      Int @default(0) // Cache do XP total do usuário
@@ -607,7 +629,7 @@ model User {
 
   // 🔄 RELAÇÕES DE NEWSLETTER - ATUALIZADA COM CASCADE
   newsletterSubscription NewsletterSubscriber? @relation("NewsletterSubscriber")
-  eventReminders EventReminder[] @relation("UserEventReminders")
+  eventReminders         EventReminder[]       @relation("UserEventReminders")
 
   favoriteScores FavoriteScore[]
 
@@ -789,15 +811,21 @@ model Composer {
   birthDate String? // Ex: "31 de janeiro de 1797", "1797", "January 31, 1797"
   deathDate String? // Ex: "28 de novembro de 1828", "1828", "November 28, 1828"
 
-  portraitUrl   String?
-  epochId       String  @db.ObjectId
-  epochName     String?
-  bio           String?
-  videoUrl      String?
+  portraitUrl    String?
+  epochId        String    @db.ObjectId
+  epochName      String?
+  bio            String?
+  // Biografia em inglês — antes num JSON em disco do front (composers-bio.json).
+  bioEn          String?
+  // "anthropic/claude-opus-5" quando o texto em português saiu da IA; null
+  // quando alguém escreveu ou revisou. É o que permite ao front avisar.
+  bioGeneratedBy String?
+  bioGeneratedAt DateTime?
+  videoUrl       String?
   // Dados IMSLP
-  permLinkImslp String?
-  imslpId       String?
-  wikipediaLink String?
+  permLinkImslp  String?
+  imslpId        String?
+  wikipediaLink  String?
 
   // Dados estatísticos e geográficos
   nationality String? // País/nacionalidade (ex: "German", "Austrian", "Brazilian")
@@ -849,11 +877,11 @@ model Composer {
   verifier User? @relation("VerifiedComposers", fields: [verifiedBy], references: [id], onDelete: SetNull)
 
   // Índices otimizados
-  @@index([name])
-  @@index([epochId])
+  // REMOVIDO (SPEC §10.2): @@index([name]) — prefixo de [name, epochId] e [name, fullName]
+  // REMOVIDO (SPEC §10.2): @@index([epochId]) — prefixo de [epochId, primaryRoleId], [epochId, isVerified], [epochId, createdAt]
   @@index([fullName])
   @@index([verifiedBy])
-  @@index([isVerified])
+  // REMOVIDO (SPEC §10.2): @@index([isVerified]) — prefixo de [isVerified, createdAt]
   @@index([alternativeNames])
   @@index([imslpCategories])
   @@index([primaryRoleId])
@@ -866,7 +894,7 @@ model Composer {
   @@index([epochId, primaryRoleId])
   @@index([name, fullName])
   @@index([nationality, epochId])
-  @@index([createdBy])
+  // REMOVIDO (SPEC §10.2): @@index([createdBy]) — prefixo de [createdBy, createdAt]
   @@index([isCustom])
   @@index([verificationStatus])
   @@index([dataQuality])
@@ -1040,18 +1068,20 @@ model Work {
   lastAnnotationAt        DateTime?
 
   cachedScores WorkScore[]
+  // ÍNDICES PARA VERIFICAÇÃO DE PARTITURAS
+  // REMOVIDO (SPEC §10.2): @@index([id, createdAt]) — _id ja e a chave primaria indexada
 
   // ÍNDICES ATUALIZADOS
-  @@index([title])
-  @@index([opOrCatalog])
-  @@index([composerId])
+  // REMOVIDO (SPEC §10.2): @@index([title]) — prefixo de [title, composerId] e [title, createdAt]
+  // REMOVIDO (SPEC §10.2): @@index([opOrCatalog]) — prefixo de [opOrCatalog, composerId]
+  // REMOVIDO (SPEC §10.2): @@index([composerId]) — prefixo de [composerId, title] e outros 6 compostos
   @@index([imslpId])
   @@index([title, composerId])
   @@index([composerId, title])
   @@index([opOrCatalog, composerId])
   @@index([title, createdAt])
   @@index([composerId, createdAt])
-  @@index([workType])
+  // REMOVIDO (SPEC §10.2): @@index([workType]) — prefixo de [workType, epochId] e [workType, instrumentId]
   @@index([composerId, instrumentId])
   @@index([composerId, epochId])
   @@index([instrumentId, epochId])
@@ -1070,10 +1100,10 @@ model Work {
   @@index([videoAulaType])
   @@index([videoAulaSource])
   // ÍNDICES ATUALIZADOS PARA MÍDIA
-  @@index([spotifyDisplayTitle])
-  @@index([spotifyDuration])
-  @@index([spotifyThumbnail])
-  @@index([difficultyLevel]) // Enum original
+  // REMOVIDO (SPEC §10.2): @@index([spotifyDisplayTitle]) — campo de exibicao, nunca usado como filtro
+  // REMOVIDO (SPEC §10.2): @@index([spotifyDuration]) — campo de exibicao, nunca usado como filtro
+  // REMOVIDO (SPEC §10.2): @@index([spotifyThumbnail]) — URL de imagem, nunca usada como filtro
+  // REMOVIDO (SPEC §10.2): @@index([difficultyLevel]) — prefixo de [difficultyLevel, imslpDifficultyLevel] e outros
   @@index([imslpDifficultyLevel]) // Níveis IMSLP
   @@index([imslpDifficultySystem])
   @@index([difficultyLevel, imslpDifficultyLevel]) // Combinado
@@ -1086,8 +1116,13 @@ model Work {
   @@index([difficultyLevel, instrumentId]) // Dificuldade + instrumento
   @@index([workType, epochId]) // Tipo + época
   @@index([workType, instrumentId]) // Tipo + instrumento
-  // ÍNDICES PARA VERIFICAÇÃO DE PARTITURAS
-  @@index([id, createdAt]) // Para junções com WorkScore
+
+  // ORDENACOES DO CATALOGO PUBLICO (SPEC secao 10.2, ordem ESR)
+  // Obras mais anotadas primeiro, depois alfabetico: e a ordenacao padrao de
+  // GET /works. Sem este indice o Mongo varre as 207 mil obras a cada chamada.
+  @@index([annotationsCount(sort: Desc), title])
+  // Pagina sem filtro de GET /works/catalog, ordenada por data de entrada.
+  @@index([createdAt(sort: Desc)])
 }
 
 model UserInstrument {
@@ -1202,6 +1237,12 @@ model FavoriteWork {
   userId String @db.ObjectId
   workId String @db.ObjectId
 
+  /// Quando foi favoritado. Opcional porque os documentos anteriores à
+  /// introdução do campo não têm valor — e em MongoDB um campo obrigatório
+  /// ausente quebraria a leitura de todas as linhas antigas.
+  /// Alimenta as conquistas de sequência e de descobertas recentes.
+  createdAt DateTime? @default(now())
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   work Work @relation(fields: [workId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar work
 
@@ -1213,6 +1254,10 @@ model FavoriteComposer {
   id         String @id @default(auto()) @map("_id") @db.ObjectId
   userId     String @db.ObjectId
   composerId String @db.ObjectId
+
+  /// Mesma justificativa de `FavoriteWork.createdAt`: opcional para não
+  /// invalidar os documentos já existentes.
+  createdAt DateTime? @default(now())
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   composer Composer @relation(fields: [composerId], references: [id], onDelete: Cascade) // 🔄 CASCADE quando deletar composer
@@ -1905,6 +1950,45 @@ model TemplateFragment {
 }
 
 // TABELA DE PROFESSORES COMPLETA
+/// Janela semanal em que o professor aceita aula, declarada por ele.
+///
+/// É a base das "horas livres" do calendário: disponibilidade menos bloqueios
+/// menos aulas marcadas. O legado inventava cinco dias de oito horas e
+/// apresentava o resultado como dado. Hora local, no `Teacher.timezone`; uma
+/// janela não cruza a meia-noite (quem atende até 1h declara duas).
+model TeacherAvailability {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  teacherId String  @db.ObjectId
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  weekday   Int // 0 = domingo … 6 = sábado
+  startTime String // "HH:mm"
+  endTime   String // "HH:mm", depois de startTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teacherId, weekday])
+  @@map("teacher_availabilities")
+}
+
+/// Período em que o professor não atende, apesar da agenda semanal — férias,
+/// feriado, viagem.
+model TeacherAvailabilityBlock {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  teacherId String  @db.ObjectId
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime
+  endsAt   DateTime
+  reason   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([teacherId, endsAt])
+  @@map("teacher_availability_blocks")
+}
+
 model Teacher {
   id     String @id @default(auto()) @map("_id") @db.ObjectId
   userId String @unique @db.ObjectId
@@ -1957,10 +2041,12 @@ model Teacher {
   updatedAt DateTime @updatedAt
 
   // Relações
-  user          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  students      TeacherStudent[]       @relation("TeacherStudents")
-  lessons       Lesson[]               @relation("TeacherLessons")
-  sharedReports SharedProgressReport[] @relation("TeacherSharedReports")
+  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  students           TeacherStudent[]           @relation("TeacherStudents")
+  lessons            Lesson[]                   @relation("TeacherLessons")
+  sharedReports      SharedProgressReport[]     @relation("TeacherSharedReports")
+  availability       TeacherAvailability[]
+  availabilityBlocks TeacherAvailabilityBlock[]
 
   // Índices otimizados
   @@index([status, isVerified])
@@ -2191,8 +2277,8 @@ model Assignment {
   // Informações da tarefa
   title       String
   description String
-  type        String @default("practice") // "practice", "theory", "listening", "composition"
-  priority    String @default("medium") // "low", "medium", "high"
+  type        AssignmentType     @default(practice)
+  priority    AssignmentPriority @default(medium)
 
   // Recursos e materiais
   workScoreIds String[] @default([]) @db.ObjectId // Partituras para estudar
@@ -2496,34 +2582,34 @@ model SharedReportComment {
 
 model ActivityLog {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Usuário que fez a ação (opcional para ações anônimas)
   userId String? @db.ObjectId
-  
+
   // Tipo de evento
   type ActivityLogType
-  
+
   // Ação descritiva (texto amigável)
   action String
-  
+
   // Entidade relacionada
   entityType String? // "composer", "work", "score", "annotation", etc.
   entityId   String? @db.ObjectId
   entityName String? // Nome da entidade para facilitar exibição
-  
+
   // Metadados flexíveis (JSON com informações específicas do evento)
   metadata Json?
-  
+
   // Dados de request
   ipAddress String?
   userAgent String?
-  
+
   // Timestamp
   createdAt DateTime @default(now())
-  
+
   // Relações
   user User? @relation("UserActivityLogs", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Índices otimizados
   @@index([userId, createdAt])
   @@index([type, createdAt])
@@ -2538,84 +2624,84 @@ model BlogArticle {
   id String @id @default(auto()) @map("_id") @db.ObjectId
 
   // ===== CAMPOS BÁSICOS =====
-  title             String              // Título do artigo
-  slug              String              @unique // URL amigável (único)
-  description       String?             // Descrição curta (preview/SEO)
-  content           Json                // Conteúdo rico (JSON com blocos)
-  
+  title       String // Título do artigo
+  slug        String  @unique // URL amigável (único)
+  description String? // Descrição curta (preview/SEO)
+  content     Json // Conteúdo rico (JSON com blocos)
+
   // Imagem de capa
-  coverImage        String?             // URL da imagem de capa
-  coverImageAlt     String?             // Alt text da imagem
-  coverImageCredit  String?             // Crédito do fotógrafo
-  ttsAudioUrl       String?  // ✅ NOVO
+  coverImage       String? // URL da imagem de capa
+  coverImageAlt    String? // Alt text da imagem
+  coverImageCredit String? // Crédito do fotógrafo
+  ttsAudioUrl      String? // ✅ NOVO
 
   // Status e visibilidade
-  status            ArticleStatus       @default(DRAFT)
-  isFeatured        Boolean             @default(false) // Artigo em destaque (máx 5)
-  featuredOrder     Int?                // Ordem no carrossel de destaques (1-5)
-  
+  status        ArticleStatus @default(DRAFT)
+  isFeatured    Boolean       @default(false) // Artigo em destaque (máx 5)
+  featuredOrder Int? // Ordem no carrossel de destaques (1-5)
+
   // ===== TIPOS E CATEGORIAS =====
-  types             ArticleType[]       @default([]) // Múltiplos tipos possíveis
-  
+  types ArticleType[] @default([]) // Múltiplos tipos possíveis
+
   // Autor
-  authorId          String              @db.ObjectId
-  author            User                @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Cascade)
-  
+  authorId String @db.ObjectId
+  author   User   @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
   // Co-autores (opcional)
-  coAuthorIds       String[]            @default([]) @db.ObjectId
-  
+  coAuthorIds String[] @default([]) @db.ObjectId
+
   // ===== DATAS =====
-  publishedAt       DateTime?           // Data de publicação
-  scheduledFor      DateTime?           // Agendado para (se SCHEDULED)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  readTime          Int?                @default(0)
+  publishedAt  DateTime? // Data de publicação
+  scheduledFor DateTime? // Agendado para (se SCHEDULED)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  readTime     Int?      @default(0)
   // ===== VINCULAÇÕES COM OPUS ATLAS =====
   // Compositores vinculados
-  composerIds       String[]            @default([]) @db.ObjectId
-  
+  composerIds  String[]  @default([]) @db.ObjectId
+
   // Obras vinculadas
-  workIds           String[]            @default([]) @db.ObjectId
-  
+  workIds String[] @default([]) @db.ObjectId
+
   // Partituras vinculadas
-  scoreIds          String[]            @default([]) // IDs das partituras (WorkScore.sourceId)
-  
+  scoreIds String[] @default([]) // IDs das partituras (WorkScore.sourceId)
+
   // Instrumentos vinculados
-  instrumentIds     String[]            @default([]) @db.ObjectId
-  
+  instrumentIds String[] @default([]) @db.ObjectId
+
   // Épocas vinculadas (múltiplas)
-  epochIds          String[]            @default([]) @db.ObjectId
-  
+  epochIds String[] @default([]) @db.ObjectId
+
   // ===== MÚSICA DE FUNDO =====
-  backgroundMusicUrl     String?        // URL do YouTube/externa
-  backgroundMusicTitle   String?        // Título da música
-  backgroundMusicVolume  Float?         @default(0.3) // Volume (0.0 - 1.0)
-  backgroundMusicLoop    Boolean        @default(true) // Loop
-  backgroundMusicAutoplay Boolean       @default(true) // Autoplay
-  
+  backgroundMusicUrl      String? // URL do YouTube/externa
+  backgroundMusicTitle    String? // Título da música
+  backgroundMusicVolume   Float?  @default(0.3) // Volume (0.0 - 1.0)
+  backgroundMusicLoop     Boolean @default(true) // Loop
+  backgroundMusicAutoplay Boolean @default(true) // Autoplay
+
   // ===== MÉTRICAS =====
-  viewCount         Int                 @default(0) // Visualizações
-  readCount         Int                 @default(0) // Leituras completas
-  avgReadTime       Int?                // Tempo médio de leitura (segundos)
-  estimatedReadTime Int?                // Tempo estimado (calculado)
-  
+  viewCount         Int  @default(0) // Visualizações
+  readCount         Int  @default(0) // Leituras completas
+  avgReadTime       Int? // Tempo médio de leitura (segundos)
+  estimatedReadTime Int? // Tempo estimado (calculado)
+
   // ===== SEO =====
-  metaTitle         String?             // Meta title customizado
-  metaDescription   String?             // Meta description customizada
-  keywords          String[]            @default([]) // Keywords para SEO
-  
+  metaTitle       String? // Meta title customizado
+  metaDescription String? // Meta description customizada
+  keywords        String[] @default([]) // Keywords para SEO
+
   // ===== VERSIONING =====
-  version           Int                 @default(1) // Versão atual
-  
+  version Int @default(1) // Versão atual
+
   // ===== RELAÇÕES =====
-  categories        BlogArticleCategory[]  // M-N com categorias
-  tags              BlogArticleTag[]       // M-N com tags
-  media             BlogMedia[]            // Galeria de mídia
-  comments          BlogComment[]          // Comentários
-  likes             BlogLike[]             // Curtidas
-  bookmarks         BlogBookmark[]         // Salvos
-  versions          BlogArticleVersion[]   // Histórico de versões
-  
+  categories BlogArticleCategory[] // M-N com categorias
+  tags       BlogArticleTag[] // M-N com tags
+  media      BlogMedia[] // Galeria de mídia
+  comments   BlogComment[] // Comentários
+  likes      BlogLike[] // Curtidas
+  bookmarks  BlogBookmark[] // Salvos
+  versions   BlogArticleVersion[] // Histórico de versões
+
   // ===== ÍNDICES =====
   @@index([status, publishedAt])
   @@index([authorId, status])
@@ -2630,37 +2716,37 @@ model BlogArticle {
 // ==================== BLOG CATEGORY ====================
 model BlogCategory {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  name        String   // Nome da categoria
-  slug        String   @unique // URL amigável
-  description String?  // Descrição da categoria
-  
+
+  name        String // Nome da categoria
+  slug        String  @unique // URL amigável
+  description String? // Descrição da categoria
+
   // Hierarquia (subcategorias)
-  parentId    String?  @db.ObjectId
-  parent      BlogCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children    BlogCategory[] @relation("CategoryHierarchy")
-  showInMenu  Boolean @default(true)
-  isActive    Boolean @default(true)
-  image       String?
+  parentId   String?        @db.ObjectId
+  parent     BlogCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children   BlogCategory[] @relation("CategoryHierarchy")
+  showInMenu Boolean        @default(true)
+  isActive   Boolean        @default(true)
+  image      String?
   // Aparência
-  icon        String?  // Emoji ou classe de ícone
-  color       String?  // Cor hex (#000000)
-  coverImage  String?  // Imagem de capa da categoria
-  
+  icon       String? // Emoji ou classe de ícone
+  color      String? // Cor hex (#000000)
+  coverImage String? // Imagem de capa da categoria
+
   // Ordem de exibição
-  order       Int      @default(0)
-  
+  order Int @default(0)
+
   // SEO
   metaTitle       String?
   metaDescription String?
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
-  articles  BlogArticleCategory[]
-  
+  articles BlogArticleCategory[]
+
   @@index([parentId])
   @@index([order])
   @@map("blog_categories")
@@ -2669,24 +2755,24 @@ model BlogCategory {
 // ==================== BLOG TAG ====================
 model BlogTag {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  name  String @unique // Nome da tag (#barroco)
-  slug  String @unique // URL amigável
-  
+
+  name String @unique // Nome da tag (#barroco)
+  slug String @unique // URL amigável
+
   // Metadados
   description String? // Descrição da tag
   color       String? // Cor hex para visualização
-  
+
   // Contadores (cache)
   articleCount Int @default(0) // Quantos artigos usam essa tag
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
   articles BlogArticleTag[]
-  
+
   @@index([articleCount])
   @@map("blog_tags")
 }
@@ -2696,15 +2782,15 @@ model BlogTag {
 // M-N: Artigo <-> Categoria
 model BlogArticleCategory {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   articleId  String @db.ObjectId
   categoryId String @db.ObjectId
-  
+
   article  BlogArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
   category BlogCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  
+
   createdAt DateTime @default(now())
-  
+
   @@unique([articleId, categoryId])
   @@index([articleId])
   @@index([categoryId])
@@ -2714,15 +2800,15 @@ model BlogArticleCategory {
 // M-N: Artigo <-> Tag
 model BlogArticleTag {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   articleId String @db.ObjectId
   tagId     String @db.ObjectId
-  
+
   article BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
   tag     BlogTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  
+
   createdAt DateTime @default(now())
-  
+
   @@unique([articleId, tagId])
   @@index([articleId])
   @@index([tagId])
@@ -2732,36 +2818,36 @@ model BlogArticleTag {
 // ==================== BLOG MEDIA ====================
 model BlogMedia {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  articleId String @db.ObjectId
+
+  articleId String      @db.ObjectId
   article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  
+
   // Tipo e dados
-  type      MediaType
-  url       String    // URL da mídia (YouTube, Vimeo, Cloudinary, etc)
-  title     String?   // Título/legenda
-  caption   String?   // Legenda adicional
-  credit    String?   // Crédito do autor
-  alt       String?   // Alt text (para imagens)
-  
+  type    MediaType
+  url     String // URL da mídia (YouTube, Vimeo, Cloudinary, etc)
+  title   String? // Título/legenda
+  caption String? // Legenda adicional
+  credit  String? // Crédito do autor
+  alt     String? // Alt text (para imagens)
+
   // Metadados
   thumbnailUrl String? // Thumbnail (para vídeos)
-  duration     Int?    // Duração em segundos (para vídeos)
-  width        Int?    // Largura original
-  height       Int?    // Altura original
-  fileSize     Int?    // Tamanho em bytes
-  
+  duration     Int? // Duração em segundos (para vídeos)
+  width        Int? // Largura original
+  height       Int? // Altura original
+  fileSize     Int? // Tamanho em bytes
+
   // Ordem na galeria
-  order     Int @default(0)
-  
+  order Int @default(0)
+
   // Inline ou galeria
   isInline  Boolean @default(false) // Se está inline no conteúdo
-  inGallery Boolean @default(true)  // Se aparece na galeria
-  
+  inGallery Boolean @default(true) // Se aparece na galeria
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([articleId, type])
   @@index([articleId, order])
   @@map("blog_media")
@@ -2770,42 +2856,48 @@ model BlogMedia {
 // ==================== BLOG COMMENT ====================
 model BlogComment {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  articleId String @db.ObjectId
+
+  articleId String      @db.ObjectId
   article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("BlogComments", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Conteúdo
   content String // Texto do comentário
-  
+
   // Comentários aninhados (respostas)
   parentId String?       @db.ObjectId
   parent   BlogComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   replies  BlogComment[] @relation("CommentReplies")
-  
+
   // Status e moderação
-  status CommentStatus @default(APPROVED) // Se precisa moderação
-  isEdited    Boolean    @default(false)
-  
+  status   CommentStatus @default(APPROVED) // Se precisa moderação
+  isEdited Boolean       @default(false)
+
   // Métricas
   likeCount Int @default(0) // Cache de curtidas
-  
+
   // Flags/Reports
-  isFlagged    Boolean @default(false)
-  flagReason   String? // Motivo do report
-  flaggedBy    String? @db.ObjectId // Quem reportou
-  moderatedBy  String? @db.ObjectId // Quem moderou
-  moderatedAt  DateTime?
-  
+  isFlagged   Boolean   @default(false)
+  flagReason  String? // Motivo do report
+  flaggedBy   String?   @db.ObjectId // Quem reportou
+  moderatedBy String?   @db.ObjectId // Quem moderou
+  moderatedAt DateTime?
+
+  // Remoção com marcador: apagar um comentário que tem respostas deixa
+  // "Comentário removido" no lugar — o texto é apagado, a conversa de quem
+  // respondeu fica. Sem resposta, o comentário é apagado de verdade.
+  deletedAt DateTime?
+  deletedBy String?   @db.ObjectId
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
   likes BlogCommentLike[]
-  
+
   @@index([articleId, status, createdAt])
   @@index([userId])
   @@index([parentId])
@@ -2816,15 +2908,15 @@ model BlogComment {
 // ==================== BLOG COMMENT LIKE ====================
 model BlogCommentLike {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  commentId String @db.ObjectId
+
+  commentId String      @db.ObjectId
   comment   BlogComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("BlogCommentLikes", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt DateTime @default(now())
-  
+
   @@unique([commentId, userId])
   @@index([commentId])
   @@index([userId])
@@ -2834,15 +2926,15 @@ model BlogCommentLike {
 // ==================== BLOG LIKE ====================
 model BlogLike {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  articleId String @db.ObjectId
+
+  articleId String      @db.ObjectId
   article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("BlogLikes", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   createdAt DateTime @default(now())
-  
+
   @@unique([articleId, userId])
   @@index([articleId])
   @@index([userId])
@@ -2852,20 +2944,20 @@ model BlogLike {
 // ==================== BLOG BOOKMARK ====================
 model BlogBookmark {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  articleId String @db.ObjectId
+
+  articleId String      @db.ObjectId
   article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("BlogBookmarks", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Notas pessoais
   notes String?
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@unique([articleId, userId])
   @@index([userId, createdAt])
   @@map("blog_bookmarks")
@@ -2874,80 +2966,79 @@ model BlogBookmark {
 // ==================== BLOG ARTICLE VERSION ====================
 model BlogArticleVersion {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
-  articleId String @db.ObjectId
+
+  articleId String      @db.ObjectId
   article   BlogArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  
+
   // Versão
   version Int // Número da versão
-  
+
   // Snapshot completo do artigo naquela versão
   snapshot Json // Todo o conteúdo + metadados
-  
+
   // Quem fez a mudança
-  editedBy  String @db.ObjectId
+  editedBy  String  @db.ObjectId
   changeLog String? // Descrição das mudanças
-  
+
   // Timestamp
   createdAt DateTime @default(now())
-  
+
   @@index([articleId, version])
   @@index([articleId, createdAt])
   @@map("blog_article_versions")
 }
 
-
 // ==================== MODELO DE ASSINATURA ====================
 model Subscription {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Relacionamento com usuário
   userId String @db.ObjectId
   user   User   @relation("UserSubscriptions", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Plano e período
   planType      PlanType       @default(FREE)
   billingPeriod BillingPeriod? // null para FREE
-  
+
   // Status
   status SubscriptionPlanStatus @default(ACTIVE)
-  
+
   // 🔁 Stripe integration
-  stripeSessionId    String?   // session.id
-  stripeCheckoutUrl  String?   // session.url
+  stripeSessionId      String? // session.id
+  stripeCheckoutUrl    String? // session.url
   stripeSubscriptionId String? // depois do webhook
-  stripeCustomerId    String?
+  stripeCustomerId     String?
 
   // Datas
-  startDate     DateTime  @default(now())
-  endDate       DateTime? // null = indefinido (FREE)
-  trialEndDate  DateTime? // Data fim do trial
-  cancelledAt   DateTime? // Data do cancelamento
-  
+  startDate    DateTime  @default(now())
+  endDate      DateTime? // null = indefinido (FREE)
+  trialEndDate DateTime? // Data fim do trial
+  cancelledAt  DateTime? // Data do cancelamento
+
   // Financeiro
-  price         Float?   // Preço mensal/anual
-  currency      String   @default("BRL")
-  autoRenew     Boolean  @default(true)
-  
+  price     Float? // Preço mensal/anual
+  currency  String  @default("BRL")
+  autoRenew Boolean @default(true)
+
   // Mercado Pago
-  mpSubscriptionId   String? // ID da assinatura MP (se recorrente)
-  
+  mpSubscriptionId String? // ID da assinatura MP (se recorrente)
+
   // Cupom aplicado
   couponId String? @db.ObjectId
   coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  
+
   // Metadados
   metadata Json? // Dados extras (ex: features específicas)
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
-  payments  Payment[]
-  invoices  Invoice[]
-  history   SubscriptionHistory[]
-  
+  payments Payment[]
+  invoices Invoice[]
+  history  SubscriptionHistory[]
+
   @@index([userId, status])
   @@index([status, endDate])
   @@index([planType, status])
@@ -2957,42 +3048,42 @@ model Subscription {
 // ==================== MODELO DE PAGAMENTO ====================
 model Payment {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Relacionamento
-  subscriptionId String       @db.ObjectId
-  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscriptionId  String       @db.ObjectId
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   stripeSessionId String?
   // Valores
-  amount        Float
-  currency      String  @default("BRL")
-  discountAmount Float? @default(0) // Desconto aplicado
-  finalAmount   Float   // Valor final pago
-  
+  amount          Float
+  currency        String       @default("BRL")
+  discountAmount  Float?       @default(0) // Desconto aplicado
+  finalAmount     Float // Valor final pago
+
   // Status e método
   status        PaymentStatus
   paymentMethod PaymentMethod?
-  
+
   // Mercado Pago
-  mpPaymentId        String? @unique // ID do pagamento no MP
-  mpStatus           String? // Status original do MP
-  mpStatusDetail     String? // Detalhe do status MP
-  
+  mpPaymentId    String? @unique // ID do pagamento no MP
+  mpStatus       String? // Status original do MP
+  mpStatusDetail String? // Detalhe do status MP
+
   // Dados do pagamento
-  payerEmail String?
-  payerName  String?
+  payerEmail    String?
+  payerName     String?
   payerDocument String? // CPF/CNPJ
-  
+
   // Datas
   paidAt    DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  
+
   // Metadados
   metadata Json? // Dados extras do MP
-  
+
   // Relação com nota fiscal
   invoice Invoice?
-  
+
   @@index([subscriptionId])
   @@index([status, createdAt])
   @@map("payments")
@@ -3001,55 +3092,55 @@ model Payment {
 // ==================== MODELO DE NOTA FISCAL ====================
 model Invoice {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Relacionamentos
   subscriptionId String       @db.ObjectId
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  
+
   paymentId String  @unique @db.ObjectId
   payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  
+
   // Número da nota
   invoiceNumber String @unique // Ex: NF-2024-001234
-  
+
   // Valores
-  amount       Float
-  taxAmount    Float  @default(0)
-  totalAmount  Float
-  currency     String @default("BRL")
-  
+  amount      Float
+  taxAmount   Float  @default(0)
+  totalAmount Float
+  currency    String @default("BRL")
+
   // Status
   status InvoiceStatus @default(PENDING)
-  
+
   // Datas
   issueDate DateTime  @default(now())
   dueDate   DateTime
   paidAt    DateTime?
-  
+
   // Dados do cliente
   customerName     String
   customerEmail    String
-  customerDocument String  // CPF/CNPJ
+  customerDocument String // CPF/CNPJ
   customerAddress  String?
   customerCity     String?
   customerState    String?
   customerZipCode  String?
-  
+
   // Dados da empresa (Opus Atlas)
   companyName     String @default("Opus Atlas Ltda")
   companyDocument String @default("00.000.000/0000-00") // CNPJ fictício
   companyAddress  String @default("São Paulo, SP")
-  
+
   // Arquivo PDF
   pdfUrl String? // URL do PDF gerado
-  
+
   // Descrição
   description String // Descrição do serviço
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@index([subscriptionId])
   @@index([status, dueDate])
   @@map("invoices")
@@ -3058,33 +3149,33 @@ model Invoice {
 // ==================== HISTÓRICO DE ASSINATURAS ====================
 model SubscriptionHistory {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Relacionamento
   subscriptionId String       @db.ObjectId
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
-  
+
   // Ação realizada
   action String // CREATED, UPGRADED, DOWNGRADED, CANCELLED, REACTIVATED, RENEWED, EXPIRED
-  
+
   // Planos
   fromPlan PlanType?
   toPlan   PlanType?
-  
+
   // Valores (se aplicável)
   fromPrice Float?
   toPrice   Float?
-  
+
   // Motivo
   reason String? // Motivo da mudança (ex: "upgrade manual", "trial expirado")
-  
+
   // Metadados
   metadata Json? // Dados extras
-  
+
   // Timestamp
   createdAt DateTime @default(now())
-  
+
   @@index([subscriptionId, createdAt])
   @@index([userId, createdAt])
   @@map("subscription_history")
@@ -3093,44 +3184,44 @@ model SubscriptionHistory {
 // ==================== MODELO DE CUPOM ====================
 model Coupon {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Código do cupom
   code String @unique // Ex: "BEMVINDO20", "PROMO50"
-  
+
   // Tipo e valor
-  type           CouponType
-  discountValue  Float      // 20 (para 20% ou R$ 20)
-  maxDiscount    Float?     // Desconto máximo (para percentual)
-  
+  type          CouponType
+  discountValue Float // 20 (para 20% ou R$ 20)
+  maxDiscount   Float? // Desconto máximo (para percentual)
+
   // Aplicável a quais planos
   applicablePlans PlanType[] @default([]) // [] = todos os planos
-  
+
   // Período de validade
   validFrom  DateTime
   validUntil DateTime
-  
+
   // Limites de uso
-  maxUses       Int?  // null = ilimitado
-  usedCount     Int   @default(0)
+  maxUses        Int? // null = ilimitado
+  usedCount      Int  @default(0)
   maxUsesPerUser Int? @default(1) // Quantas vezes cada usuário pode usar
-  
+
   // Status
   isActive Boolean @default(true)
-  
+
   // Trial estendido (se aplicável)
   extraTrialDays Int? // Dias extras de trial
-  
+
   // Descrição
   description String?
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
   subscriptions Subscription[]
   usages        CouponUsage[]
-  
+
   @@index([code, isActive])
   @@index([validFrom, validUntil])
   @@map("coupons")
@@ -3139,20 +3230,20 @@ model Coupon {
 // ==================== USO DE CUPONS ====================
 model CouponUsage {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Relacionamentos
   couponId String @db.ObjectId
   coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("UserCouponUsages", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Valor do desconto aplicado
   discountApplied Float
-  
+
   // Timestamp
   usedAt DateTime @default(now())
-  
+
   @@unique([couponId, userId])
   @@index([userId])
   @@map("coupon_usages")
@@ -3160,36 +3251,36 @@ model CouponUsage {
 
 model PlanPricing {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Tipo de plano
   planType PlanType // FREE, PLUS, MENTOR, MAESTRO
-  
+
   // Preços por período
-  monthlyPrice    Float  @default(0)
-  quarterlyPrice  Float? // Trimestral
-  biannualPrice   Float? // Semestral
-  yearlyPrice     Float? // Anual
-  
+  monthlyPrice   Float  @default(0)
+  quarterlyPrice Float? // Trimestral
+  biannualPrice  Float? // Semestral
+  yearlyPrice    Float? // Anual
+
   // Descontos aplicados (%)
   quarterlyDiscount Float @default(10) // 10% desconto
   biannualDiscount  Float @default(15) // 15% desconto
   yearlyDiscount    Float @default(20) // 20% desconto
-  
+
   // Dias de trial
   trialDays Int @default(0)
-  
+
   // Status
   isActive Boolean @default(true)
-  
+
   // Metadados
   features     Json? // Features incluídas no plano
   description  String?
-  displayOrder Int    @default(0) // Ordem de exibição
-  
+  displayOrder Int     @default(0) // Ordem de exibição
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Constraint: apenas um preço ativo por plano
   @@index([planType])
   @@index([isActive])
@@ -3199,95 +3290,95 @@ model PlanPricing {
 // ==================== SISTEMA DE EVENTOS ====================
 
 enum EventType {
-  CONCERT          // Concerto
-  RECITAL          // Recital
+  CONCERT // Concerto
+  RECITAL // Recital
   OPEN_REHEARSAL
-  OPERA            // Ópera
-  CHAMBER_MUSIC    // Música de Câmara
-  ORCHESTRA        // Orquestra Sinfônica
-  MASTERCLASS      // Masterclass
-  WORKSHOP         // Workshop
-  FESTIVAL         // Festival
-  COMPETITION      // Competição
-  LECTURE          // Palestra
-  EXHIBITION       // Exposição
-  OTHER            // Outro
+  OPERA // Ópera
+  CHAMBER_MUSIC // Música de Câmara
+  ORCHESTRA // Orquestra Sinfônica
+  MASTERCLASS // Masterclass
+  WORKSHOP // Workshop
+  FESTIVAL // Festival
+  COMPETITION // Competição
+  LECTURE // Palestra
+  EXHIBITION // Exposição
+  OTHER // Outro
   CHOIR
   BALLET
   CHORAL
 }
 
 enum EventStatus {
-  DRAFT            // Rascunho (ainda não publicado)
-  PENDING          // Pendente aprovação (se veio de scraper ou usuário)
-  PUBLISHED        // Publicado (aprovado e visível)
-  CANCELLED        // Cancelado
-  POSTPONED        // Adiado
-  COMPLETED        // Finalizado
+  DRAFT // Rascunho (ainda não publicado)
+  PENDING // Pendente aprovação (se veio de scraper ou usuário)
+  PUBLISHED // Publicado (aprovado e visível)
+  CANCELLED // Cancelado
+  POSTPONED // Adiado
+  COMPLETED // Finalizado
 }
 
 enum EventSource {
-  SCRAPER          // Vindo do scraper automático
-  ADMIN            // Cadastrado por admin
-  USER             // Cadastrado por usuário comum
-  VENUE            // Cadastrado pela própria sala
-  IMPORT           // Importado de fonte externa
+  SCRAPER // Vindo do scraper automático
+  ADMIN // Cadastrado por admin
+  USER // Cadastrado por usuário comum
+  VENUE // Cadastrado pela própria sala
+  IMPORT // Importado de fonte externa
 }
 
 // ==================== SALAS DE CONCERTO ====================
 model Venue {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Identificação
-  name        String              // "Sala São Paulo", "Teatro Amazonas"
-  slug        String    @unique   // URL amigável
-  shortName   String?             // Abreviação (ex: "OSESP")
-  
+  name      String // "Sala São Paulo", "Teatro Amazonas"
+  slug      String  @unique // URL amigável
+  shortName String? // Abreviação (ex: "OSESP")
+
   // Localização
-  city        String              // "São Paulo"
-  state       String              // "SP"
-  country     String    @default("Brasil")
-  address     String?             // Endereço completo
-  zipCode     String?
-  
+  city    String // "São Paulo"
+  state   String // "SP"
+  country String  @default("Brasil")
+  address String? // Endereço completo
+  zipCode String?
+
   // Informações de contato
-  website     String?
-  email       String?
-  phone       String?
-  
+  website String?
+  email   String?
+  phone   String?
+
   // Características da sala
-  capacity    Int?                // Capacidade total
-  description String?             // Descrição da sala
-  history     String?             // História da sala
-  
+  capacity    Int? // Capacidade total
+  description String? // Descrição da sala
+  history     String? // História da sala
+
   // Mídia
   logoUrl       String?
   coverImageUrl String?
   galleryImages String[] @default([])
-  
+
   // Dados para scraping
-  scrapingEnabled Boolean @default(false)
-  scrapingUrl     String?         // URL da página de eventos
-  scrapingConfig  Json?           // Config específica de scraping
+  scrapingEnabled Boolean   @default(false)
+  scrapingUrl     String? // URL da página de eventos
+  scrapingConfig  Json? // Config específica de scraping
   lastScrapedAt   DateTime?
-  scrapingStatus  String?         // "success", "error", "pending"
+  scrapingStatus  String? // "success", "error", "pending"
   scrapingError   String?
-  
+
   // Metadados
-  isVerified  Boolean  @default(false) // Verificado pela equipe
-  isActive    Boolean  @default(true)
-  
+  isVerified Boolean @default(false) // Verificado pela equipe
+  isActive   Boolean @default(true)
+
   // SEO
   metaTitle       String?
   metaDescription String?
-  
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   // Relações
   events Event[] @relation("VenueEvents")
-  
+
   @@index([city, state])
   @@index([isActive])
   @@map("venues")
@@ -3296,111 +3387,111 @@ model Venue {
 // ==================== EVENTOS ====================
 model Event {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   // Identificação
   title       String
-  slug        String    @unique
+  slug        String  @unique
   subtitle    String?
-  description String?             // Descrição curta
-  fullDetails String?             // Detalhes completos (markdown/rich text)
-  
-  // Tipo e status
-  type        EventType
-  status      EventStatus @default(PENDING)
-  source      EventSource @default(ADMIN)
-  
-  // Local
-  venueId     String      @db.ObjectId
-  venue       Venue       @relation("VenueEvents", fields: [venueId], references: [id], onDelete: Cascade)
-  room        String?     // "Sala Principal", "Sala de Câmara"
-  
-  // Data e horário
-  startDate   DateTime
-  endDate     DateTime?   // Para eventos de múltiplos dias
-  endTime     String?
-    venueDetails     String?
-    ticketInfo     String?
+  description String? // Descrição curta
+  fullDetails String? // Detalhes completos (markdown/rich text)
 
-  startTime   String      // "20:00"
-  duration    Int?        // Duração em minutos
-  doors       String?     // Horário de abertura das portas
+  // Tipo e status
+  type   EventType
+  status EventStatus @default(PENDING)
+  source EventSource @default(ADMIN)
+
+  // Local
+  venueId String  @db.ObjectId
+  venue   Venue   @relation("VenueEvents", fields: [venueId], references: [id], onDelete: Cascade)
+  room    String? // "Sala Principal", "Sala de Câmara"
+
+  // Data e horário
+  startDate    DateTime
+  endDate      DateTime? // Para eventos de múltiplos dias
+  endTime      String?
+  venueDetails String?
+  ticketInfo   String?
+
+  startTime String? // "20:00" — nulo quando a casa publica temporada, não sessão
+  duration  Int? // Duração em minutos
+  doors     String? // Horário de abertura das portas
   // Programa
-  program     Json?       // Estrutura detalhada do programa
+  program   Json? // Estrutura detalhada do programa
   // Exemplo: [
   //   { composer: "ObjectId", work: "ObjectId", performer: "string" },
   //   { composer: "ObjectId", work: "ObjectId", performer: "string" }
   // ]
-  
+
   // Vinculações com Opus Atlas
-  composerIds     String[] @default([]) @db.ObjectId
-  workIds         String[] @default([]) @db.ObjectId
-  instrumentIds   String[] @default([]) @db.ObjectId
-  epochIds        String[] @default([]) @db.ObjectId
-  
+  composerIds   String[] @default([]) @db.ObjectId
+  workIds       String[] @default([]) @db.ObjectId
+  instrumentIds String[] @default([]) @db.ObjectId
+  epochIds      String[] @default([]) @db.ObjectId
+
   // Artistas e performers
-  performers      Json?    // Array de performers
+  performers Json? // Array de performers
   // Exemplo: [
   //   { name: "Yuja Wang", role: "Piano", bio: "..." },
   //   { name: "Gustavo Dudamel", role: "Maestro", bio: "..." }
   // ]
-  
-  conductor       String?  // Nome do maestro
-  soloists        String[] @default([]) // Nomes dos solistas
-  ensemble        String?  // Nome do grupo/orquestra
-  
-  // Ingressos
-  ticketUrl       String?  // Link para compra
 
-  ticketPrice     Json?    // Estrutura de preços
+  conductor String? // Nome do maestro
+  soloists  String[] @default([]) // Nomes dos solistas
+  ensemble  String? // Nome do grupo/orquestra
+
+  // Ingressos
+  ticketUrl String? // Link para compra
+
+  ticketPrice Json? // Estrutura de preços
   // Exemplo: { min: 50, max: 200, currency: "BRL", categories: [...] }
-  isFree          Boolean  @default(false)
-  
+  isFree      Boolean @default(false)
+
   // Mídia
-  imageUrl       String?  // Cartaz do evento
-  coverImageUrl   String?
-  galleryImages   String[] @default([])
-  videoUrl        String?  // Trailer/teaser
-  
+  imageUrl      String? // Cartaz do evento
+  coverImageUrl String?
+  galleryImages String[] @default([])
+  videoUrl      String? // Trailer/teaser
+
   // Acessibilidade
-  ageRating       String?  // Classificação etária
-  
+  ageRating String? // Classificação etária
+
   // Destaque e featured
-  isFeatured      Boolean  @default(false)
-  featuredOrder   Int?     // Ordem no carrossel
-  
+  isFeatured    Boolean @default(false)
+  featuredOrder Int? // Ordem no carrossel
+
   // Dados de scraping (se aplicável)
-  externalId    String?     
-  externalUrl     String?  // URL original do evento
-  scrapedData     Json?    // Dados brutos do scraping
-  
+  externalId  String?
+  externalUrl String? // URL original do evento
+  scrapedData Json? // Dados brutos do scraping
+
   // Moderação e qualidade
-  isVerified      Boolean  @default(false)
-  verifiedBy      String?  @db.ObjectId
-  verifiedAt      DateTime?
-  
-  qualityScore    Int?     // Score de qualidade dos dados (0-100)
-  completeness    Float?   // % de campos preenchidos
-  
+  isVerified Boolean   @default(false)
+  verifiedBy String?   @db.ObjectId
+  verifiedAt DateTime?
+
+  qualityScore Int? // Score de qualidade dos dados (0-100)
+  completeness Float? // % de campos preenchidos
+
   // Submissão por usuário
-  submittedBy     String?  @db.ObjectId
-  submittedAt     DateTime?
-  
+  submittedBy String?   @db.ObjectId
+  submittedAt DateTime?
+
   // Métricas
-  viewCount       Int      @default(0)
-  
+  viewCount Int @default(0)
+
   // SEO
   metaTitle       String?
   metaDescription String?
   keywords        String[] @default([])
-  
+
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   publishedAt DateTime?
-  
+
   // Relações
-  reminders    EventReminder[] @relation("EventReminders")
-  
+  reminders EventReminder[] @relation("EventReminders")
+
   @@index([venueId, startDate])
   @@index([externalId])
   @@index([status, startDate])
@@ -3411,30 +3502,29 @@ model Event {
   @@map("events")
 }
 
-
 // ==================== LEMBRETES DE EVENTOS ====================
 model EventReminder {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   eventId String @db.ObjectId
   event   Event  @relation("EventReminders", fields: [eventId], references: [id], onDelete: Cascade)
-  
+
   userId String @db.ObjectId
   user   User   @relation("UserEventReminders", fields: [userId], references: [id], onDelete: Cascade)
-  
+
   // Quando lembrar
-  reminderTime DateTime  // Data/hora do lembrete
-  reminderType String    // "1_day_before", "1_hour_before", "custom"
-  
+  reminderTime DateTime // Data/hora do lembrete
+  reminderType String // "1_day_before", "1_hour_before", "custom"
+
   // Status
-  sent       Boolean   @default(false)
-  sentAt     DateTime?
-  
+  sent   Boolean   @default(false)
+  sentAt DateTime?
+
   // Canal
   channel String @default("notification") // "notification", "email", "both"
-  
+
   createdAt DateTime @default(now())
-  
+
   @@unique([eventId, userId, reminderTime])
   @@index([reminderTime, sent])
   @@map("event_reminders")
@@ -3443,30 +3533,193 @@ model EventReminder {
 // ==================== LOG DE SCRAPING ====================
 model ScrapingLog {
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  
+
   venueId String? @db.ObjectId
-  
+
   // Metadados do scraping
-  source      String    // "osesp", "teatro_amazonas", etc
-  status      String    // "success", "partial", "error"
-  newEvents      Int      // ✅ CORRETO (não 'eventsAdded')
+  source    String // "osesp", "teatro_amazonas", etc
+  status    String // "success", "partial", "error"
+  newEvents Int // ✅ CORRETO (não 'eventsAdded')
 
   // Estatísticas
-  eventsFound    Int @default(0)
-  eventsCreated  Int @default(0)
-  eventsUpdated  Int @default(0)
-  eventsSkipped  Int @default(0)
-  
+  eventsFound   Int @default(0)
+  eventsCreated Int @default(0)
+  eventsUpdated Int @default(0)
+  eventsSkipped Int @default(0)
+
   // Dados
-  duration    Int?      // Duração em ms
-  error       String?   // Mensagem de erro (se houver)
-  details     Json?     // Detalhes adicionais
-  
+  duration Int? // Duração em ms
+  error    String? // Mensagem de erro (se houver)
+  details  Json? // Detalhes adicionais
+
   // Timestamps
-  startedAt  DateTime @default(now())
+  startedAt  DateTime  @default(now())
   finishedAt DateTime?
-  
+
   @@index([source, startedAt])
   @@index([status])
   @@map("scraping_logs")
+}
+
+// ============================================================
+// Idempotência de webhooks (SPEC §3.8)
+// ============================================================
+// O Stripe entrega cada evento *pelo menos* uma vez e reentrega por até 3 dias
+// enquanto não receber 2xx. Sem um registro de eventos já processados, uma
+// reentrega de `invoice.payment_failed` cria uma segunda linha em `Payment`,
+// inflando o histórico e as estatísticas do usuário.
+//
+// Modelo exclusivo da API (o front não escreve aqui).
+model ProcessedWebhookEvent {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// Id do evento no provedor (`evt_...` no Stripe). Único: é a trava.
+  eventId     String   @unique
+  provider    String
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@index([provider, eventType])
+  @@index([processedAt])
+  @@map("processed_webhook_events")
+}
+
+// ============================================================
+// Trilha de auditoria administrativa (SPEC §3.8 e §5)
+// ============================================================
+// Separado de `ActivityLog` de propósito. `ActivityLog` registra atividade do
+// *usuário* no produto (favoritou, anotou, marcou como aprendido) e é lido pelo
+// front; esta tabela registra ação *administrativa* sobre o sistema — quem
+// apagou um usuário, quem mudou um preço, quem exportou o banco.
+//
+// São coisas com requisitos diferentes: retenção maior, acesso restrito, e um
+// `action` livre em vez de enum fechado (novas ações administrativas surgem a
+// cada módulo, e travar isso num enum forçaria migração a cada rota nova).
+//
+// Modelo exclusivo da API (o front não lê nem escreve aqui).
+model AdminAuditLog {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  /// Quem executou. Nulo apenas em ação disparada por cron/sistema.
+  actorId   String? @db.ObjectId
+  actorRole String?
+
+  /// Identificador estável da ação, ex.: "user.delete", "plan-pricing.update".
+  action String
+
+  entityType String?
+  entityId   String?
+
+  /// Contexto adicional já sanitizado — nunca senha, token ou dado de cartão.
+  metadata Json?
+
+  ipAddress String?
+  userAgent String?
+  requestId String?
+
+  /// `false` quando a ação foi tentada e falhou (também precisa ficar registrado).
+  success Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
+}
+
+// ============================================================
+// Registro central de arquivos (Etapa 1.1 — storage no Cloudinary)
+// ============================================================
+// Todo arquivo que a plataforma hospeda passa a ter uma linha aqui.
+//
+// O problema que isto resolve: os models de domínio guardam só a URL do
+// arquivo (`User.image`, `Composer.portraitUrl`, `WorkScore.downloadUrl`...).
+// Para apagar um asset no Cloudinary é preciso o `public_id` e o
+// `resource_type`, que a URL não entrega de forma confiável — versão,
+// transformação e pasta com ponto quebram qualquer parser. Era por isso que
+// existia um subsistema inteiro de "arquivos órfãos" tentando reconstruir o id.
+//
+// Com o registro, detectar órfão vira um diff entre esta tabela e o Cloudinary,
+// e apagar vira uma leitura. Há ainda um ganho de segurança: `WorkScore.downloadUrl`
+// mistura link externo do IMSLP (92 mil registros, que NÃO são nossos) com o
+// punhado de arquivos que hospedamos. Só o que foi enviado por nós existe aqui,
+// então uma rotina de limpeza nunca consegue tentar apagar um link do IMSLP.
+//
+// Modelo exclusivo da API — o front não lê nem escreve.
+
+enum StorageProvider {
+  CLOUDINARY
+}
+
+/// Tipo de recurso no Cloudinary. `RAW` cobre o que não é mídia (ex.: MusicXML).
+enum StorageResourceType {
+  IMAGE
+  VIDEO
+  RAW
+}
+
+/// Para que serve o arquivo. Define pasta, limites e formatos aceitos —
+/// ver `ASSET_KIND_POLICIES` em `src/common/storage/`.
+enum StorageAssetKind {
+  PROFILE_IMAGE
+  COMPOSER_IMAGE
+  SCORE_FILE
+  SCORE_THUMBNAIL
+  WORK_AUDIO
+  WORK_VIDEO_LESSON
+  PERFORMANCE_VIDEO
+  ASSIGNMENT_VIDEO
+  BLOG_MEDIA
+  BLOG_AUDIO
+  BLOG_TTS_AUDIO
+  AD_MEDIA
+}
+
+enum StorageAssetStatus {
+  /// Upload assinado, ainda não confirmado pelo cliente.
+  PENDING
+  /// Confirmado contra o Cloudinary e em uso.
+  ACTIVE
+  /// Removido do Cloudinary. A linha fica como trilha.
+  DELETED
+}
+
+model StoredAsset {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  provider     StorageProvider     @default(CLOUDINARY)
+  /// Identificador no provedor. É o que permite apagar sem adivinhação.
+  publicId     String              @unique
+  resourceType StorageResourceType
+  kind         StorageAssetKind
+  status       StorageAssetStatus  @default(PENDING)
+
+  folder    String
+  secureUrl String?
+  format    String?
+  bytes     Int?
+  width     Int?
+  height    Int?
+  /// Duração em segundos, para áudio e vídeo.
+  duration  Float?
+
+  /// A que entidade o arquivo pertence, ex.: ("work", "<id>").
+  /// Solto de propósito: o mesmo registro serve a models diferentes sem
+  /// precisar de uma relação por tipo.
+  entityType String?
+  entityId   String?
+
+  /// Quem enviou. Nulo em arquivo gerado pelo sistema (ex.: áudio de TTS).
+  ownerId String? @db.ObjectId
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  deletedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([entityType, entityId])
+  @@index([ownerId, kind])
+  @@index([kind, status])
+  @@map("stored_assets")
 }

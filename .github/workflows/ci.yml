@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, 'feat/**']
+  pull_request:
+    branches: [main, dev]
+
+# Um push novo cancela a execução anterior do mesmo branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  quality:
+    name: Lint, tipos e testes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # O client do Prisma é gerado, não versionado — sem este passo o
+      # type-check falha em todo arquivo que importa `@prisma/client`.
+      - name: Gerar Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Testes unitários
+        run: npm run test -- --runInBand --ci
+
+      - name: Cobertura
+        run: npm run test:cov -- --runInBand --ci
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: quality
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
+
+      # Prova que a aplicação sobe de verdade: sem isto, um erro de injeção de
+      # dependência só apareceria em produção, porque o `tsc` não enxerga o
+      # grafo de módulos do Nest.
+      - name: Verificar boot da aplicação
+        env:
+          NODE_ENV: test
+          DATABASE_URL: mongodb://localhost:27017/ci
+          JWT_ACCESS_SECRET: ci-access-secret-com-32-caracteres-ok
+          JWT_REFRESH_SECRET: ci-refresh-secret-com-32-caracteres-ok
+          REDIS_URL: redis://localhost:6379
+          SKIP_TEXT_INDEX_BOOTSTRAP: 'true'
+        run: node scripts/verify-boot.js
+
+  security:
+    name: Segurança
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Falha só em vulnerabilidade alta ou crítica — moderadas viram ruído e
+      # o time acaba ignorando o job inteiro.
+      - name: Auditoria de dependências
+        run: npm audit --audit-level=high
+
+      # Impede que uma chave volte a ser commitada, como já aconteceu com a
+      # chave do Stripe no repositório do front.
+      - name: Varredura de segredos
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  schema-drift:
+    name: Divergência de schema Prisma
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validar schema
+        run: npx prisma validate
+
+      # A divergência com o schema do front é deliberada durante a migração
+      # (o front vai parar de usar Prisma). Este passo apenas registra o
+      # diff no log do CI, para a divergência ser sempre consciente.
+      - name: Registrar diferenças em relação ao front
+        continue-on-error: true
+        run: node scripts/report-schema-drift.js

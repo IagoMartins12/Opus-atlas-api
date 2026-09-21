@@ -1,23 +1,51 @@
-// sala-cecilia-meireles-scraper.service.ts
 import { Injectable } from '@nestjs/common';
-import { BaseScraper, ScraperConfig } from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
-import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import * as cheerio from 'cheerio';
+import { BaseScraper, ScraperConfig } from '../base/base-scraper';
+import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import {
-  extractComposerNames,
   detectEventType,
+  extractComposerNames,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
+import { CheerioDocument } from '../imslp/imslp-work.parser';
 
+/** O tipo de um nó selecionado, sem depender dos tipos antigos do cheerio. */
+type CheerioNode = ReturnType<CheerioDocument>;
+
+/** A listagem repete cada evento por causa do layout responsivo. */
+const ISO_DATETIME = /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/;
+
+/**
+ * Programação da Sala Cecília Meireles.
+ *
+ * **O domínio que estava configurado não é mais da casa.**
+ * `salaceciliameireles.com.br` foi solto e hoje serve um site de apostas —
+ * a página inicial fala de bônus de boas-vindas, saques e cassino. O scraper
+ * pedia `/programacao` ali e recebia 404; se um dia aquele endereço
+ * respondesse 200, o que entraria no catálogo de concertos seria conteúdo de
+ * casa de apostas. A casa é órgão do estado do Rio e vive em
+ * `salaceciliameireles.rj.gov.br`.
+ *
+ * **A programação vem da página inicial, não de `/programacao-2/`.** A página
+ * de programação lista o acervo a partir de 2018; é a inicial que traz os
+ * próximos concertos. Cada item da grade carrega a data em formato ISO num
+ * campo oculto, o que dispensa interpretar "sex, 11 set".
+ */
 @Injectable()
 export class SalaCeciliaMeirelesScraperService extends BaseScraper {
-  constructor(private prisma: PrismaService) {
+  constructor() {
     const config: ScraperConfig = {
       venueName: 'Sala Cecília Meireles',
       venueSlug: 'sala-cecilia-meireles',
-      baseUrl: 'https://salaceciliameireles.com.br',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      venue: {
+        address: 'Largo da Lapa, 47 - Centro',
+        city: 'Rio de Janeiro',
+        state: 'RJ',
+        country: 'Brasil',
+        zipCode: '20021-180',
+      },
+      baseUrl: 'https://salaceciliameireles.rj.gov.br',
+      userAgent: 'Mozilla/5.0 (compatible; OpusAtlas/1.0)',
       delayBetweenRequests: 1500,
     };
     super(config);
@@ -26,139 +54,113 @@ export class SalaCeciliaMeirelesScraperService extends BaseScraper {
   async scrapeEvents(
     onProgress?: (current: number, total: number, message: string) => void,
   ): Promise<ScrapedEvent[]> {
-    try {
-      onProgress?.(0, 100, 'Iniciando scraper Sala Cecília Meireles...');
+    onProgress?.(0, 100, 'Lendo a programação da Sala Cecília Meireles...');
 
-      const html = await this.fetchWithRetry(
-        `${this.config.baseUrl}/programacao`,
-      );
-      const $ = cheerio.load(html);
+    const html = await this.fetchWithRetry(`${this.config.baseUrl}/`);
+    const $ = cheerio.load(html);
 
-      const events: ScrapedEvent[] = [];
-      const eventElements = $('.evento-item, .programacao-item, .concert-card');
+    const items = $('.jet-listing-grid__item');
 
-      onProgress?.(20, 100, `${eventElements.length} eventos encontrados`);
+    onProgress?.(40, 100, `${items.length} blocos na grade`);
 
-      eventElements.each((index, element) => {
-        const $elem = $(element);
+    // A mesma grade é renderizada três vezes (desktop, tablet, celular): a
+    // chave é o endereço do evento, e o mapa resolve sem depender da ordem.
+    const events = new Map<string, ScrapedEvent>();
 
-        // Extração de dados
-        const title = $elem
-          .find('.titulo, .event-title, h2, h3')
-          .first()
-          .text()
-          .trim();
-        const dateText = $elem
-          .find('.data, .event-date, time')
-          .first()
-          .text()
-          .trim();
-        const timeText = $elem
-          .find('.horario, .event-time')
-          .first()
-          .text()
-          .trim();
-        const description = $elem
-          .find('.descricao, .event-description, p')
-          .first()
-          .text()
-          .trim();
-        const imageUrl = $elem.find('img').first().attr('src') || null;
-        const eventUrl = $elem.find('a').first().attr('href') || null;
+    items.each((_, element) => {
+      const item = $(element);
 
-        if (!title || !dateText) return;
+      // O `<style>` embutido em cada item entraria no texto e engoliria a data.
+      item.find('style').remove();
 
-        const startDate = this.parsePortugueseDate(dateText);
-        if (!startDate) return;
+      const url = item.find('a[href*="/programacao/"]').first().attr('href');
 
-        const startTime = this.parseTime(timeText) || '20:00';
-        const eventType = detectEventType(title, description);
-
-        const composerNames = extractComposerNames(`${title} ${description}`);
-
-        const externalId = `sala-cecilia-meireles-${createSlug(title)}-${startDate.getTime()}`;
-
-        events.push({
-          title,
-          slug: createSlug(`${title}-${startDate.toISOString()}`),
-          description: description || title,
-          type: eventType,
-          startDate,
-          startTime,
-          endDate: null,
-          endTime: null,
-          venueDetails: 'Sala Cecília Meireles',
-          ticketUrl: eventUrl ? `${this.config.baseUrl}${eventUrl}` : null,
-          externalUrl: eventUrl ? `${this.config.baseUrl}${eventUrl}` : null,
-          ticketInfo: null,
-          externalId,
-          imageUrl: imageUrl ? `${this.config.baseUrl}${imageUrl}` : null,
-          composerNames,
-          performers: [],
-          program: null,
-        });
-
-        const progress = 20 + Math.round((index / eventElements.length) * 80);
-        onProgress?.(
-          progress,
-          100,
-          `Processando evento ${index + 1}/${eventElements.length}`,
-        );
-      });
-
-      onProgress?.(100, 100, 'Scraper concluído!');
-      this.log(`✅ ${events.length} eventos coletados`);
-
-      return events;
-    } catch (error) {
-      this.logError(error);
-      throw error;
-    }
-  }
-
-  private parsePortugueseDate(text: string): Date | null {
-    // Formato: "28 de novembro de 2025" ou "28/11/2025"
-    const dateRegex1 = /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/i;
-    const dateRegex2 = /(\d{1,2})\/(\d{1,2})\/(\d{4})/;
-
-    let match = text.match(dateRegex1);
-    if (match) {
-      const [, day, monthName, year] = match;
-      const months: Record<string, number> = {
-        janeiro: 0,
-        fevereiro: 1,
-        março: 2,
-        abril: 3,
-        maio: 4,
-        junho: 5,
-        julho: 6,
-        agosto: 7,
-        setembro: 8,
-        outubro: 9,
-        novembro: 10,
-        dezembro: 11,
-      };
-      const monthIndex = months[monthName.toLowerCase()];
-      if (monthIndex !== undefined) {
-        return new Date(parseInt(year), monthIndex, parseInt(day));
+      if (!url || events.has(url)) {
+        return;
       }
-    }
 
-    match = text.match(dateRegex2);
-    if (match) {
-      const [, day, month, year] = match;
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    }
+      const event = this.toEvent(item, url, $);
 
-    return null;
+      if (event) {
+        events.set(url, event);
+      }
+    });
+
+    this.state.eventsFound = events.size;
+    this.state.eventsScraped = events.size;
+
+    onProgress?.(100, 100, `${events.size} eventos coletados`);
+
+    return [...events.values()];
   }
 
-  private parseTime(text: string): string | null {
-    const timeMatch = text.match(/(\d{1,2}):?(\d{2})/);
-    if (timeMatch) {
-      const [, hour, minute] = timeMatch;
-      return `${hour.padStart(2, '0')}:${minute}`;
+  private toEvent(
+    item: CheerioNode,
+    url: string,
+    $: CheerioDocument,
+  ): ScrapedEvent | null {
+    const headings = item
+      .find('.elementor-heading-title')
+      .map((_: number, heading: unknown) =>
+        $(heading as never)
+          .text()
+          .trim(),
+      )
+      .get()
+      .filter(Boolean);
+
+    const dateIndex = headings.findIndex((text) => ISO_DATETIME.test(text));
+    const isoDate = dateIndex >= 0 ? headings[dateIndex] : null;
+    const startDate = isoDate ? new Date(isoDate.replace(' ', 'T')) : null;
+
+    // Sem data não há evento: o calendário é a razão de o registro existir.
+    if (!startDate || Number.isNaN(startDate.getTime())) {
+      this.state.errors.push(`Evento sem data legível: ${url}`);
+
+      return null;
     }
-    return null;
+
+    // **O título é o cabeçalho logo depois da data**, e a posição importa: o
+    // primeiro cabeçalho do bloco é o nome da *série* ("Série Sala
+    // Orquestras"), não o do concerto. Pegar o primeiro que não fosse data,
+    // sala ou preço trazia a série para todos os eventos, e três concertos
+    // diferentes viravam três registros com o nome da temporada.
+    const title = headings
+      .slice(dateIndex + 1)
+      .find(
+        (text) =>
+          !text.startsWith('•') && !/^R\$/.test(text) && text.length > 3,
+      );
+
+    const series = dateIndex > 0 ? headings[0] : null;
+
+    if (!title) {
+      this.state.errors.push(`Evento sem título: ${url}`);
+
+      return null;
+    }
+
+    const text = item.text().replace(/\s+/g, ' ').trim();
+    const room = headings.find((value) => value.startsWith('•'));
+    const price = headings.find((value) => /^R\$/.test(value));
+
+    return {
+      title,
+      slug: createSlug(title),
+      description: text.slice(0, 500),
+      type: detectEventType(title, text),
+      startDate,
+      startTime: isoDate ? isoDate.slice(11, 16) : null,
+      venueDetails: room ? room.replace(/^•\s*/, '') : this.config.venueName,
+      ticketUrl: url,
+      externalUrl: url,
+      ticketInfo: price ?? null,
+      // O caminho do evento é estável e único na casa.
+      externalId: `sala-cecilia-meireles-${url.split('/programacao/')[1]?.replace(/\/$/, '') ?? createSlug(title)}`,
+      imageUrl: null,
+      composerNames: extractComposerNames(`${title} ${text}`),
+      performers: [],
+      program: series,
+    };
   }
 }

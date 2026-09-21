@@ -1,23 +1,73 @@
-// teatro-amazonas-scraper.service.ts
 import { Injectable } from '@nestjs/common';
 import { BaseScraper, ScraperConfig } from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
-import * as cheerio from 'cheerio';
 import {
-  extractComposerNames,
   detectEventType,
+  extractComposerNames,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
+import { errorMessage } from '../../common/utils/error.util';
 
+/** Um item da agenda, como a API da secretaria o devolve. */
+interface Pauta {
+  id?: string | number;
+  title?: string;
+  nome?: string;
+  descricao?: string;
+  description?: string;
+  local?: string;
+  category?: string;
+  data?: string;
+  date?: string;
+  data_inicio?: string;
+  hora?: string;
+}
+
+/**
+ * A API de agenda que a página da secretaria consulta.
+ *
+ * O endereço está escrito no próprio JavaScript da página `/agenda/`:
+ *
+ * ```js
+ * url: 'https://sistemas.cultura.am.gov.br/sigec/api/ListarPautas?type=year&val1=2023'
+ * ```
+ */
+const AGENDA_API = 'https://sistemas.cultura.am.gov.br/sigec/api/ListarPautas';
+
+/**
+ * Programação do Teatro Amazonas.
+ *
+ * **A fonte desta casa está fora do ar, e não é a página que quebrou — é o
+ * servidor de dados por trás dela.** O scraper pedia
+ * `cultura.am.gov.br/teatro-amazonas/programacao`, que responde 404; a agenda
+ * mudou para `/agenda/`, e essa página **não traz evento nenhum no HTML**: ela
+ * carrega tudo por uma chamada a `sistemas.cultura.am.gov.br`, cujo nome
+ * **não resolve mais em DNS**. Ou seja, a própria agenda da secretaria abre
+ * vazia num navegador comum.
+ *
+ * Além disso, a página pede o ano **2023** fixo no código, o que já indica
+ * abandono.
+ *
+ * O scraper continua aqui, apontado para a API certa e pedindo o ano corrente:
+ * no dia em que o servidor voltar, ele volta junto. Enquanto não voltar, ele
+ * **falha dizendo por quê** em vez de devolver zero eventos em silêncio —
+ * "nenhum evento" e "a fonte sumiu" não podem chegar iguais a quem opera.
+ */
 @Injectable()
 export class TeatroAmazonasScraperService extends BaseScraper {
-  constructor(private prisma: PrismaService) {
+  constructor() {
     const config: ScraperConfig = {
       venueName: 'Teatro Amazonas',
       venueSlug: 'teatro-amazonas',
+      venue: {
+        address: 'Largo de São Sebastião, s/n - Centro',
+        city: 'Manaus',
+        state: 'AM',
+        country: 'Brasil',
+        zipCode: '69010-140',
+      },
       baseUrl: 'https://cultura.am.gov.br',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      userAgent: 'Mozilla/5.0 (compatible; OpusAtlas/1.0)',
       delayBetweenRequests: 2000,
     };
     super(config);
@@ -26,153 +76,104 @@ export class TeatroAmazonasScraperService extends BaseScraper {
   async scrapeEvents(
     onProgress?: (current: number, total: number, message: string) => void,
   ): Promise<ScrapedEvent[]> {
+    const year = new Date().getFullYear();
+
+    onProgress?.(0, 100, `Lendo a agenda de ${year} do Teatro Amazonas...`);
+
+    let pautas: Pauta[];
+
     try {
-      onProgress?.(0, 100, 'Iniciando scraper Teatro Amazonas...');
-
-      // Buscar programação atual
-      const html = await this.fetchWithRetry(
-        `${this.config.baseUrl}/teatro-amazonas/programacao`,
-      );
-      const $ = cheerio.load(html);
-
-      const events: ScrapedEvent[] = [];
-
-      // Buscar eventos listados
-      $('.evento, .programacao-item, .event-card, article').each(
-        (index, element) => {
-          const $elem = $(element);
-
-          const title = $elem
-            .find('h2, h3, .titulo, .event-title')
-            .first()
-            .text()
-            .trim();
-          const dateText = $elem
-            .find('.data, .date, time')
-            .first()
-            .text()
-            .trim();
-          const timeText = $elem.find('.horario, .time').first().text().trim();
-          const description = $elem
-            .find('p, .descricao, .description')
-            .first()
-            .text()
-            .trim();
-          const imageUrl = $elem.find('img').first().attr('src') || null;
-          const linkUrl = $elem.find('a').first().attr('href') || null;
-
-          if (!title || !dateText) return;
-
-          const startDate = this.parseDateFromText(dateText);
-          if (!startDate) return;
-
-          const startTime = this.extractTime(timeText) || '20:00';
-          const eventType = detectEventType(title, description);
-          const composerNames = extractComposerNames(`${title} ${description}`);
-
-          // Detecção de preço
-          let ticketInfo: string | null = null;
-          const bodyText = $elem.text().toLowerCase();
-          if (
-            bodyText.includes('gratuito') ||
-            bodyText.includes('grátis') ||
-            bodyText.includes('entrada franca')
-          ) {
-            ticketInfo = 'Entrada gratuita';
-          } else if (bodyText.match(/r\$\s*\d+/)) {
-            const priceMatch = bodyText.match(/r\$\s*(\d+)/);
-            if (priceMatch) ticketInfo = `A partir de R$ ${priceMatch[1]}`;
-          }
-
-          const externalId = `teatro-amazonas-${createSlug(title)}-${startDate.getTime()}`;
-
-          events.push({
-            title,
-            slug: createSlug(`${title}-${startDate.toISOString()}`),
-            description: description || title,
-            type: eventType,
-            startDate,
-            startTime,
-            endDate: null,
-            endTime: null,
-            venueDetails: 'Teatro Amazonas',
-            ticketUrl: linkUrl ? `${this.config.baseUrl}${linkUrl}` : null,
-            externalUrl: linkUrl ? `${this.config.baseUrl}${linkUrl}` : null,
-            ticketInfo,
-            externalId,
-            imageUrl: imageUrl
-              ? imageUrl.startsWith('http')
-                ? imageUrl
-                : `${this.config.baseUrl}${imageUrl}`
-              : null,
-            composerNames,
-            performers: [],
-            program: null,
-          });
-        },
+      const response = await this.httpClient.get(
+        `${AGENDA_API}?type=year&val1=${year}&format=json`,
+        { baseURL: undefined },
       );
 
-      onProgress?.(100, 100, 'Scraper concluído!');
-      this.log(`✅ ${events.length} eventos coletados`);
-
-      return events;
-    } catch (error) {
-      this.logError(error);
-      throw error;
+      pautas = normalizePautas(response.data);
+    } catch (error: unknown) {
+      throw new Error(
+        `A agenda do Teatro Amazonas não respondeu (${AGENDA_API}): ` +
+          `${errorMessage(error)}. A página /agenda/ da secretaria carrega os ` +
+          'eventos desse endereço, e ele está fora do ar — a agenda abre vazia ' +
+          'também no navegador.',
+      );
     }
+
+    onProgress?.(60, 100, `${pautas.length} itens na agenda`);
+
+    const events = pautas.flatMap((pauta) => {
+      const event = this.toEvent(pauta);
+
+      return event ? [event] : [];
+    });
+
+    this.state.eventsFound = pautas.length;
+    this.state.eventsScraped = events.length;
+
+    onProgress?.(100, 100, `${events.length} eventos coletados`);
+
+    return events;
   }
 
-  private parseDateFromText(text: string): Date | null {
-    // Suporte para múltiplos formatos
-    const formats = [
-      /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})/i,
-      /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
-      /(\d{4})-(\d{2})-(\d{2})/,
-    ];
+  private toEvent(pauta: Pauta): ScrapedEvent | null {
+    const title = (pauta.title ?? pauta.nome ?? '').trim();
+    const rawDate = pauta.data_inicio ?? pauta.data ?? pauta.date;
 
-    const months: Record<string, number> = {
-      janeiro: 0,
-      fevereiro: 1,
-      março: 2,
-      abril: 3,
-      maio: 4,
-      junho: 5,
-      julho: 6,
-      agosto: 7,
-      setembro: 8,
-      outubro: 9,
-      novembro: 10,
-      dezembro: 11,
+    if (!title || !rawDate) {
+      this.state.errors.push(
+        `Item sem título ou sem data: ${title || pauta.id || 'desconhecido'}`,
+      );
+
+      return null;
+    }
+
+    const startDate = new Date(rawDate);
+
+    if (Number.isNaN(startDate.getTime())) {
+      this.state.errors.push(`Data ilegível em "${title}": ${rawDate}`);
+
+      return null;
+    }
+
+    const description = (pauta.descricao ?? pauta.description ?? '').trim();
+
+    return {
+      title,
+      slug: createSlug(title),
+      description,
+      type: detectEventType(`${title} ${pauta.category ?? ''}`, description),
+      startDate,
+      startTime: pauta.hora ?? null,
+      venueDetails: pauta.local ?? this.config.venueName,
+      ticketUrl: null,
+      externalUrl: `${this.config.baseUrl}/agenda/`,
+      ticketInfo: null,
+      externalId: `teatro-amazonas-${pauta.id ?? createSlug(title)}`,
+      imageUrl: null,
+      composerNames: extractComposerNames(`${title} ${description}`),
+      performers: [],
+      program: null,
     };
+  }
+}
 
-    for (const regex of formats) {
-      const match = text.match(regex);
-      if (match) {
-        if (regex.source.includes('de')) {
-          const [, day, monthName, year] = match;
-          const monthIndex = months[monthName.toLowerCase()];
-          if (monthIndex !== undefined) {
-            return new Date(parseInt(year), monthIndex, parseInt(day));
-          }
-        } else if (regex.source.includes('\\/')) {
-          const [, day, month, year] = match;
-          return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        } else {
-          const [, year, month, day] = match;
-          return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-        }
-      }
-    }
-
-    return null;
+/** A API pode devolver vetor ou mapa; as duas formas viram lista. */
+export function normalizePautas(data: unknown): Pauta[] {
+  if (Array.isArray(data)) {
+    return data as Pauta[];
   }
 
-  private extractTime(text: string): string | null {
-    const timeMatch = text.match(/(\d{1,2})[h:](\d{2})/);
-    if (timeMatch) {
-      const [, hour, minute] = timeMatch;
-      return `${hour.padStart(2, '0')}:${minute}`;
+  if (data && typeof data === 'object') {
+    const record = data as Record<string, unknown>;
+    const pautas = record.pautas ?? record.data ?? record;
+
+    if (Array.isArray(pautas)) {
+      return pautas as Pauta[];
     }
-    return null;
+
+    if (pautas && typeof pautas === 'object') {
+      return Object.values(pautas as Record<string, Pauta>);
+    }
   }
+
+  return [];
 }

@@ -1,24 +1,59 @@
-// theatro-da-paz-scraper.service.ts
 import { Injectable } from '@nestjs/common';
 import { BaseScraper, ScraperConfig } from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
-import * as cheerio from 'cheerio';
 import {
-  extractComposerNames,
   detectEventType,
+  extractComposerNames,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
 
+/** Um evento como o Wix o embute na página. */
+interface WixEvent {
+  id?: string;
+  title?: string;
+  description?: string;
+  about?: string;
+  slug?: string;
+  location?: { name?: string; formattedAddress?: string };
+  scheduling?: {
+    config?: { startDate?: string; endDate?: string };
+    startTimeFormatted?: string;
+    endTimeFormatted?: string;
+  };
+}
+
+/**
+ * Programação do Theatro da Paz.
+ *
+ * **O endereço configurado não era o da casa.** O scraper pedia
+ * `secult.pa.gov.br/theatro-da-paz` — a secretaria de cultura do Pará, que
+ * responde 404 nesse caminho e redireciona a raiz para `/transparencia`. O
+ * Theatro tem sítio próprio: `www.theatrodapaz.com.br`.
+ *
+ * **Os eventos não são lidos do HTML.** O sítio é feito em Wix, e a listagem é
+ * montada no navegador: raspar a marcação renderizada exigiria um navegador de
+ * verdade e devolveria menos do que já está ali. O Wix embute os dados da
+ * própria listagem na página, em `appsWarmupData`, com data de início em ISO
+ * e fuso declarado — que é exatamente o que um calendário precisa e o que
+ * texto como "10 de setembro de 2026 20:00" obriga a adivinhar.
+ */
 @Injectable()
 export class TheatroDaPazScraperService extends BaseScraper {
-  constructor(private prisma: PrismaService) {
+  constructor() {
     const config: ScraperConfig = {
       venueName: 'Theatro da Paz',
       venueSlug: 'theatro-da-paz',
-      baseUrl: 'https://secult.pa.gov.br',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      delayBetweenRequests: 2000,
+      venue: {
+        // Endereço lido da própria página da casa, no bloco de dados do Wix.
+        address: 'Avenida da Paz - Praça da República, s/n - Campina',
+        city: 'Belém',
+        state: 'PA',
+        country: 'Brasil',
+        zipCode: '66017-060',
+      },
+      baseUrl: 'https://www.theatrodapaz.com.br',
+      userAgent: 'Mozilla/5.0 (compatible; OpusAtlas/1.0)',
+      delayBetweenRequests: 1500,
     };
     super(config);
   }
@@ -26,148 +61,152 @@ export class TheatroDaPazScraperService extends BaseScraper {
   async scrapeEvents(
     onProgress?: (current: number, total: number, message: string) => void,
   ): Promise<ScrapedEvent[]> {
-    try {
-      onProgress?.(0, 100, 'Iniciando scraper Theatro da Paz...');
+    onProgress?.(0, 100, 'Lendo a programação do Theatro da Paz...');
 
-      const html = await this.fetchWithRetry(
-        `${this.config.baseUrl}/theatro-da-paz`,
-      );
-      const $ = cheerio.load(html);
+    const html = await this.fetchWithRetry(
+      `${this.config.baseUrl}/programa%C3%A7%C3%A3o`,
+    );
 
-      const events: ScrapedEvent[] = [];
+    const raw = extractWixEvents(html);
 
-      // Buscar eventos e notícias relacionadas
-      $('.post, .evento, .noticia, article').each((index, element) => {
-        const $elem = $(element);
+    onProgress?.(60, 100, `${raw.length} eventos na página`);
 
-        const title = $elem
-          .find('h1, h2, h3, .entry-title, .titulo')
-          .first()
-          .text()
-          .trim();
-        const content = $elem.find('.entry-content, .content, p').text();
-        const imageUrl = $elem.find('img').first().attr('src') || null;
-        const linkUrl = $elem.find('a').first().attr('href') || null;
+    const events = raw.flatMap((event) => {
+      const parsed = this.toEvent(event);
 
-        // Filtrar apenas eventos de música clássica
-        const textLower = `${title} ${content}`.toLowerCase();
-        const isMusicEvent =
-          textLower.includes('orquestra') ||
-          textLower.includes('concerto') ||
-          textLower.includes('sinfônica') ||
-          textLower.includes('recital') ||
-          textLower.includes('beethoven') ||
-          textLower.includes('mozart') ||
-          textLower.includes('clássica');
+      return parsed ? [parsed] : [];
+    });
 
-        if (!isMusicEvent || !title) return;
+    this.state.eventsFound = raw.length;
+    this.state.eventsScraped = events.length;
 
-        // Extrair data do conteúdo
-        const dateMatch = content.match(
-          /(\d{1,2})\s+de\s+(\w+)(?:\s+de\s+(\d{4}))?|(\d{1,2})\/(\d{1,2})\/(\d{4})/i,
-        );
-        if (!dateMatch) return;
+    onProgress?.(100, 100, `${events.length} eventos coletados`);
 
-        const startDate = this.parseDateFromMatch(dateMatch);
-        if (!startDate) return;
-
-        // Extrair horário
-        const timeMatch = content.match(/(\d{1,2})h(\d{2})?|(\d{1,2}):(\d{2})/);
-        let startTime = '20:00';
-        if (timeMatch) {
-          const hour = timeMatch[1] || timeMatch[3];
-          const minute = timeMatch[2] || timeMatch[4] || '00';
-          startTime = `${hour.padStart(2, '0')}:${minute}`;
-        }
-
-        const eventType = detectEventType(title, content);
-        const composerNames = extractComposerNames(`${title} ${content}`);
-
-        // Detectar informações de ingresso
-        let ticketInfo: string | null = null;
-        if (
-          textLower.includes('gratuito') ||
-          textLower.includes('grátis') ||
-          textLower.includes('entrada franca')
-        ) {
-          ticketInfo = 'Entrada gratuita';
-        } else if (textLower.includes('r$')) {
-          const priceMatch = content.match(/r\$\s*(\d+)/i);
-          if (priceMatch) ticketInfo = `Ingressos: R$ ${priceMatch[1]}`;
-        }
-
-        const externalId = `theatro-da-paz-${createSlug(title)}-${startDate.getTime()}`;
-
-        events.push({
-          title,
-          slug: createSlug(`${title}-${startDate.toISOString()}`),
-          description: content.substring(0, 500).trim() || title,
-          type: eventType,
-          startDate,
-          startTime,
-          endDate: null,
-          endTime: null,
-          venueDetails: 'Theatro da Paz',
-          ticketUrl: linkUrl || null,
-          externalUrl: linkUrl || null,
-          ticketInfo,
-          externalId,
-          imageUrl: imageUrl
-            ? imageUrl.startsWith('http')
-              ? imageUrl
-              : `${this.config.baseUrl}${imageUrl}`
-            : null,
-          composerNames,
-          performers: [],
-          program: null,
-        });
-      });
-
-      onProgress?.(100, 100, 'Scraper concluído!');
-      this.log(`✅ ${events.length} eventos coletados`);
-
-      return events;
-    } catch (error) {
-      this.logError(error);
-      throw error;
-    }
+    return events;
   }
 
-  private parseDateFromMatch(match: RegExpMatchArray): Date | null {
-    const months: Record<string, number> = {
-      janeiro: 0,
-      fevereiro: 1,
-      março: 2,
-      abril: 3,
-      maio: 4,
-      junho: 5,
-      julho: 6,
-      agosto: 7,
-      setembro: 8,
-      outubro: 9,
-      novembro: 10,
-      dezembro: 11,
+  private toEvent(event: WixEvent): ScrapedEvent | null {
+    const title = event.title?.trim();
+    const startRaw = event.scheduling?.config?.startDate;
+
+    if (!title || !startRaw) {
+      this.state.errors.push(
+        `Evento sem título ou sem data: ${title ?? event.id ?? 'desconhecido'}`,
+      );
+
+      return null;
+    }
+
+    const startDate = new Date(startRaw);
+
+    if (Number.isNaN(startDate.getTime())) {
+      this.state.errors.push(`Data ilegível em "${title}": ${startRaw}`);
+
+      return null;
+    }
+
+    const endRaw = event.scheduling?.config?.endDate;
+    const endDate = endRaw ? new Date(endRaw) : null;
+    const description = [event.description, event.about]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    const slug = event.slug ?? createSlug(title);
+
+    return {
+      title,
+      slug,
+      description,
+      type: detectEventType(title, description),
+      startDate,
+      startTime: event.scheduling?.startTimeFormatted ?? null,
+      endDate: endDate && !Number.isNaN(endDate.getTime()) ? endDate : null,
+      endTime: event.scheduling?.endTimeFormatted ?? null,
+      venueDetails: event.location?.name ?? this.config.venueName,
+      ticketUrl: null,
+      externalUrl: `${this.config.baseUrl}/event-info/${slug}`,
+      ticketInfo: null,
+      // O identificador é o do próprio Wix, que não muda quando o título muda.
+      externalId: `theatro-da-paz-${event.id ?? slug}`,
+      imageUrl: null,
+      composerNames: extractComposerNames(`${title} ${description}`),
+      performers: [],
+      program: null,
     };
+  }
+}
 
-    if (match[1] && match[2]) {
-      // Formato: "28 de novembro de 2025"
-      const day = parseInt(match[1]);
-      const monthName = match[2].toLowerCase();
-      const year = match[3] ? parseInt(match[3]) : new Date().getFullYear();
-      const monthIndex = months[monthName];
+/**
+ * Os eventos embutidos na página do Wix.
+ *
+ * O bloco vem dentro de um JSON grande e escapado; em vez de tentar decodificar
+ * a página inteira, recorta-se o vetor `"events":[ ... ]` e o decodifica
+ * sozinho. Uma página sem o bloco devolve lista vazia — é o caso de a casa não
+ * ter programação publicada, não um erro.
+ */
+export function extractWixEvents(html: string): WixEvent[] {
+  const start = html.indexOf('"events":[{');
 
-      if (monthIndex !== undefined) {
-        return new Date(year, monthIndex, day);
-      }
-    } else if (match[4] && match[5] && match[6]) {
-      // Formato: "28/11/2025"
-      return new Date(
-        parseInt(match[6]),
-        parseInt(match[5]) - 1,
-        parseInt(match[4]),
-      );
+  if (start < 0) {
+    return [];
+  }
+
+  const arrayStart = html.indexOf('[', start);
+  const arrayEnd = matchingBracket(html, arrayStart);
+
+  if (arrayEnd < 0) {
+    return [];
+  }
+
+  const slice = html.slice(arrayStart, arrayEnd + 1);
+
+  try {
+    // O JSON está escapado uma vez dentro do HTML.
+    return JSON.parse(slice.replace(/\\\//g, '/')) as WixEvent[];
+  } catch {
+    return [];
+  }
+}
+
+/** O índice do `]` que fecha o `[` em `open`, respeitando texto entre aspas. */
+function matchingBracket(text: string, open: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = open; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
     }
 
-    return null;
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '[') {
+      depth += 1;
+    } else if (char === ']') {
+      depth -= 1;
+
+      if (depth === 0) {
+        return index;
+      }
+    }
   }
+
+  return -1;
 }

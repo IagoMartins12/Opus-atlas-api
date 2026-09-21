@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  BaseScraper,
-  ScraperConfig,
-  ScraperResponse,
-} from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
+import { BaseScraper, ScraperConfig } from '../base/base-scraper';
 import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import * as cheerio from 'cheerio';
 import {
@@ -13,6 +8,7 @@ import {
   detectEventType,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
+import { errorMessage } from '../../common/utils/error.util';
 
 interface OSESPScraperOptions {
   includeUpcomingEvents?: boolean;
@@ -24,10 +20,18 @@ interface OSESPScraperOptions {
 export class OsespScraperService extends BaseScraper {
   private options: OSESPScraperOptions;
 
-  constructor(private prisma: PrismaService) {
+  constructor() {
     const config: ScraperConfig = {
       venueName: 'Sala São Paulo',
       venueSlug: 'sala-sao-paulo',
+      venue: {
+        address: 'Praça Júlio Prestes, 16 - Campos Elíseos',
+        city: 'São Paulo',
+        state: 'SP',
+        country: 'Brasil',
+        zipCode: '01218-020',
+        shortName: 'OSESP',
+      },
       baseUrl: 'https://osesp.art.br',
       delayBetweenRequests: 2000,
     };
@@ -115,10 +119,10 @@ export class OsespScraperService extends BaseScraper {
           await this.delay(this.config.delayBetweenRequests);
         } catch (error) {
           this.state.errors.push(
-            `Error processing event ${eventCounter}: ${error.message}`,
+            `Error processing event ${eventCounter}: ${errorMessage(error)}`,
           );
           this.log(
-            `❌ [${eventCounter}/${totalEvents}] ${eventUrl}: ${error.message}`,
+            `❌ [${eventCounter}/${totalEvents}] ${eventUrl}: ${errorMessage(error)}`,
           );
         }
       }
@@ -138,141 +142,12 @@ export class OsespScraperService extends BaseScraper {
 
       return processedEvents;
     } catch (error) {
-      this.log(`❌ Fatal error in scrapeEvents: ${error.message}`);
-      onProgress?.(0, 100, `Erro: ${error.message}`);
+      this.log(`❌ Fatal error in scrapeEvents: ${errorMessage(error)}`);
+      onProgress?.(0, 100, `Erro: ${errorMessage(error)}`);
       throw error;
     }
   }
 
-  /**
-   * ✅ MÉTODO COMPLETO: Scrape + Verificação de Duplicatas COM PROGRESSO
-   */
-  async scrapeAndCheckDuplicates(
-    onProgress?: (current: number, total: number, message: string) => void,
-  ): Promise<ScraperResponse> {
-    const startTime = Date.now();
-
-    try {
-      // ✅ RESETAR estado
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(),
-      };
-
-      // 1. Fazer o scraping (0% - 80%)
-      onProgress?.(0, 100, 'Iniciando scraper...');
-
-      // ✅ PASSAR O CALLBACK DE PROGRESSO
-      const scrapedEvents = await this.scrapeEvents(
-        (current, total, message) => {
-          // Mapear progresso de scrapeEvents (0-100) para 0-80% do total
-          const mappedProgress = Math.round((current / 100) * 80);
-          onProgress?.(mappedProgress, 100, message);
-        },
-      );
-
-      onProgress?.(
-        80,
-        100,
-        `${scrapedEvents.length} eventos coletados. Verificando duplicatas...`,
-      );
-
-      // 2. Verificar duplicatas no banco (80% - 100%)
-      const allEvents: ScrapedEvent[] = [];
-      let duplicates = 0;
-      const total = scrapedEvents.length;
-
-      for (let i = 0; i < scrapedEvents.length; i++) {
-        const event = scrapedEvents[i];
-
-        // ✅ PROGRESSO DE VERIFICAÇÃO (80% - 100%)
-        const progressPercentage = 80 + Math.round((i / total) * 20);
-        onProgress?.(
-          progressPercentage,
-          100,
-          `Verificando duplicatas: ${i + 1}/${total}`,
-        );
-
-        const existingEvent = await this.prisma.event.findFirst({
-          where: {
-            OR: [
-              { externalId: event.externalId },
-              {
-                AND: [{ title: event.title }, { startDate: event.startDate }],
-              },
-            ],
-          },
-          select: {
-            id: true,
-            slug: true,
-          },
-        });
-
-        if (existingEvent) {
-          duplicates++;
-          allEvents.push({
-            ...event,
-            isDuplicate: true,
-            existingEventId: existingEvent.id,
-            existingEventSlug: existingEvent.slug,
-          } as any);
-          this.log(`⚠️ Duplicata detectada: ${event.title}`);
-        } else {
-          allEvents.push({
-            ...event,
-            isDuplicate: false,
-          } as any);
-        }
-      }
-
-      const executionTime = Date.now() - startTime;
-
-      // ✅ 100% COMPLETO
-      onProgress?.(100, 100, 'Scraper concluído!');
-
-      this.log(`
-📊 Resumo:
-- Total scraped: ${scrapedEvents.length}
-- Novos eventos: ${allEvents.filter((e: any) => !e.isDuplicate).length}
-- Duplicatas: ${duplicates}
-- Tempo: ${executionTime}ms
-    `);
-
-      return {
-        success: true,
-        eventsFound: this.state.eventsFound,
-        eventsScraped: this.state.eventsScraped,
-        newEvents: allEvents.filter((e: any) => !e.isDuplicate).length,
-        duplicates,
-        events: allEvents,
-        errors: this.state.errors,
-        executionTime,
-      };
-    } catch (error) {
-      this.log(`❌ Erro no scraping: ${error.message}`);
-      onProgress?.(0, 100, `Erro: ${error.message}`);
-
-      return {
-        success: false,
-        eventsFound: 0,
-        eventsScraped: 0,
-        newEvents: 0,
-        duplicates: 0,
-        events: [],
-        errors: [error instanceof Error ? error.message : String(error)],
-        executionTime: Date.now() - startTime,
-      };
-    } finally {
-      this.state = {
-        eventsFound: 0,
-        eventsScraped: 0,
-        errors: [],
-        startTime: Date.now(),
-      };
-    }
-  }
   /**
    * ✅ Coleta eventos da página "Concertos e Ingressos"
    */
@@ -319,8 +194,8 @@ export class OsespScraperService extends BaseScraper {
           this.log(`   ⚠️  Reached max page limit (20). Stopping.`);
           hasMorePages = false;
         }
-      } catch (error: any) {
-        this.log(`   ❌ Error on page ${currentPage}: ${error.message}`);
+      } catch (error: unknown) {
+        this.log(`   ❌ Error on page ${currentPage}: ${errorMessage(error)}`);
         hasMorePages = false;
       }
     }

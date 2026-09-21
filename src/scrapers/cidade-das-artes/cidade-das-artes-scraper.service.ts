@@ -1,24 +1,47 @@
-// cidade-das-artes-scraper.service.ts
 import { Injectable } from '@nestjs/common';
-import { BaseScraper, ScraperConfig } from '../base/base-scraper';
-import { PrismaService } from '../../prisma/prisma.service';
-import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import * as cheerio from 'cheerio';
+import { BaseScraper, ScraperConfig } from '../base/base-scraper';
+import { ScrapedEvent } from '../../common/interfaces/scraped-event.interface';
 import {
-  extractComposerNames,
   detectEventType,
+  extractComposerNames,
 } from '../../utils/text-cleaner';
 import { createSlug } from '../../utils/date-parser';
 
+/** "15/07 a 04/10" ou "19/09" — a listagem escreve sem o ano. */
+const DATE_RANGE = /(\d{2})\/(\d{2})(?:\s*a\s*(\d{2})\/(\d{2}))?/;
+
+/**
+ * Programação da Cidade das Artes.
+ *
+ * **O endereço configurado não tinha certificado válido.** `cidadedasartes.rio`
+ * responde com um certificado emitido para `*.apps.rio.gov.br`, e a requisição
+ * morria antes de sair — `Hostname/IP does not match certificate's altnames`.
+ * O nome que a prefeitura publica com certificado próprio é
+ * `cidadedasartes.rio.rj.gov.br`, e é para ele que `cidadedasartes.rio`
+ * redireciona.
+ *
+ * **A listagem não traz o ano.** Ela escreve "15/07 a 04/10", e é a temporada
+ * corrente. Um dia e mês já passados neste ano pertencem ao ano que vem — sem
+ * essa correção, o evento de janeiro entraria como onze meses no passado e
+ * sumiria de qualquer consulta de programação futura.
+ */
 @Injectable()
 export class CidadeDasArtesScraperService extends BaseScraper {
-  constructor(private prisma: PrismaService) {
+  constructor() {
     const config: ScraperConfig = {
       venueName: 'Cidade das Artes',
       venueSlug: 'cidade-das-artes',
-      baseUrl: 'https://cidadedasartes.rio',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      delayBetweenRequests: 1800,
+      venue: {
+        address: 'Av. das Américas, 5300 - Barra da Tijuca',
+        city: 'Rio de Janeiro',
+        state: 'RJ',
+        country: 'Brasil',
+        zipCode: '22640-102',
+      },
+      baseUrl: 'https://cidadedasartes.rio.rj.gov.br',
+      userAgent: 'Mozilla/5.0 (compatible; OpusAtlas/1.0)',
+      delayBetweenRequests: 1500,
     };
     super(config);
   }
@@ -26,176 +49,168 @@ export class CidadeDasArtesScraperService extends BaseScraper {
   async scrapeEvents(
     onProgress?: (current: number, total: number, message: string) => void,
   ): Promise<ScrapedEvent[]> {
-    try {
-      onProgress?.(0, 100, 'Iniciando scraper Cidade das Artes...');
+    onProgress?.(0, 100, 'Lendo a programação da Cidade das Artes...');
 
-      const html = await this.fetchWithRetry(
-        `${this.config.baseUrl}/programacao`,
-      );
-      const $ = cheerio.load(html);
+    const html = await this.fetchWithRetry(`${this.config.baseUrl}/`);
+    const $ = cheerio.load(html);
 
-      const events: ScrapedEvent[] = [];
+    const boxes = $('.box_evento');
 
-      $('.evento-card, .event, .show-item, article').each((index, element) => {
-        const $elem = $(element);
+    onProgress?.(50, 100, `${boxes.length} eventos na página`);
 
-        const title = $elem
-          .find('h2, h3, .title, .event-title')
-          .first()
-          .text()
-          .trim();
-        const dateText = $elem.find('.date, .data, time').first().text().trim();
-        const timeText = $elem.find('.time, .horario').first().text().trim();
-        const description = $elem
-          .find('.description, .sinopse, p')
-          .first()
-          .text()
-          .trim();
-        const imageUrl = $elem.find('img').first().attr('src') || null;
-        const linkUrl = $elem.find('a').first().attr('href') || null;
-        const categoryText = $elem
-          .find('.category, .genero')
-          .text()
-          .toLowerCase();
+    const events = new Map<string, ScrapedEvent>();
 
-        // Filtrar eventos de música clássica
-        const fullText =
-          `${title} ${description} ${categoryText}`.toLowerCase();
-        const isClassicalMusic =
-          fullText.includes('orquestra sinfônica brasileira') ||
-          fullText.includes('osb') ||
-          fullText.includes('concerto') ||
-          fullText.includes('sinfônico') ||
-          fullText.includes('clássica') ||
-          fullText.includes('música erudita') ||
-          fullText.includes('recital') ||
-          fullText.includes('câmara');
+    boxes.each((_, element) => {
+      const box = $(element);
+      const url = box.attr('href');
 
-        if (!isClassicalMusic || !title || !dateText) return;
-
-        const startDate = this.parseDateText(dateText);
-        if (!startDate) return;
-
-        const startTime = this.extractTime(timeText) || '20:00';
-        const eventType = detectEventType(title, description);
-        const composerNames = extractComposerNames(`${title} ${description}`);
-
-        // Informações de ingresso
-        let ticketInfo: string | null = null;
-        if (fullText.includes('gratuito') || fullText.includes('grátis')) {
-          ticketInfo = 'Entrada gratuita';
-        } else if (fullText.includes('r$')) {
-          const priceMatch = fullText.match(/r\$\s*(\d+)/);
-          if (priceMatch) ticketInfo = `A partir de R$ ${priceMatch[1]}`;
-        }
-
-        const externalId = `cidade-das-artes-${createSlug(title)}-${startDate.getTime()}`;
-
-        events.push({
-          title,
-          slug: createSlug(`${title}-${startDate.toISOString()}`),
-          description: description || title,
-          type: eventType,
-          startDate,
-          startTime,
-          endDate: null,
-          endTime: null,
-          venueDetails: 'Cidade das Artes - Sala Sinfônica',
-          ticketUrl: linkUrl
-            ? linkUrl.startsWith('http')
-              ? linkUrl
-              : `${this.config.baseUrl}${linkUrl}`
-            : null,
-          externalUrl: linkUrl
-            ? linkUrl.startsWith('http')
-              ? linkUrl
-              : `${this.config.baseUrl}${linkUrl}`
-            : null,
-          ticketInfo,
-          externalId,
-          imageUrl: imageUrl
-            ? imageUrl.startsWith('http')
-              ? imageUrl
-              : `${this.config.baseUrl}${imageUrl}`
-            : null,
-          composerNames,
-          performers: [],
-          program: null,
-        });
-      });
-
-      onProgress?.(100, 100, 'Scraper concluído!');
-      this.log(`✅ ${events.length} eventos coletados`);
-
-      return events;
-    } catch (error) {
-      this.logError(error);
-      throw error;
-    }
-  }
-
-  private parseDateText(text: string): Date | null {
-    const months: Record<string, number> = {
-      janeiro: 0,
-      fevereiro: 1,
-      março: 2,
-      abril: 3,
-      maio: 4,
-      junho: 5,
-      julho: 6,
-      agosto: 7,
-      setembro: 8,
-      outubro: 9,
-      novembro: 10,
-      dezembro: 11,
-      jan: 0,
-      fev: 1,
-      mar: 2,
-      abr: 3,
-      mai: 4,
-      jun: 5,
-      jul: 6,
-      ago: 7,
-      set: 8,
-      out: 9,
-      nov: 10,
-      dez: 11,
-    };
-
-    const formats = [
-      /(\d{1,2})\s+de\s+(\w+)\s+(?:de\s+)?(\d{4})/i,
-      /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
-      /(\d{1,2})\s+(\w{3})\s+(\d{4})/i,
-    ];
-
-    for (const regex of formats) {
-      const match = text.match(regex);
-      if (match) {
-        if (match[2] && isNaN(Number(match[2]))) {
-          const monthKey = match[2].toLowerCase().substring(0, 3);
-          const monthIndex = months[monthKey] ?? months[match[2].toLowerCase()];
-          if (monthIndex !== undefined) {
-            return new Date(parseInt(match[3]), monthIndex, parseInt(match[1]));
-          }
-        } else {
-          return new Date(
-            parseInt(match[3]),
-            parseInt(match[2]) - 1,
-            parseInt(match[1]),
-          );
-        }
+      if (!url || events.has(url)) {
+        return;
       }
-    }
 
+      const title = box.find('.titulo').first().text().trim();
+      const dateText = box.find('.data').first().text().trim();
+      const category = box.find('.categoria').first().text().trim();
+      const description = box.find('.texto').first().text().trim();
+
+      if (!title) {
+        this.state.errors.push(`Evento sem título: ${url}`);
+
+        return;
+      }
+
+      const dates = parseSeasonRange(dateText, new Date());
+
+      if (!dates) {
+        this.state.errors.push(`Data ilegível em "${title}": "${dateText}"`);
+
+        return;
+      }
+
+      events.set(url, {
+        title,
+        slug: createSlug(title),
+        description,
+        type: detectEventType(`${title} ${category}`, description),
+        startDate: dates.startDate,
+        startTime: null,
+        endDate: dates.endDate,
+        venueDetails: this.config.venueName,
+        ticketUrl: url,
+        externalUrl: url,
+        ticketInfo: null,
+        // A listagem numera o evento no próprio endereço.
+        externalId: `cidade-das-artes-${url.split('/').pop() ?? createSlug(title)}`,
+        imageUrl: box.find('img').first().attr('src') ?? null,
+        composerNames: extractComposerNames(`${title} ${description}`),
+        performers: [],
+        program: null,
+      });
+    });
+
+    this.state.eventsFound = boxes.length;
+    this.state.eventsScraped = events.size;
+
+    onProgress?.(100, 100, `${events.size} eventos coletados`);
+
+    return [...events.values()];
+  }
+}
+
+/**
+ * Converte "15/07 a 04/10" — sem ano — em datas.
+ *
+ * O ano é o corrente, salvo quando o dia e o mês já passaram: aí é o próximo. A
+ * folga de um dia evita que o evento de hoje seja jogado para o ano que vem.
+ */
+export function parseSeasonRange(
+  text: string,
+  now: Date,
+): { startDate: Date; endDate: Date | null } | null {
+  const match = text.match(DATE_RANGE);
+
+  if (!match) {
     return null;
   }
 
-  private extractTime(text: string): string | null {
-    const timeMatch = text.match(/(\d{1,2})[h:](\d{2})/);
-    if (timeMatch) {
-      const [, hour, minute] = timeMatch;
-      return `${hour.padStart(2, '0')}:${minute}`;
-    }
+  const [, startDay, startMonth, endDay, endMonth] = match;
+
+  if (!endDay || !endMonth) {
+    const startDate = withSeasonYear(startDay, startMonth, now);
+
+    return startDate ? { startDate, endDate: null } : null;
+  }
+
+  // **Numa temporada em cartaz, o começo já passou — e continua sendo deste
+  // ano.** "15/07 a 04/10" lido em setembro: jogar o início para o ano que vem
+  // porque 15/07 passou põe o espetáculo doze meses no futuro enquanto ele
+  // está em cartaz agora. Quem manda é o fim: se ele ainda não chegou, a
+  // temporada é a corrente.
+  const endDate = withSeasonYear(endDay, endMonth, now);
+
+  if (!endDate) {
     return null;
   }
+
+  const startDate = thisYear(startDay, startMonth);
+
+  if (!startDate) {
+    return null;
+  }
+
+  // Temporada que vira o ano: "15/12 a 04/01" começa no ano anterior ao fim.
+  if (startDate > endDate) {
+    startDate.setFullYear(startDate.getFullYear() - 1);
+  }
+
+  return { startDate, endDate };
+}
+
+function thisYear(day: string, month: string): Date | null {
+  const dayNumber = Number(day);
+  const monthNumber = Number(month);
+
+  if (monthNumber < 1 || monthNumber > 12 || dayNumber < 1 || dayNumber > 31) {
+    return null;
+  }
+
+  const candidate = new Date(
+    new Date().getFullYear(),
+    monthNumber - 1,
+    dayNumber,
+  );
+
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function withSeasonYear(day: string, month: string, now: Date): Date | null {
+  const dayNumber = Number(day);
+  const monthNumber = Number(month);
+
+  if (monthNumber < 1 || monthNumber > 12 || dayNumber < 1 || dayNumber > 31) {
+    return null;
+  }
+
+  const candidate = new Date(
+    now.getFullYear(),
+    monthNumber - 1,
+    dayNumber,
+    0,
+    0,
+    0,
+    0,
+  );
+
+  if (Number.isNaN(candidate.getTime())) {
+    return null;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (candidate < yesterday) {
+    candidate.setFullYear(candidate.getFullYear() + 1);
+  }
+
+  return candidate;
 }

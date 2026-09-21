@@ -1,3 +1,5 @@
+import { EventType } from '@prisma/client';
+
 // scripts/utils/text-cleaner.ts
 
 /**
@@ -27,7 +29,7 @@ export function extractFirstParagraph(text: string): string {
 /**
  * Detecta tipo de evento baseado no título/descrição
  */
-export function detectEventType(title: string, description: string): string {
+export function detectEventType(title: string, description: string): EventType {
   const combined = `${title} ${description}`.toLowerCase();
 
   // 1. Ópera (prioridade alta)
@@ -36,7 +38,7 @@ export function detectEventType(title: string, description: string): string {
     combined.includes('wozzeck') ||
     combined.includes('opera completa')
   ) {
-    return 'OPERA';
+    return EventType.OPERA;
   }
 
   // 2. Recital (prioridade alta)
@@ -45,7 +47,7 @@ export function detectEventType(title: string, description: string): string {
     combined.includes('recital de') ||
     title.toLowerCase().startsWith('recital')
   ) {
-    return 'RECITAL';
+    return EventType.RECITAL;
   }
 
   // 3. Ensaio aberto
@@ -53,7 +55,7 @@ export function detectEventType(title: string, description: string): string {
     combined.includes('ensaio aberto') ||
     combined.includes('ensaio público')
   ) {
-    return 'OPEN_REHEARSAL';
+    return EventType.OPEN_REHEARSAL;
   }
 
   // 4. Coro
@@ -62,26 +64,29 @@ export function detectEventType(title: string, description: string): string {
     combined.includes('coral paulistano') ||
     title.toLowerCase().includes('coro')
   ) {
-    return 'CHOIR';
+    return EventType.CHOIR;
   }
 
   // 5. Música de câmara
   if (combined.includes('câmara:') || combined.includes('camera:')) {
-    return 'CHAMBER_MUSIC';
+    return EventType.CHAMBER_MUSIC;
   }
 
   // 6. Matinais (são concertos educativos)
   if (combined.includes('matinais:') || combined.includes('matinal')) {
-    return 'MATINEE';
+    // `MATINEE` nao existe no enum `EventType` do schema — gravar esse valor
+    // quebrava a escrita no Prisma. Mapeado para CONCERT conforme o comentario
+    // original do branch ("sao concertos educativos").
+    return EventType.CONCERT;
   }
 
   // 7. Osesp duas e trinta (concertos especiais)
   if (combined.includes('osesp duas e trinta')) {
-    return 'CONCERT';
+    return EventType.CONCERT;
   }
 
   // 8. Default: Concert
-  return 'CONCERT';
+  return EventType.CONCERT;
 }
 /**
  * Extrai nomes de compositores conhecidos do texto
