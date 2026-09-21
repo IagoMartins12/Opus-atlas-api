@@ -26,6 +26,7 @@ export const MAINTENANCE_TASK_IDS = [
   'notifications.prune',
   'audit.prune',
   'search.reindex',
+  'database.backup',
 ] as const;
 
 export type MaintenanceTaskId = (typeof MAINTENANCE_TASK_IDS)[number];
@@ -84,6 +85,18 @@ export const MAINTENANCE_CATALOG: readonly MaintenanceTask[] = [
     impact: 'medium',
     destructive: false,
     suggestedCron: '0 5 * * 0',
+  },
+  {
+    id: 'database.backup',
+    name: 'Backup do banco',
+    description:
+      'Exporta as coleções escolhidas em `/admin/backup`, envia ao bucket ' +
+      'privado, **baixa de volta para conferir** e só então remove o arquivo ' +
+      'mais antigo. Falha em qualquer passo não apaga nada.',
+    category: 'database',
+    impact: 'medium',
+    destructive: false,
+    suggestedCron: '0 3 * * *',
   },
   {
     id: 'tokens.prune',

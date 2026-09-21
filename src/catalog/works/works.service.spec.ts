@@ -486,7 +486,9 @@ describe('WorksService', () => {
         expect(result.works[0]).toMatchObject({ id: 'w1', title: 'Noturno' });
 
         const pipeline = pipelineDe(0);
-        expect(pipeline[0]).toEqual({ $match: { $text: { $search: 'chopin' } } });
+        expect(pipeline[0]).toEqual({
+          $match: { $text: { $search: 'chopin' } },
+        });
         expect(JSON.stringify(pipeline)).toContain('$unionWith');
         expect(JSON.stringify(pipeline)).toContain('$facet');
 

@@ -9,6 +9,11 @@ import {
   RetentionClass,
 } from './audit-retention';
 import { StorageCleanupService } from '../../common/storage/storage-cleanup.service';
+import { BackupService } from '../backup/backup.service';
+import { BackupSettingsService } from '../backup/backup-settings.service';
+import { BackupHistoryService } from '../backup/backup-history.service';
+import { BackupStorageService } from '../backup/backup-storage.service';
+import { errorMessage } from '../../common/utils/error.util';
 import { TextIndexService } from '../../common/search/text-index.service';
 import { findTask, MaintenanceTaskId } from './maintenance-catalog';
 
@@ -80,6 +85,10 @@ export class MaintenanceTasksService {
     private readonly prisma: PrismaService,
     private readonly storageCleanup: StorageCleanupService,
     private readonly textIndex: TextIndexService,
+    private readonly backupService: BackupService,
+    private readonly backupSettings: BackupSettingsService,
+    private readonly backupHistory: BackupHistoryService,
+    private readonly backupStorage: BackupStorageService,
   ) {}
 
   async run(
@@ -129,6 +138,74 @@ export class MaintenanceTasksService {
         return this.pruneAudit(dryRun, retentionDays);
       case 'search.reindex':
         return this.reindex();
+      case 'database.backup':
+        return this.backup();
+    }
+  }
+
+  /**
+   * Gera o backup segundo a configuração de `/admin/backup`.
+   *
+   * **A tarefa não decide o que entra.** Ela lê a configuração gravada, para
+   * que o agendamento e a execução manual façam exatamente a mesma coisa —
+   * um backup agendado que exporta algo diferente do que a tela mostra seria
+   * a pior forma de descobrir que falta uma coleção.
+   *
+   * `dryRun` não se aplica: backup não altera nada.
+   */
+  private async backup(): Promise<MaintenanceTaskOutcome> {
+    const impedimento = this.backupStorage.diagnostico;
+
+    if (impedimento) {
+      return { summary: { executado: 0 }, warnings: [impedimento] };
+    }
+
+    const { keep, collections } = await this.backupSettings.ler();
+
+    if (collections.length === 0) {
+      return {
+        summary: { executado: 0 },
+        warnings: [
+          'Nenhuma coleção selecionada em /admin/backup — nada foi exportado.',
+        ],
+      };
+    }
+
+    const runId = await this.backupHistory.iniciar();
+
+    try {
+      const conhecidas = new Set(
+        (await this.backupSettings.listarColecoes()).map(
+          (colecao) => colecao.name,
+        ),
+      );
+
+      const resultado = await this.backupService.executar(
+        collections,
+        keep,
+        new Date(),
+        conhecidas,
+      );
+
+      await this.backupHistory.concluir(runId, resultado);
+
+      return {
+        summary: {
+          arquivo: resultado.objectKey,
+          documentos: resultado.documentCount,
+          bytes: resultado.sizeBytes,
+          removidos: resultado.rotated.length,
+        },
+        sample: resultado.collections.map(
+          (colecao) => `${colecao.name}: ${colecao.documents}`,
+        ),
+        ...(resultado.warnings.length > 0
+          ? { warnings: resultado.warnings }
+          : {}),
+      };
+    } catch (erro: unknown) {
+      await this.backupHistory.falhar(runId, errorMessage(erro));
+      throw erro;
     }
   }
 

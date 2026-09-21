@@ -3723,3 +3723,60 @@ model StoredAsset {
   @@index([kind, status])
   @@map("stored_assets")
 }
+
+/// Configuração do backup automático, editada pelo painel.
+///
+/// **Documento único** (o serviço lê o primeiro): não é configuração por
+/// usuário, é do sistema. Fica no banco, e não numa variável de ambiente,
+/// porque muda pela tela — e fica no banco, e não no Redis, porque perder a
+/// configuração significaria voltar a fazer backup do que não interessa sem
+/// ninguém perceber.
+model BackupSettings {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  /// Quantos arquivos manter no bucket. O mais antigo sai quando o novo entra
+  /// — e só depois de o novo ser verificado.
+  keep Int @default(3)
+
+  /// `[{ name: "Work", limit: 1000 }]`. `limit` nulo é "tudo".
+  /// Coleção ausente da lista não entra no backup.
+  collections Json
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?  @db.ObjectId
+
+  @@map("backup_settings")
+}
+
+/// Histórico de execuções do backup.
+///
+/// Guardar o resultado é o que diferencia "temos backup" de "achamos que
+/// temos": aqui ficam o tamanho, a contagem por coleção e, principalmente, se
+/// o arquivo foi **verificado** depois de enviado.
+model BackupRun {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  /// `running` | `ok` | `failed`
+  status String
+
+  objectKey     String?
+  sizeBytes     Int?
+  documentCount Int?
+
+  /// `[{ name, documents }]` — o que de fato entrou no arquivo.
+  collections Json?
+
+  /// Quando o arquivo foi baixado de volta e lido com sucesso.
+  verifiedAt DateTime?
+
+  /// Quais arquivos saíram do bucket nesta execução.
+  rotated Json?
+
+  error String?
+
+  @@index([startedAt(sort: Desc)])
+  @@map("backup_runs")
+}

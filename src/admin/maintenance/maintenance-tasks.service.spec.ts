@@ -3,12 +3,20 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StorageCleanupService } from '../../common/storage/storage-cleanup.service';
 import { TextIndexService } from '../../common/search/text-index.service';
 import { MaintenanceTasksService } from './maintenance-tasks.service';
+import { BackupService } from '../backup/backup.service';
+import { BackupSettingsService } from '../backup/backup-settings.service';
+import { BackupHistoryService } from '../backup/backup-history.service';
+import { BackupStorageService } from '../backup/backup-storage.service';
 
 describe('MaintenanceTasksService', () => {
   let service: MaintenanceTasksService;
   let prisma: Record<string, Record<string, jest.Mock>>;
   let storageCleanup: { cleanupStalePending: jest.Mock };
   let textIndex: { ensureAll: jest.Mock };
+  let backup: { executar: jest.Mock };
+  let backupSettings: { ler: jest.Mock; listarColecoes: jest.Mock };
+  let backupHistory: { iniciar: jest.Mock; concluir: jest.Mock; falhar: jest.Mock };
+  let backupStorage: { diagnostico: string | null };
 
   const model = () => ({
     count: jest.fn().mockResolvedValue(0),
@@ -53,12 +61,45 @@ describe('MaintenanceTasksService', () => {
       ]),
     };
 
+    backup = {
+      executar: jest.fn().mockResolvedValue({
+        objectKey: 'backups/backup-2026-09-21.json.gz',
+        sizeBytes: 1024,
+        documentCount: 10,
+        collections: [{ name: 'Work', documents: 10 }],
+        verifiedAt: new Date(),
+        rotated: [],
+        warnings: [],
+      }),
+    };
+
+    backupSettings = {
+      ler: jest
+        .fn()
+        .mockResolvedValue({ keep: 3, collections: [{ name: 'Work', limit: 10 }] }),
+      listarColecoes: jest
+        .fn()
+        .mockResolvedValue([{ name: 'Work', model: 'Work', documents: 10 }]),
+    };
+
+    backupHistory = {
+      iniciar: jest.fn().mockResolvedValue('run1'),
+      concluir: jest.fn().mockResolvedValue(undefined),
+      falhar: jest.fn().mockResolvedValue(undefined),
+    };
+
+    backupStorage = { diagnostico: null };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MaintenanceTasksService,
         { provide: PrismaService, useValue: prisma },
         { provide: StorageCleanupService, useValue: storageCleanup },
         { provide: TextIndexService, useValue: textIndex },
+        { provide: BackupService, useValue: backup },
+        { provide: BackupSettingsService, useValue: backupSettings },
+        { provide: BackupHistoryService, useValue: backupHistory },
+        { provide: BackupStorageService, useValue: backupStorage },
       ],
     }).compile();
 
@@ -275,5 +316,54 @@ describe('MaintenanceTasksService', () => {
 
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(result.taskId).toBe('search.reindex');
+  });
+
+  describe('database.backup', () => {
+    it('roda com a configuração gravada e registra o resultado', async () => {
+      const resultado = await service.run('database.backup', { dryRun: false });
+
+      expect(backup.executar).toHaveBeenCalledWith(
+        [{ name: 'Work', limit: 10 }],
+        3,
+        expect.any(Date),
+        expect.any(Set),
+      );
+      expect(backupHistory.concluir).toHaveBeenCalledWith(
+        'run1',
+        expect.objectContaining({ documentCount: 10 }),
+      );
+      expect(resultado.summary.documentos).toBe(10);
+    });
+
+    // Sem bucket, avisar é mais útil do que estourar: a tela mostra o que falta.
+    it('avisa quando o armazenamento não está configurado, sem tentar nada', async () => {
+      backupStorage.diagnostico = 'Falta BACKUP_R2_BUCKET.';
+
+      const resultado = await service.run('database.backup', { dryRun: false });
+
+      expect(backup.executar).not.toHaveBeenCalled();
+      expect(backupHistory.iniciar).not.toHaveBeenCalled();
+      expect(resultado.warnings).toEqual(['Falta BACKUP_R2_BUCKET.']);
+    });
+
+    it('avisa quando nenhuma coleção foi selecionada', async () => {
+      backupSettings.ler.mockResolvedValue({ keep: 3, collections: [] });
+
+      const resultado = await service.run('database.backup', { dryRun: false });
+
+      expect(backup.executar).not.toHaveBeenCalled();
+      expect(resultado.warnings?.[0]).toContain('Nenhuma coleção selecionada');
+    });
+
+    // O histórico é o que responde "o último backup funcionou?".
+    it('registra a falha no histórico antes de propagá-la', async () => {
+      backup.executar.mockRejectedValue(new Error('bucket recusou'));
+
+      await expect(
+        service.run('database.backup', { dryRun: false }),
+      ).rejects.toThrow('bucket recusou');
+
+      expect(backupHistory.falhar).toHaveBeenCalledWith('run1', 'bucket recusou');
+    });
   });
 });

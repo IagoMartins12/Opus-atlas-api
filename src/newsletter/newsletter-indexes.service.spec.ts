@@ -72,9 +72,7 @@ describe('NewsletterIndexesService', () => {
 
   it('não derruba índice por erro que não é de conflito de especificação', async () => {
     const { service, runCommandRaw } = setup((command) =>
-      'createIndexes' in command
-        ? new Error('E11000 duplicate key error')
-        : {},
+      'createIndexes' in command ? new Error('E11000 duplicate key error') : {},
     );
 
     await service.ensurePartialIndexes();

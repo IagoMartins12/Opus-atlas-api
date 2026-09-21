@@ -45,6 +45,11 @@ export const envValidationSchema = Joi.object({
   DATABASE_URL: Joi.string().uri().required(),
   // Conexões por processo. Sem teto, cada réplica abre até 100 e o cluster
   // estoura no pico — ver `prisma/pool.ts` e SPEC §10.5.
+  BACKUP_R2_ACCOUNT_ID: Joi.string().optional(),
+  BACKUP_R2_ACCESS_KEY_ID: Joi.string().optional(),
+  BACKUP_R2_SECRET_ACCESS_KEY: Joi.string().optional(),
+  BACKUP_R2_BUCKET: Joi.string().optional(),
+  BACKUP_R2_PREFIX: Joi.string().optional(),
   DATABASE_MAX_POOL_SIZE: Joi.number().integer().min(1).optional(),
   DATABASE_MIN_POOL_SIZE: Joi.number().integer().min(0).optional(),
 

@@ -99,14 +99,21 @@ describe('AppCacheService.remember', () => {
     (cache.get as jest.Mock).mockClear();
 
     await expect(
-      service.remember('works:catalog:4', { ttlMs: 1000, hotTtlMs: 10_000 }, load),
+      service.remember(
+        'works:catalog:4',
+        { ttlMs: 1000, hotTtlMs: 10_000 },
+        load,
+      ),
     ).resolves.toBe('v');
     expect(cache.get).not.toHaveBeenCalled();
   });
 
   it('invalidar o namespace também derruba o L1 desta réplica', async () => {
     const { service, cache } = make();
-    const load = jest.fn().mockResolvedValueOnce('antigo').mockResolvedValueOnce('novo');
+    const load = jest
+      .fn()
+      .mockResolvedValueOnce('antigo')
+      .mockResolvedValueOnce('novo');
 
     await service.remember(
       'works:catalog:5',
@@ -117,13 +124,20 @@ describe('AppCacheService.remember', () => {
     (cache.get as jest.Mock).mockResolvedValue(undefined);
 
     await expect(
-      service.remember('works:catalog:5', { ttlMs: 1000, hotTtlMs: 10_000 }, load),
+      service.remember(
+        'works:catalog:5',
+        { ttlMs: 1000, hotTtlMs: 10_000 },
+        load,
+      ),
     ).resolves.toBe('novo');
   });
 
   it('apagar uma chave também a tira do L1', async () => {
     const { service, cache } = make();
-    const load = jest.fn().mockResolvedValueOnce('antigo').mockResolvedValueOnce('novo');
+    const load = jest
+      .fn()
+      .mockResolvedValueOnce('antigo')
+      .mockResolvedValueOnce('novo');
 
     await service.remember(
       'works:detail:6',
@@ -134,7 +148,11 @@ describe('AppCacheService.remember', () => {
     (cache.get as jest.Mock).mockResolvedValue(undefined);
 
     await expect(
-      service.remember('works:detail:6', { ttlMs: 1000, hotTtlMs: 10_000 }, load),
+      service.remember(
+        'works:detail:6',
+        { ttlMs: 1000, hotTtlMs: 10_000 },
+        load,
+      ),
     ).resolves.toBe('novo');
   });
 });

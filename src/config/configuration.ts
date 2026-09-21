@@ -82,6 +82,25 @@ export const appConfiguration = () => ({
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
   },
+  backup: {
+    /**
+     * O backup **não** mora no Cloudinary, que é onde vivem os arquivos da
+     * plataforma. Dois motivos, e os dois são eliminatórios: o Cloudinary
+     * entrega por URL pública, e um backup tem e-mail, hash de senha e
+     * histórico de pagamento de todo mundo; e o limite de arquivo bruto dele
+     * (10 MB no gratuito, ~100 MB nos pagos) não comporta o dump.
+     *
+     * O R2 é bucket privado, compatível com S3, sem taxa de saída. Nada aqui
+     * é obrigatório: sem configuração, a tarefa de backup recusa rodar e diz
+     * o que falta, em vez de a aplicação não subir.
+     */
+    r2AccountId: process.env.BACKUP_R2_ACCOUNT_ID,
+    r2AccessKeyId: process.env.BACKUP_R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: process.env.BACKUP_R2_SECRET_ACCESS_KEY,
+    r2Bucket: process.env.BACKUP_R2_BUCKET,
+    /** Prefixo dentro do bucket, para conviver com outras coisas. */
+    prefix: process.env.BACKUP_R2_PREFIX ?? 'backups',
+  },
   billing: {
     // Mesmo padrão dual test/produção do legado (`stripeClient.ts`) — em
     // desenvolvimento sempre usa a chave de teste, mesmo com NODE_ENV=production

@@ -25,6 +25,11 @@ import { ModelRegistry } from './database/model-registry';
 import { AdminMaintenanceController } from './maintenance/admin-maintenance.controller';
 import { AdminMaintenanceService } from './maintenance/admin-maintenance.service';
 import { MaintenanceTasksService } from './maintenance/maintenance-tasks.service';
+import { AdminBackupController } from './backup/admin-backup.controller';
+import { BackupService } from './backup/backup.service';
+import { BackupSettingsService } from './backup/backup-settings.service';
+import { BackupHistoryService } from './backup/backup-history.service';
+import { BackupStorageService } from './backup/backup-storage.service';
 import { SystemHealthService } from './maintenance/system-health.service';
 import { AdminJobsController } from './operations/admin-jobs.controller';
 import { AdminOperationsController } from './operations/admin-operations.controller';
@@ -74,6 +79,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminOperationsController,
     AdminJobsController,
     AdminMaintenanceController,
+    AdminBackupController,
     AdminDatabaseController,
   ],
   providers: [
@@ -101,6 +107,10 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminAuditService,
     AdminMaintenanceService,
     MaintenanceTasksService,
+    BackupService,
+    BackupSettingsService,
+    BackupHistoryService,
+    BackupStorageService,
     SystemHealthService,
     ModelRegistry,
     AdminDatabaseService,
