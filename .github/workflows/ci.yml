@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, dev, 'feat/**']
+    branches: [main, develop, dev, 'feat/**']
   pull_request:
-    branches: [main, dev]
+    branches: [main, develop, dev]
 
 # Um push novo cancela a execução anterior do mesmo branch.
 concurrency:

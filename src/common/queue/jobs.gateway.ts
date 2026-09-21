@@ -9,7 +9,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { ACCESS_TOKEN_COOKIE } from '../../auth/auth-cookie.service';
+import { authCookieNames } from '../../auth/auth-cookie.service';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { JobEventsService } from './job-events.service';
 import { JobStatusService } from './job-status.service';
@@ -220,7 +220,7 @@ export class JobsGateway
     const raw =
       readToken(client.handshake.auth?.token) ??
       readBearer(client.handshake.headers.authorization) ??
-      readCookie(client.handshake.headers.cookie, ACCESS_TOKEN_COOKIE);
+      readCookie(client.handshake.headers.cookie, authCookieNames().access);
 
     if (!raw) {
       return null;

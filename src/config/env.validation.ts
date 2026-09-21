@@ -5,10 +5,47 @@ import { APP_ENVS } from './env-files';
  * Exige a variável apenas em produção, mantendo-a opcional nos demais
  * ambientes. É o que permite rodar o projeto localmente sem Stripe nem SMTP
  * configurados, sem abrir mão do fail-fast em produção (SPEC §3.8).
+ *
+ * Use este para o que é **legitimamente diferente** em homologação — hoje só as
+ * chaves de produção do Stripe, que a homologação não deve sequer possuir.
+ * Para todo o resto, `requiredInDeployedEnv`.
  */
 const requiredInProduction = (schema: Joi.StringSchema) =>
   schema.when('NODE_ENV', {
     is: 'production',
+    then: schema.required(),
+    otherwise: schema.optional(),
+  });
+
+/**
+ * Exige a variável em **todo ambiente publicado** — homologação e produção.
+ *
+ * **Por que homologação também cobra.** Enquanto só `production` cobrava, a
+ * homologação era o único ambiente que não conferia as próprias credenciais —
+ * justamente aquele cuja razão de existir é ensaiar a produção antes dela. O
+ * efeito não era teórico: `ALLOWED_ORIGINS` cai no default
+ * `http://localhost:3000` e `REDIS_URL` em `redis://localhost:6379`, dois
+ * valores que *parecem* configuração. A API subia contente, e o front
+ * hospedado tomava bloqueio de CORS sem uma linha de log que explicasse.
+ *
+ * Um default plausível é pior que ausência: troca "faltou configurar" por
+ * "não funciona e não sei por quê".
+ */
+const requiredInDeployedEnv = (schema: Joi.StringSchema) =>
+  schema.when('NODE_ENV', {
+    is: Joi.string().valid('production', 'staging').required(),
+    then: schema.required(),
+    otherwise: schema.optional(),
+  });
+
+/**
+ * Exige a variável apenas em homologação. Existe para o par de teste do
+ * Stripe: em `staging` é ele que `configuration.ts` escolhe, então é ele que
+ * precisa estar presente — e não a chave viva, que homologação não deve ter.
+ */
+const requiredInStaging = (schema: Joi.StringSchema) =>
+  schema.when('NODE_ENV', {
+    is: 'staging',
     then: schema.required(),
     otherwise: schema.optional(),
   });
@@ -64,12 +101,22 @@ export const envValidationSchema = Joi.object({
         'sessão nas 4 zonas do front. Vazio em desenvolvimento.',
     ),
 
+  // Mesmo formato que o front aceita em NEXT_PUBLIC_AUTH_COOKIE_PREFIX — os
+  // dois têm de ser iguais. Ver `authCookieNames` em auth-cookie.service.ts.
+  AUTH_COOKIE_PREFIX: Joi.string()
+    .pattern(/^[a-z][a-z0-9_]{0,30}$/)
+    .optional()
+    .messages({
+      'string.pattern.base':
+        'AUTH_COOKIE_PREFIX aceita letras minúsculas, dígitos e _ (ex.: opus_hml)',
+    }),
+
   // Login com Google, feito pela API. Obrigatório em produção — sem ele some
   // metade das entradas do site. Fora dela, faltando qualquer um dos três,
   // `GET /auth/google` volta ao front com `authError=google_unavailable`.
-  GOOGLE_CLIENT_ID: requiredInProduction(Joi.string()),
-  GOOGLE_CLIENT_SECRET: requiredInProduction(Joi.string()),
-  GOOGLE_OAUTH_REDIRECT_URI: requiredInProduction(
+  GOOGLE_CLIENT_ID: requiredInDeployedEnv(Joi.string()),
+  GOOGLE_CLIENT_SECRET: requiredInDeployedEnv(Joi.string()),
+  GOOGLE_OAUTH_REDIRECT_URI: requiredInDeployedEnv(
     Joi.string().uri(),
   ).description(
     'Endereço público de GET /api/auth/google/callback, igual ao cadastrado no Google Cloud Console',
@@ -78,7 +125,7 @@ export const envValidationSchema = Joi.object({
   // Redis deixa de ser opcional em produção: além do cache, ele é o storage do
   // rate limit compartilhado entre instâncias — sem ele o limite deixa de valer
   // assim que a API roda com mais de uma réplica.
-  REDIS_URL: requiredInProduction(
+  REDIS_URL: requiredInDeployedEnv(
     Joi.string().uri({ scheme: ['redis', 'rediss'] }),
   ).default('redis://localhost:6379'),
 
@@ -92,7 +139,7 @@ export const envValidationSchema = Joi.object({
       'api = só enfileira; worker = só consome; all = os dois no mesmo processo',
     ),
 
-  ALLOWED_ORIGINS: requiredInProduction(Joi.string())
+  ALLOWED_ORIGINS: requiredInDeployedEnv(Joi.string())
     .default('http://localhost:3000')
     .description(
       'Lista de origens separadas por vírgula, ex.: https://opusatlas.com.br,https://www.opusatlas.com.br',
@@ -101,7 +148,7 @@ export const envValidationSchema = Joi.object({
   THROTTLE_TTL: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
 
-  API_KEY: requiredInProduction(Joi.string().min(32)).description(
+  API_KEY: requiredInDeployedEnv(Joi.string().min(32)).description(
     'Chave usada por rotas server-to-server (cron, /metrics, scrapers)',
   ),
 
@@ -110,16 +157,16 @@ export const envValidationSchema = Joi.object({
   SPOTIFY_CLIENT_ID: Joi.string().optional(),
   SPOTIFY_CLIENT_SECRET: Joi.string().optional(),
   YOUTUBE_API_KEY: Joi.string().optional(),
-  FRONTEND_BASE_URL: requiredInProduction(Joi.string().uri()),
+  FRONTEND_BASE_URL: requiredInDeployedEnv(Joi.string().uri()),
 
   // E-mail transacional (confirmação de conta, reset de senha) é caminho
   // crítico: sem SMTP em produção, ninguém consegue criar conta nem recuperar
   // acesso, e a falha só aparece no primeiro cadastro.
-  SMTP_HOST: requiredInProduction(Joi.string()),
+  SMTP_HOST: requiredInDeployedEnv(Joi.string()),
   SMTP_PORT: Joi.number().port().optional(),
   SMTP_SECURE: Joi.string().valid('true', 'false').optional(),
-  SMTP_USER: requiredInProduction(Joi.string()),
-  SMTP_PASS: requiredInProduction(Joi.string()),
+  SMTP_USER: requiredInDeployedEnv(Joi.string()),
+  SMTP_PASS: requiredInDeployedEnv(Joi.string()),
   EMAIL_FROM: Joi.string().optional(),
   EMAIL_REPLY_TO: Joi.string().optional(),
   // Sem ele o webhook de entrega recusa tudo — e sem webhook, `emailsDelivered`
@@ -164,8 +211,8 @@ export const envValidationSchema = Joi.object({
   // permanecem opcionais e são as usadas em qualquer outro ambiente.
   STRIPE_SECRET_KEY: requiredInProduction(Joi.string()),
   STRIPE_WEBHOOK_SECRET: requiredInProduction(Joi.string()),
-  STRIPE_SECRET_KEY_TEST: Joi.string().optional(),
-  STRIPE_WEBHOOK_SECRET_TEST: Joi.string().optional(),
+  STRIPE_SECRET_KEY_TEST: requiredInStaging(Joi.string()),
+  STRIPE_WEBHOOK_SECRET_TEST: requiredInStaging(Joi.string()),
   STRIPE_PRICE_PLUS_MONTHLY: Joi.string().optional(),
   STRIPE_PRICE_PLUS_YEARLY: Joi.string().optional(),
   STRIPE_PRICE_MENTOR_MONTHLY: Joi.string().optional(),
@@ -175,9 +222,9 @@ export const envValidationSchema = Joi.object({
 
   // Armazenamento de arquivos. Obrigatório em produção: sem isso nenhum upload
   // funciona, e a falha só apareceria no primeiro envio de um usuário.
-  CLOUDINARY_CLOUD_NAME: requiredInProduction(Joi.string()),
-  CLOUDINARY_API_KEY: requiredInProduction(Joi.string()),
-  CLOUDINARY_API_SECRET: requiredInProduction(Joi.string()),
+  CLOUDINARY_CLOUD_NAME: requiredInDeployedEnv(Joi.string()),
+  CLOUDINARY_API_KEY: requiredInDeployedEnv(Joi.string()),
+  CLOUDINARY_API_SECRET: requiredInDeployedEnv(Joi.string()),
 
   SENTRY_DSN: Joi.string().uri().optional(),
   SENTRY_RELEASE: Joi.string().optional(),

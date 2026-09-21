@@ -4,13 +4,41 @@ import { CookieOptions, Request, Response } from 'express';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { IssuedSession } from './interfaces/issued-session.interface';
 
-export const ACCESS_TOKEN_COOKIE = 'opus_access_token';
-export const REFRESH_TOKEN_COOKIE = 'opus_refresh_token';
-export const OAUTH_STATE_COOKIE = 'opus_oauth_state';
-
 /**
- * Marcador de "esta pessoa tem sessão". Não é credencial: só diz que existe um
- * refresh token válido a tentar.
+ * Nomes dos cookies da sessão, com o prefixo do ambiente.
+ *
+ * **Por que o prefixo existe.** Homologação vive sob o domínio de produção
+ * (`hml.opusatlas.com.br`), e o navegador manda os cookies de
+ * `.opusatlas.com.br` também para os subdomínios. Com os mesmos nomes, quem
+ * está logado em produção chegaria à homologação com dois `opus_access_token`,
+ * e qual deles se lê depende da ordem do navegador. `AUTH_COOKIE_PREFIX=opus_hml`
+ * na homologação (e `NEXT_PUBLIC_AUTH_COOKIE_PREFIX` igual no front); em
+ * produção, nada — o padrão é `opus`.
+ *
+ * **Por que é função, e não constante.** Uma constante seria calculada no
+ * `import`, antes de o `ConfigModule` carregar o `.env.*` para o
+ * `process.env`: o prefixo declarado no arquivo seria ignorado em silêncio, e o
+ * login quebraria sem explicação. Lido na hora do uso, vale venha de onde vier.
+ */
+export function authCookieNames(): {
+  access: string;
+  refresh: string;
+  oauthState: string;
+  sessionHint: string;
+} {
+  const prefixo = process.env.AUTH_COOKIE_PREFIX?.trim() || 'opus';
+
+  return {
+    access: `${prefixo}_access_token`,
+    refresh: `${prefixo}_refresh_token`,
+    oauthState: `${prefixo}_oauth_state`,
+    sessionHint: `${prefixo}_session`,
+  };
+}
+
+/*
+ * `sessionHint` — marcador de "esta pessoa tem sessão". Não é credencial: só
+ * diz que existe um refresh token válido a tentar.
  *
  * **Por que é preciso.** O cookie de acesso vive 15 minutos e o navegador o
  * descarta ao vencer; o de refresh tem `path=/api/auth` e o servidor do Next
@@ -22,7 +50,6 @@ export const OAUTH_STATE_COOKIE = 'opus_oauth_state';
  * este ocupa o lugar. Não é `httpOnly` de propósito: não carrega segredo algum
  * e o front pode querer lê-lo.
  */
-export const SESSION_HINT_COOKIE = 'opus_session';
 
 /**
  * Vida do cookie de refresh, alinhada ao `JWT_REFRESH_EXPIRES_IN` padrão (7d).
@@ -55,17 +82,17 @@ export class AuthCookieService {
 
   /** Grava os dois cookies e devolve o corpo da resposta. */
   applySession(response: Response, session: IssuedSession): AuthResponseDto {
-    response.cookie(ACCESS_TOKEN_COOKIE, session.accessToken, {
+    response.cookie(authCookieNames().access, session.accessToken, {
       ...this.baseOptions('/'),
       maxAge: session.expiresIn * 1000,
     });
-    response.cookie(REFRESH_TOKEN_COOKIE, session.refreshToken, {
+    response.cookie(authCookieNames().refresh, session.refreshToken, {
       ...this.baseOptions(AUTH_PATH),
       maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS * 1000,
     });
     // Acompanha a vida do refresh: enquanto ele puder ser trocado, o front
-    // sabe que vale a pena tentar renovar. Ver `SESSION_HINT_COOKIE`.
-    response.cookie(SESSION_HINT_COOKIE, '1', {
+    // sabe que vale a pena tentar renovar. Ver `sessionHint` em `authCookieNames`.
+    response.cookie(authCookieNames().sessionHint, '1', {
       ...this.baseOptions('/'),
       httpOnly: false,
       maxAge: REFRESH_COOKIE_MAX_AGE_SECONDS * 1000,
@@ -86,9 +113,12 @@ export class AuthCookieService {
 
   /** `clearCookie` só apaga quando os atributos batem com os da emissão. */
   clearSession(response: Response): void {
-    response.clearCookie(ACCESS_TOKEN_COOKIE, this.baseOptions('/'));
-    response.clearCookie(REFRESH_TOKEN_COOKIE, this.baseOptions(AUTH_PATH));
-    response.clearCookie(SESSION_HINT_COOKIE, {
+    response.clearCookie(authCookieNames().access, this.baseOptions('/'));
+    response.clearCookie(
+      authCookieNames().refresh,
+      this.baseOptions(AUTH_PATH),
+    );
+    response.clearCookie(authCookieNames().sessionHint, {
       ...this.baseOptions('/'),
       httpOnly: false,
     });
@@ -104,7 +134,7 @@ export class AuthCookieService {
     request: Request,
     bodyToken?: string,
   ): string | undefined {
-    return cookiesOf(request)?.[REFRESH_TOKEN_COOKIE] ?? bodyToken;
+    return cookiesOf(request)?.[authCookieNames().refresh] ?? bodyToken;
   }
 
   /**
@@ -114,38 +144,51 @@ export class AuthCookieService {
    * voltar na navegação que o Google faz de volta para o callback.
    */
   setOAuthState(response: Response, value: string): void {
-    response.cookie(OAUTH_STATE_COOKIE, value, {
+    response.cookie(authCookieNames().oauthState, value, {
       ...this.baseOptions(OAUTH_PATH),
       maxAge: OAUTH_STATE_MAX_AGE_MS,
     });
   }
 
   readOAuthState(request: Request): string | undefined {
-    return cookiesOf(request)?.[OAUTH_STATE_COOKIE];
+    return cookiesOf(request)?.[authCookieNames().oauthState];
   }
 
   clearOAuthState(response: Response): void {
-    response.clearCookie(OAUTH_STATE_COOKIE, this.baseOptions(OAUTH_PATH));
+    response.clearCookie(
+      authCookieNames().oauthState,
+      this.baseOptions(OAUTH_PATH),
+    );
   }
 
   /**
-   * Em produção os tokens saem apenas pelos cookies. Fora de produção eles
-   * também voltam no corpo, para permitir testar os fluxos pelo Swagger e por
-   * `curl` sem um cliente que guarde cookie.
+   * Em ambiente publicado os tokens saem apenas pelos cookies. Em
+   * desenvolvimento eles também voltam no corpo, para testar os fluxos pelo
+   * Swagger e por `curl` sem um cliente que guarde cookie.
+   *
+   * Homologação conta como publicado, e não por formalidade: se o front
+   * passasse a depender do token no corpo, homologação aprovaria e produção
+   * quebraria. E token no corpo é legível por JavaScript — um XSS levaria a
+   * sessão que o `httpOnly` existe para proteger.
    */
   shouldReturnTokenInBody(): boolean {
-    return this.configService.get<string>('app.nodeEnv') !== 'production';
+    return !this.isDeployed();
+  }
+
+  /** Produção ou homologação: onde o comportamento tem de ser o de verdade. */
+  private isDeployed(): boolean {
+    const nodeEnv = this.configService.get<string>('app.nodeEnv');
+    return nodeEnv === 'production' || nodeEnv === 'staging';
   }
 
   private baseOptions(path: string): CookieOptions {
-    const isProduction =
-      this.configService.get<string>('app.nodeEnv') === 'production';
     const domain = this.configService.get<string>('auth.cookieDomain');
 
     return {
       httpOnly: true,
       // Sem HTTPS em desenvolvimento o cookie `secure` nunca seria gravado.
-      secure: isProduction,
+      // Homologação tem HTTPS e precisa do mesmo cookie que produção.
+      secure: this.isDeployed(),
       // `lax` permite navegação entre as zonas do front mantendo proteção
       // contra CSRF em requisição cross-site de outros domínios.
       sameSite: 'lax',

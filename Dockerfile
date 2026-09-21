@@ -2,8 +2,18 @@
 # Opus Atlas API — imagem multi-stage com DOIS alvos de runtime
 # =============================================================================
 #
-#   docker build --target api    -t opus-atlas-api .      (padrão)
+#   docker build                 -t opus-atlas-api .      (alvo padrão: api)
 #   docker build --target worker -t opus-atlas-worker .
+#
+# **Por que o alvo `api` é o último do arquivo.** `docker build` sem `--target`
+# constrói o último estágio. Enquanto o `worker` ocupava essa posição, quem
+# construísse sem dizer o alvo — e há plataformas de deploy que simplesmente
+# não oferecem onde dizê-lo, o Render entre elas — recebia a imagem do worker
+# achando que era a da API: 400MB de Chromium a mais e, pior, `QUEUE_ROLE=worker`,
+# um processo que só consome fila e nunca enfileira. O sintoma seria tudo que
+# depende de job (e-mail, scraping, backup) parar sem erro nenhum no log.
+#
+# Quem precisa do worker continua pedindo `--target worker`, como sempre.
 #
 # Por que dois alvos: os scrapers usam Puppeteer, que precisa do Chromium
 # (~400MB, mais fontes e libs de sistema). Antes o Chromium ia junto no runtime
@@ -62,25 +72,7 @@ COPY --from=builder --chown=nestjs:nodejs /app/package.json ./
 ENV NODE_ENV=production
 USER nestjs
 
-# ==================== STAGE 4a: API (sem Chromium) ====================
-FROM runtime-base AS api
-
-# Só enfileira. Nenhum worker BullMQ é aberto neste processo, então uma
-# varredura de scraping ou um envio de dez mil e-mails nunca disputa CPU com o
-# tráfego de usuário.
-ENV QUEUE_ROLE=api
-ENV PORT=4000
-EXPOSE 4000
-
-# Aponta para a readiness, não para a liveness: o que interessa ao balanceador
-# é se esta instância consegue de fato atender (banco e cache acessíveis).
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:'+(process.env.PORT||4000)+'/api/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/main"]
-
-# ==================== STAGE 4b: worker de scraping (com Chromium) ====================
+# ==================== STAGE 4a: worker de scraping (com Chromium) ====================
 FROM runtime-base AS worker
 
 USER root
@@ -113,3 +105,21 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/main"]
+# ==================== STAGE 4b: API (sem Chromium) — ALVO PADRÃO, deve ser o último ====================
+FROM runtime-base AS api
+
+# Só enfileira. Nenhum worker BullMQ é aberto neste processo, então uma
+# varredura de scraping ou um envio de dez mil e-mails nunca disputa CPU com o
+# tráfego de usuário.
+ENV QUEUE_ROLE=api
+ENV PORT=4000
+EXPOSE 4000
+
+# Aponta para a readiness, não para a liveness: o que interessa ao balanceador
+# é se esta instância consegue de fato atender (banco e cache acessíveis).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:'+(process.env.PORT||4000)+'/api/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "dist/main"]
+

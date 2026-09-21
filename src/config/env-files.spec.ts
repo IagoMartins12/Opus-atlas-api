@@ -58,14 +58,26 @@ describe('env por ambiente', () => {
       );
     });
 
+    // O par é aceito — o que falta são credenciais, não o NODE_ENV.
     it('hml roda como staging', () => {
-      const { error } = envValidationSchema.validate({
-        ...base,
-        APP_ENV: 'hml',
-        NODE_ENV: EXPECTED_NODE_ENV.hml,
-      });
+      const { error } = envValidationSchema.validate(
+        { ...base, APP_ENV: 'hml', NODE_ENV: EXPECTED_NODE_ENV.hml },
+        { abortEarly: false },
+      );
 
-      expect(error).toBeUndefined();
+      expect(error?.message ?? '').not.toContain('NODE_ENV');
+    });
+
+    // Homologação ensaia produção: cobra as mesmas credenciais (ver
+    // `requiredInDeployedEnv` em env.validation.ts).
+    it('hml exige as credenciais que produção exige', () => {
+      const { error } = envValidationSchema.validate(
+        { ...base, APP_ENV: 'hml', NODE_ENV: EXPECTED_NODE_ENV.hml },
+        { abortEarly: false },
+      );
+
+      expect(error?.message).toContain('"GOOGLE_CLIENT_ID" is required');
+      expect(error?.message).toContain('"ALLOWED_ORIGINS" is required');
     });
 
     // `SENTRY_DSN=` no arquivo é "não configurado", não um DSN inválido.

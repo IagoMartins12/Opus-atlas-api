@@ -57,7 +57,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<AuthenticatedRequest>();
     const requestId = (request.headers['x-request-id'] as string) ?? undefined;
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    // Homologação é URL pública: esconde o detalhe interno como produção.
+    const isDeployed =
+      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === 'staging';
 
     let statusCode: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let error = 'Internal Server Error';
@@ -78,7 +81,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       // Erro não tratado (bug real) — nunca expor detalhes internos em produção.
-      message = isProduction ? 'Erro interno do servidor' : exception.message;
+      message = isDeployed ? 'Erro interno do servidor' : exception.message;
       error = 'Internal Server Error';
     }
 

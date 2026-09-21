@@ -99,7 +99,20 @@ export const appConfiguration = () => ({
     r2SecretAccessKey: process.env.BACKUP_R2_SECRET_ACCESS_KEY,
     r2Bucket: process.env.BACKUP_R2_BUCKET,
     /** Prefixo dentro do bucket, para conviver com outras coisas. */
-    prefix: process.env.BACKUP_R2_PREFIX ?? 'backups',
+    /**
+     * O ambiente entra no caminho por padrão, como no Cloudinary
+     * (`opus/{NODE_ENV}`). Com um `backups` único, homologação e produção
+     * dividiriam a pasta sempre que alguém esquecesse `BACKUP_R2_PREFIX` — e a
+     * rotação ("manter os 3 mais recentes") da homologação apagaria os
+     * backups de produção. `backups/staging` e `backups/production` nunca se
+     * sobrepõem: a listagem filtra por `{prefixo}/`.
+     *
+     * Se definir à mão, não aninhe um no outro (`backups` e `backups/hml`):
+     * a listagem do primeiro enxergaria os arquivos do segundo.
+     */
+    prefix:
+      process.env.BACKUP_R2_PREFIX ??
+      `backups/${process.env.NODE_ENV ?? 'development'}`,
   },
   billing: {
     // Mesmo padrão dual test/produção do legado (`stripeClient.ts`) — em

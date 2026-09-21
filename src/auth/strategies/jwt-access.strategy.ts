@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { ACCESS_TOKEN_COOKIE } from '../auth-cookie.service';
+import { authCookieNames } from '../auth-cookie.service';
 import { AccessTokenPayload } from '../interfaces/jwt-payload.interface';
 
 /** Token do cookie `httpOnly` — o caminho do navegador. */
@@ -13,7 +13,7 @@ export function accessTokenFromCookie(
   const cookies = (
     request as (Request & { cookies?: Record<string, string> }) | undefined
   )?.cookies;
-  const token = cookies?.[ACCESS_TOKEN_COOKIE];
+  const token = cookies?.[authCookieNames().access];
 
   return typeof token === 'string' && token.length > 0 ? token : null;
 }

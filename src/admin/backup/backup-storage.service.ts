@@ -51,7 +51,12 @@ export class BackupStorageService {
   }
 
   get prefixo(): string {
-    return this.config.get<string>('backup.prefix') ?? 'backups';
+    // O padrão por ambiente mora em `configuration.ts`; este é só a rede de
+    // segurança de quem monta o serviço sem ela (os scripts, os testes).
+    return (
+      this.config.get<string>('backup.prefix') ??
+      `backups/${process.env.NODE_ENV ?? 'development'}`
+    );
   }
 
   private get s3(): S3Client {

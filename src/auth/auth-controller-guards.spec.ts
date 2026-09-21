@@ -11,7 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
-import { ACCESS_TOKEN_COOKIE, AuthCookieService } from './auth-cookie.service';
+import { authCookieNames, AuthCookieService } from './auth-cookie.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -254,17 +254,17 @@ describe('JwtAccessStrategy', () => {
       extractAccessToken(
         req(
           { authorization: 'Bearer do-cabecalho' },
-          { [ACCESS_TOKEN_COOKIE]: 'do-cookie' },
+          { [authCookieNames().access]: 'do-cookie' },
         ),
       ),
     ).toBe('do-cabecalho');
     expect(
-      extractAccessToken(req({}, { [ACCESS_TOKEN_COOKIE]: 'do-cookie' })),
+      extractAccessToken(req({}, { [authCookieNames().access]: 'do-cookie' })),
     ).toBe('do-cookie');
     expect(extractAccessToken(req({}))).toBeNull();
     expect(accessTokenFromCookie(undefined)).toBeNull();
     expect(
-      accessTokenFromCookie(req({}, { [ACCESS_TOKEN_COOKIE]: '' })),
+      accessTokenFromCookie(req({}, { [authCookieNames().access]: '' })),
     ).toBeNull();
   });
 });

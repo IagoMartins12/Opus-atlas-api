@@ -175,6 +175,16 @@ export class BackupService {
       this.logger.log(`Backup: ${colecao.name} com ${documentos} documentos`);
     }
 
+    // Marcador de fim: o restore recusa arquivo sem ele, que é como se
+    // reconhece um arquivo cortado no meio (ver `scripts/restore.ts`).
+    partes.push(
+      JSON.stringify({
+        type: 'end',
+        collections: contagens.length,
+        documents: total,
+      }),
+    );
+
     return {
       conteudo: Buffer.from(partes.join('\n'), 'utf8'),
       contagens,

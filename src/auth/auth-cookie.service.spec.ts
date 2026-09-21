@@ -1,13 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Request, Response } from 'express';
-import {
-  ACCESS_TOKEN_COOKIE,
-  SESSION_HINT_COOKIE,
-  AuthCookieService,
-  OAUTH_STATE_COOKIE,
-  REFRESH_TOKEN_COOKIE,
-} from './auth-cookie.service';
+import { authCookieNames, AuthCookieService } from './auth-cookie.service';
 
 const session = {
   accessToken: 'acesso',
@@ -61,12 +55,12 @@ describe('AuthCookieService', () => {
       service.applySession(res(), session);
 
       expect(response.cookie).toHaveBeenCalledWith(
-        ACCESS_TOKEN_COOKIE,
+        authCookieNames().access,
         'acesso',
         expect.objectContaining({ httpOnly: true, sameSite: 'lax', path: '/' }),
       );
       expect(response.cookie).toHaveBeenCalledWith(
-        REFRESH_TOKEN_COOKIE,
+        authCookieNames().refresh,
         'renovacao',
         expect.objectContaining({
           httpOnly: true,
@@ -79,12 +73,12 @@ describe('AuthCookieService', () => {
     it('o cookie de acesso vive o mesmo que o token; o de refresh, sete dias', () => {
       service.applySession(res(), session);
 
-      expect(optionsOf(ACCESS_TOKEN_COOKIE).maxAge).toBe(900_000);
-      expect(optionsOf(REFRESH_TOKEN_COOKIE).maxAge).toBe(604_800_000);
+      expect(optionsOf(authCookieNames().access).maxAge).toBe(900_000);
+      expect(optionsOf(authCookieNames().refresh).maxAge).toBe(604_800_000);
       // O marcador vive o mesmo que o refresh: é ele que diz ao middleware do
       // front que ainda há o que renovar depois de o acesso vencer.
-      expect(optionsOf(SESSION_HINT_COOKIE).maxAge).toBe(604_800_000);
-      expect(optionsOf(SESSION_HINT_COOKIE).httpOnly).toBe(false);
+      expect(optionsOf(authCookieNames().sessionHint).maxAge).toBe(604_800_000);
+      expect(optionsOf(authCookieNames().sessionHint).httpOnly).toBe(false);
     });
 
     it('fora de produção o corpo leva os tokens; em produção, não', async () => {
@@ -100,27 +94,38 @@ describe('AuthCookieService', () => {
 
     it('não marca secure em desenvolvimento, senão o cookie nunca seria gravado sem HTTPS', async () => {
       service.applySession(res(), session);
-      expect(optionsOf(ACCESS_TOKEN_COOKIE).secure).toBe(false);
+      expect(optionsOf(authCookieNames().access).secure).toBe(false);
 
       response.cookie.mockClear();
       await build({ 'app.nodeEnv': 'production' });
       service.applySession(res(), session);
 
-      expect(optionsOf(ACCESS_TOKEN_COOKIE).secure).toBe(true);
-      expect(optionsOf(REFRESH_TOKEN_COOKIE).secure).toBe(true);
+      expect(optionsOf(authCookieNames().access).secure).toBe(true);
+      expect(optionsOf(authCookieNames().refresh).secure).toBe(true);
+    });
+
+    it('marca secure em homologação, que tem HTTPS como produção', async () => {
+      await build({ 'app.nodeEnv': 'staging' });
+      service.applySession(res(), session);
+
+      expect(optionsOf(authCookieNames().access).secure).toBe(true);
     });
 
     // É o que faz a mesma sessão valer nas 4 zonas do front sem novo login.
     it('domínio raiz nos dois cookies quando configurado; nenhum em localhost', async () => {
       service.applySession(res(), session);
-      expect(optionsOf(ACCESS_TOKEN_COOKIE)).not.toHaveProperty('domain');
+      expect(optionsOf(authCookieNames().access)).not.toHaveProperty('domain');
 
       response.cookie.mockClear();
       await build({ 'auth.cookieDomain': '.opusatlas.com.br' });
       service.applySession(res(), session);
 
-      expect(optionsOf(ACCESS_TOKEN_COOKIE).domain).toBe('.opusatlas.com.br');
-      expect(optionsOf(REFRESH_TOKEN_COOKIE).domain).toBe('.opusatlas.com.br');
+      expect(optionsOf(authCookieNames().access).domain).toBe(
+        '.opusatlas.com.br',
+      );
+      expect(optionsOf(authCookieNames().refresh).domain).toBe(
+        '.opusatlas.com.br',
+      );
     });
   });
 
@@ -129,11 +134,11 @@ describe('AuthCookieService', () => {
       service.clearSession(res());
 
       expect(response.clearCookie).toHaveBeenCalledWith(
-        ACCESS_TOKEN_COOKIE,
+        authCookieNames().access,
         expect.objectContaining({ httpOnly: true, path: '/' }),
       );
       expect(response.clearCookie).toHaveBeenCalledWith(
-        REFRESH_TOKEN_COOKIE,
+        authCookieNames().refresh,
         expect.objectContaining({ httpOnly: true, path: '/api/auth' }),
       );
     });
@@ -146,7 +151,7 @@ describe('AuthCookieService', () => {
     it('lê o token do cookie', () => {
       expect(
         service.extractRefreshToken(
-          makeRequest({ [REFRESH_TOKEN_COOKIE]: 'do-cookie' }),
+          makeRequest({ [authCookieNames().refresh]: 'do-cookie' }),
         ),
       ).toBe('do-cookie');
     });
@@ -154,7 +159,7 @@ describe('AuthCookieService', () => {
     it('dá precedência ao cookie sobre o corpo', () => {
       expect(
         service.extractRefreshToken(
-          makeRequest({ [REFRESH_TOKEN_COOKIE]: 'do-cookie' }),
+          makeRequest({ [authCookieNames().refresh]: 'do-cookie' }),
           'do-body',
         ),
       ).toBe('do-cookie');
@@ -176,7 +181,7 @@ describe('AuthCookieService', () => {
       service.setOAuthState(res(), 'estado');
 
       expect(response.cookie).toHaveBeenCalledWith(
-        OAUTH_STATE_COOKIE,
+        authCookieNames().oauthState,
         'estado',
         expect.objectContaining({
           httpOnly: true,
@@ -186,28 +191,69 @@ describe('AuthCookieService', () => {
       );
       expect(
         service.readOAuthState({
-          cookies: { [OAUTH_STATE_COOKIE]: 'estado' },
+          cookies: { [authCookieNames().oauthState]: 'estado' },
         } as unknown as Request),
       ).toBe('estado');
       expect(service.readOAuthState({} as Request)).toBeUndefined();
 
       service.clearOAuthState(res());
       expect(response.clearCookie).toHaveBeenCalledWith(
-        OAUTH_STATE_COOKIE,
+        authCookieNames().oauthState,
         expect.objectContaining({ path: '/api/auth/google' }),
       );
     });
   });
 
   describe('shouldReturnTokenInBody', () => {
-    it('devolve o token no corpo fora de produção, para testar pelo Swagger', () => {
+    it('devolve o token no corpo em desenvolvimento, para testar pelo Swagger', () => {
       expect(service.shouldReturnTokenInBody()).toBe(true);
     });
 
-    it('nunca devolve o token no corpo em produção', async () => {
-      await build({ 'app.nodeEnv': 'production' });
+    it.each(['production', 'staging'])(
+      'nunca devolve o token no corpo em %s',
+      async (nodeEnv) => {
+        await build({ 'app.nodeEnv': nodeEnv });
 
-      expect(service.shouldReturnTokenInBody()).toBe(false);
+        expect(service.shouldReturnTokenInBody()).toBe(false);
+      },
+    );
+  });
+});
+
+describe('authCookieNames', () => {
+  const original = process.env.AUTH_COOKIE_PREFIX;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.AUTH_COOKIE_PREFIX;
+    else process.env.AUTH_COOKIE_PREFIX = original;
+  });
+
+  it('usa os nomes de produção sem prefixo configurado', () => {
+    delete process.env.AUTH_COOKIE_PREFIX;
+
+    expect(authCookieNames()).toEqual({
+      access: 'opus_access_token',
+      refresh: 'opus_refresh_token',
+      oauthState: 'opus_oauth_state',
+      sessionHint: 'opus_session',
     });
+  });
+
+  /**
+   * O motivo de ser função: o `ConfigModule` carrega o `.env.*` depois dos
+   * imports. Um prefixo que chega ao `process.env` depois de o módulo ser
+   * carregado — como este — tem de valer.
+   */
+  it('lê o prefixo na hora do uso, não no import', () => {
+    process.env.AUTH_COOKIE_PREFIX = 'opus_hml';
+
+    expect(authCookieNames().access).toBe('opus_hml_access_token');
+    expect(authCookieNames().sessionHint).toBe('opus_hml_session');
+  });
+
+  it('trata prefixo vazio como ausente', () => {
+    process.env.AUTH_COOKIE_PREFIX = '  ';
+
+    expect(authCookieNames().access).toBe('opus_access_token');
   });
 });
