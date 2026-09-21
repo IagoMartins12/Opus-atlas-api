@@ -13,7 +13,7 @@
     "start:prod": "APP_ENV=prd node dist/main",
     "start:hml": "APP_ENV=hml node dist/main",
     "prisma:generate": "prisma generate",
-    "prisma:push": "node --env-file=.env.local node_modules/prisma/build/index.js db push",
+    "prisma:push": "npm run build && APP_ENV=local node --env-file=.env.local dist/scripts/db-push.js",
     "prisma:studio": "node --env-file=.env.local node_modules/prisma/build/index.js studio",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start:debug": "APP_ENV=local nest start --debug --watch",
@@ -37,7 +37,8 @@
     "users:audit-admin-roles": "node dist/scripts/audit-admin-roles.js",
     "catalog:sync-annotation-counts": "node dist/scripts/sync-annotation-counts.js",
     "catalog:sync-annotation-counts:apply": "node dist/scripts/sync-annotation-counts.js --apply",
-    "prebuild": "rimraf dist tsconfig.build.tsbuildinfo"
+    "prebuild": "rimraf dist tsconfig.build.tsbuildinfo",
+    "prisma:push:raw": "node --env-file=.env.local node_modules/prisma/build/index.js db push"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
