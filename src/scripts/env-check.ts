@@ -77,6 +77,18 @@ function hostDoBanco(url: string | undefined): string | null {
   return depois.slice(depois.lastIndexOf('@') + 1).split(/[/?]/)[0] || null;
 }
 
+function nomeDoBanco(url: string): string {
+  const depois = url.replace(/^[a-z+]+:\/\//, '');
+  const caminho = depois.slice(depois.lastIndexOf('@') + 1);
+  const barra = caminho.indexOf('/');
+  return barra < 0
+    ? ''
+    : caminho
+        .slice(barra + 1)
+        .split('?')[0]
+        .trim();
+}
+
 /**
  * As checagens, puras: recebem os valores e devolvem mensagens com **nomes**,
  * nunca valores.
@@ -136,6 +148,12 @@ export function conferirAmbiente(
   if (!publicado) return mascarar({ erros, avisos }, env);
 
   // 4. Endereços de ambiente publicado.
+  if (tem('DATABASE_URL') && !nomeDoBanco(env.DATABASE_URL)) {
+    erros.push(
+      'DATABASE_URL sem nome de banco (…mongodb.net/<banco>?…) — o Atlas ' +
+        'recusa com "empty database name not allowed"',
+    );
+  }
   const bancoHost = hostDoBanco(env.DATABASE_URL);
   if (bancoHost && /localhost|127\.0\.0\.1/.test(bancoHost)) {
     erros.push('DATABASE_URL aponta para localhost');

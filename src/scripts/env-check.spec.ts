@@ -204,3 +204,14 @@ describe('env-check — máscara', () => {
     );
   });
 });
+
+describe('env-check — nome do banco', () => {
+  it.each([
+    'mongodb+srv://u:p@hml.abc.mongodb.net/',
+    'mongodb+srv://u:p@hml.abc.mongodb.net/?retryWrites=true',
+    'mongodb+srv://u:p@hml.abc.mongodb.net',
+  ])('acusa URL sem nome de banco: %s', (url) => {
+    const r = conferirAmbiente('hml', { ...HML, DATABASE_URL: url }, {});
+    expect(r.erros.join()).toContain('DATABASE_URL sem nome de banco');
+  });
+});
