@@ -30,14 +30,18 @@
 # =============================================================================
 
 # ==================== STAGE 1: dependências ====================
-FROM node:20-alpine AS deps
+# Node 24 (LTS), o mesmo do desenvolvimento e do CI. No Node 20 — além de fora
+# de suporte desde abril de 2026 — o binário pronto do `argon2` para Alpine
+# derruba o processo com falha de segmentação ao carregar; o `npm ci` então
+# tenta compilar do zero, não acha Python nem compilador, e o build para.
+FROM node:24-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 
 # ==================== STAGE 2: build ====================
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -54,7 +58,7 @@ RUN npm run build
 RUN npm prune --omit=dev --legacy-peer-deps
 
 # ==================== STAGE 3: base comum de runtime ====================
-FROM node:20-alpine AS runtime-base
+FROM node:24-alpine AS runtime-base
 WORKDIR /app
 
 # `dumb-init` como PID 1: repassa SIGTERM ao Node, que é o que permite o
