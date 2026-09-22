@@ -59,6 +59,14 @@ describe('MailService — envio', () => {
     });
 
     expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
+    // Sem limite, SMTP bloqueado pendura o cadastro até o 408 (ver SMTP_TIMEOUTS).
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      }),
+    );
     expect(sendMail.mock.calls[0][0]).toMatchObject({
       text: 'Olá Ana',
       replyTo: 'contato@opusatlas.com',

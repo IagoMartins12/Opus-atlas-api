@@ -69,6 +69,22 @@ function formatBRL(amount: number): string {
  * senha, etc.) — só é logada. O estado relevante (token criado, senha alterada)
  * já foi persistido antes do e-mail ser disparado.
  */
+/**
+ * Limites de tempo do SMTP, bem abaixo dos 30 s do `TimeoutInterceptor`.
+ *
+ * Os padrões do nodemailer são 2 min para conectar e 10 min de silêncio no
+ * socket. Com a porta bloqueada — o Render gratuito bloqueia a saída SMTP —
+ * a conexão nunca responde nem falha, e o cadastro, que espera o e-mail de
+ * confirmação, morria em 408 **depois de já ter criado a conta**. Com estes
+ * limites, SMTP inacessível vira o que `send()` já sabe tratar: falha no log,
+ * fluxo segue.
+ */
+export const SMTP_TIMEOUTS = {
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
+} as const;
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -93,6 +109,7 @@ export class MailService {
         port: this.configService.get<number>('mail.port'),
         secure: this.configService.get<boolean>('mail.secure'),
         auth: { user, pass },
+        ...SMTP_TIMEOUTS,
       });
     }
 
