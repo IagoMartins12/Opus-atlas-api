@@ -1,3 +1,5 @@
+import { createReadStream, promises as fs } from 'fs';
+import type { Readable } from 'stream';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -84,17 +86,42 @@ export class BackupStorageService {
     return this.cliente;
   }
 
-  async enviar(key: string, corpo: Buffer): Promise<void> {
+  /**
+   * Envia um arquivo do disco **sem lê-lo inteiro na memória**.
+   *
+   * O tamanho vai em `ContentLength` porque o S3 exige saber quantos bytes
+   * esperar quando o corpo é um fluxo — sem isso, o SDK bufferiza o fluxo
+   * inteiro para descobrir o tamanho, e o ganho de streaming se perde.
+   */
+  async enviarArquivo(key: string, caminho: string): Promise<number> {
+    const { size } = await fs.stat(caminho);
+
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,
-        Body: corpo,
+        Body: createReadStream(caminho),
+        ContentLength: size,
         ContentType: 'application/gzip',
       }),
     );
 
-    this.logger.log(`Backup enviado: ${key} (${corpo.byteLength} bytes)`);
+    this.logger.log(`Backup enviado: ${key} (${size} bytes)`);
+
+    return size;
+  }
+
+  /** O objeto como fluxo, para ler linha a linha sem carregar tudo. */
+  async abrirLeitura(key: string): Promise<Readable> {
+    const resposta = await this.s3.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+
+    if (!resposta.Body) {
+      throw new Error(`O objeto ${key} voltou vazio do bucket.`);
+    }
+
+    return resposta.Body as Readable;
   }
 
   async baixar(key: string): Promise<Buffer> {

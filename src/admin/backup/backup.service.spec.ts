@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'fs';
+import { Readable } from 'stream';
 import { gunzipSync, gzipSync } from 'zlib';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BackupService } from './backup.service';
@@ -37,9 +39,18 @@ function storageCom(existentes: ArquivoDeBackup[]) {
 
   const storage = {
     prefixo: 'backups',
-    enviar: jest.fn((key: string, corpo: Buffer) => {
-      enviados.set(key, corpo);
-      return Promise.resolve();
+    // O serviço escreve em disco e manda o caminho: ler o arquivo aqui é o
+    // que prova que ele foi mesmo gravado, e não só bufferizado.
+    enviarArquivo: jest.fn((key: string, caminho: string) => {
+      const conteudo = readFileSync(caminho);
+      enviados.set(key, conteudo);
+      return Promise.resolve(conteudo.byteLength);
+    }),
+    abrirLeitura: jest.fn((key: string) => {
+      const conteudo = enviados.get(key);
+      return conteudo
+        ? Promise.resolve(Readable.from([conteudo]))
+        : Promise.reject(new Error('não encontrado'));
     }),
     baixar: jest.fn((key: string) => {
       const conteudo = enviados.get(key);
@@ -122,7 +133,7 @@ describe('BackupService', () => {
     );
 
     expect(resultado.verifiedAt).toBeInstanceOf(Date);
-    expect(storage.baixar).toHaveBeenCalledWith(resultado.objectKey);
+    expect(storage.abrirLeitura).toHaveBeenCalledWith(resultado.objectKey);
   });
 
   // É assim que se acumulam três arquivos corrompidos e nenhum bom.
@@ -134,7 +145,7 @@ describe('BackupService', () => {
       arquivo('2026-09-20'),
     ]);
 
-    (storage.baixar as jest.Mock).mockRejectedValue(
+    (storage.abrirLeitura as jest.Mock).mockRejectedValue(
       new Error('objeto ilegível'),
     );
 
@@ -198,15 +209,70 @@ describe('BackupService', () => {
     ).rejects.toThrow('Nenhuma coleção selecionada');
   });
 
+  /**
+   * A versão anterior acumulava o arquivo inteiro num array de strings antes
+   * de comprimir, e derrubou a API na primeira execução real: 230 MB de dados
+   * num contêiner de 512 MB. O teto de 512 MB "de segurança" nunca chegava a
+   * ser consultado — o processo morria antes.
+   */
+  it('escreve em disco e envia o caminho, sem juntar o arquivo na memória', async () => {
+    const muitos = Array.from({ length: 1200 }, (_, i) => ({
+      _id: `w${String(i).padStart(4, '0')}`,
+      titulo: 'x'.repeat(200),
+    }));
+    const prisma = prismaCom({ Work: muitos });
+    const { storage, enviados } = storageCom([]);
+
+    const resultado = await new BackupService(prisma, storage).executar(
+      [{ name: 'Work', limit: null }],
+      3,
+      hoje,
+    );
+
+    // O caminho é de arquivo, não um Buffer: o conteúdo saiu do processo.
+    const [, caminho] = (storage.enviarArquivo as jest.Mock).mock.calls[0];
+    expect(typeof caminho).toBe('string');
+    expect(resultado.documentCount).toBe(1200);
+
+    const linhas = gunzipSync(enviados.get(resultado.objectKey) as Buffer)
+      .toString('utf8')
+      .split('\n');
+    expect(linhas.filter((l) => l.startsWith('{"type":"doc"'))).toHaveLength(
+      1200,
+    );
+  });
+
+  it('não deixa o arquivo temporário para trás, nem quando falha', async () => {
+    const prisma = prismaCom({ Work: [{ _id: 'w1' }] });
+    const { storage } = storageCom([]);
+    (storage.enviarArquivo as jest.Mock).mockRejectedValue(
+      new Error('R2 fora do ar'),
+    );
+
+    await expect(
+      new BackupService(prisma, storage).executar(
+        [{ name: 'Work', limit: null }],
+        3,
+        hoje,
+      ),
+    ).rejects.toThrow('R2 fora do ar');
+
+    // O disco do contêiner é efêmero, mas não é infinito.
+    const [, caminho] = (storage.enviarArquivo as jest.Mock).mock.calls[0];
+    expect(existsSync(caminho as string)).toBe(false);
+  });
+
   it('falha quando o arquivo sai com menos documentos do que o esperado', async () => {
     const prisma = prismaCom({ Work: [{ _id: 'w1' }, { _id: 'w2' }] });
     const { storage, apagados } = storageCom([]);
 
     // Um arquivo truncado: o upload não acusa nada, a leitura de volta sim.
-    (storage.baixar as jest.Mock).mockResolvedValue(
-      gzipSync(
-        Buffer.from('{"type":"meta"}\n{"type":"doc","collection":"Work"}'),
-      ),
+    (storage.abrirLeitura as jest.Mock).mockResolvedValue(
+      Readable.from([
+        gzipSync(
+          Buffer.from('{"type":"meta"}\n{"type":"doc","collection":"Work"}'),
+        ),
+      ]),
     );
 
     await expect(
