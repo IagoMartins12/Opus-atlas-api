@@ -8,6 +8,15 @@ type StripeInvoiceWithSubscription = Stripe.Invoice & {
   subscription?: string | Stripe.Subscription | null;
 };
 
+/** O id da assinatura na fatura, esteja ela expandida ou não. */
+function subscriptionIdOf(
+  invoice: StripeInvoiceWithSubscription,
+): string | undefined {
+  return typeof invoice.subscription === 'string'
+    ? invoice.subscription
+    : (invoice.subscription?.id ?? undefined);
+}
+
 /**
  * Processa eventos do webhook do Stripe — consolida em um único handler as
  * **três** implementações duplicadas e inconsistentes que existiam no legado
@@ -100,6 +109,13 @@ export class WebhookService {
         break;
       }
 
+      case 'invoice.paid': {
+        await this.handleInvoicePaid(
+          event.data.object as StripeInvoiceWithSubscription,
+        );
+        break;
+      }
+
       case 'invoice.payment_failed': {
         await this.handlePaymentFailed(
           event.data.object as StripeInvoiceWithSubscription,
@@ -125,13 +141,53 @@ export class WebhookService {
     }
   }
 
+  /**
+   * Fatura paga — **é o evento da renovação**, e o que faltava para quem paga
+   * em dia continuar com acesso. Ver `registerRenewal`.
+   *
+   * A primeira fatura de uma assinatura sai daqui sem fazer nada: quem a trata
+   * é `checkout.session.completed`, que tem a sessão, o cupom, o upgrade a
+   * substituir e o e-mail de boas-vindas. Tratar as duas aqui gravaria o
+   * mesmo pagamento duas vezes.
+   */
+  private async handleInvoicePaid(
+    invoice: StripeInvoiceWithSubscription,
+  ): Promise<void> {
+    if (invoice.billing_reason === 'subscription_create') {
+      this.logger.debug(
+        `Fatura ${invoice.id} é a do checkout — tratada por checkout.session.completed`,
+      );
+      return;
+    }
+
+    const stripeSubscriptionId = subscriptionIdOf(invoice);
+
+    if (!stripeSubscriptionId) {
+      this.logger.warn('invoice.paid sem assinatura associada, ignorando');
+      return;
+    }
+
+    /**
+     * O fim do ciclo vem da linha da fatura, não de `invoice.period_end`:
+     * neste último o Stripe põe a data de **emissão** do documento, que numa
+     * renovação coincide com o começo do período novo. Usá-lo daria uma
+     * assinatura vencida no mesmo instante em que foi paga.
+     */
+    const periodEnd = invoice.lines?.data?.[0]?.period?.end;
+
+    await this.subscriptionsService.registerRenewal({
+      id: invoice.id ?? '',
+      stripeSubscriptionId,
+      amountPaid: (invoice.amount_paid ?? 0) / 100,
+      currency: invoice.currency ?? 'brl',
+      periodEnd: periodEnd ? new Date(periodEnd * 1000) : null,
+    });
+  }
+
   private async handlePaymentFailed(
     invoice: StripeInvoiceWithSubscription,
   ): Promise<void> {
-    const stripeSubscriptionId =
-      typeof invoice.subscription === 'string'
-        ? invoice.subscription
-        : invoice.subscription?.id;
+    const stripeSubscriptionId = subscriptionIdOf(invoice);
 
     if (!stripeSubscriptionId) {
       this.logger.warn(

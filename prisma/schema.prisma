@@ -3053,6 +3053,10 @@ model Payment {
   subscriptionId  String       @db.ObjectId
   subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   stripeSessionId String?
+  /// Fatura do Stripe que originou este pagamento — as renovações não têm
+  /// sessão de checkout, só fatura. Serve para não gravar o mesmo pagamento
+  /// duas vezes quando o mesmo ciclo chega por mais de um evento.
+  stripeInvoiceId String?
   // Valores
   amount          Float
   currency        String       @default("BRL")
@@ -3086,6 +3090,9 @@ model Payment {
 
   @@index([subscriptionId])
   @@index([status, createdAt])
+  // Não é `@unique`: no MongoDB um único comum trata campo ausente como valor
+  // e só deixaria UM pagamento sem fatura (todos os de checkout).
+  @@index([stripeInvoiceId])
   @@map("payments")
 }
 

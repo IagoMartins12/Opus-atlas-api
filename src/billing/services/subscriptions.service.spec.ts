@@ -625,4 +625,94 @@ describe('SubscriptionsService', () => {
       expect(result.payment?.checkoutUrl).toBe('https://checkout/cs_1');
     });
   });
+  /**
+   * A renovação — o buraco que deixava cliente pagante sem acesso no 31º dia.
+   * `endDate` era gravado uma vez, no checkout, e nada o atualizava depois.
+   */
+  describe('renovação', () => {
+    const fatura = (extra: Record<string, unknown> = {}) => ({
+      id: 'in_1',
+      stripeSubscriptionId: 'sub_1',
+      amountPaid: 39.9,
+      currency: 'brl',
+      periodEnd: new Date('2026-11-01T00:00:00Z'),
+      ...extra,
+    });
+
+    beforeEach(() => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription(),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+    });
+
+    it('estende o acesso até a data que o Stripe cobrou', async () => {
+      await service.registerRenewal(fatura());
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.endDate).toEqual(new Date('2026-11-01T00:00:00Z'));
+    });
+
+    it('tira a assinatura de PAST_DUE quando a cobrança é recuperada', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ status: 'PAST_DUE' }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerRenewal(fatura());
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.status).toBe('ACTIVE');
+    });
+
+    it('grava o pagamento aprovado com a fatura que o originou', async () => {
+      await service.registerRenewal(fatura());
+
+      const [{ data }] = prisma.payment.create.mock.calls[0];
+      expect(data).toMatchObject({
+        stripeInvoiceId: 'in_1',
+        finalAmount: 39.9,
+        currency: 'BRL',
+        status: 'APPROVED',
+      });
+    });
+
+    it('não registra duas vezes a mesma fatura', async () => {
+      // `invoice.paid` e `invoice.payment_succeeded` descrevem a mesma
+      // cobrança: a trava por id de evento não cobre isso.
+      prisma.payment.findFirst.mockResolvedValue({ id: 'pay-ja' });
+
+      await service.registerRenewal(fatura());
+
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('sem data do Stripe, cai no ciclo declarado na assinatura', async () => {
+      const antes = Date.now();
+
+      await service.registerRenewal(fatura({ periodEnd: null }));
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      const dias = (data.endDate.getTime() - antes) / DAY;
+      expect(dias).toBeGreaterThan(29.9);
+      expect(dias).toBeLessThan(30.1);
+    });
+
+    it('assinatura desconhecida não cria pagamento órfão', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(null);
+
+      await service.registerRenewal(fatura());
+
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    });
+
+    it('registra a renovação no histórico e emite a nota', async () => {
+      await service.registerRenewal(fatura());
+
+      const [{ data }] = prisma.subscriptionHistory.create.mock.calls[0];
+      expect(data).toMatchObject({ action: 'RENEWED', subscriptionId: SUB });
+      expect(invoices.createFromPayment).toHaveBeenCalledWith(SUB, 'pay-1');
+    });
+  });
 });

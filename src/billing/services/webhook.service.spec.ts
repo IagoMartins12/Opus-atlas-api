@@ -31,7 +31,10 @@ const makeEvent = (type: string, data: unknown, id = 'evt_1'): Stripe.Event =>
 describe('WebhookService', () => {
   let service: WebhookService;
   let prisma: PrismaMock;
-  let subscriptions: { confirmCheckoutSession: jest.Mock };
+  let subscriptions: {
+    confirmCheckoutSession: jest.Mock;
+    registerRenewal: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -47,7 +50,10 @@ describe('WebhookService', () => {
       },
     };
 
-    subscriptions = { confirmCheckoutSession: jest.fn().mockResolvedValue({}) };
+    subscriptions = {
+      confirmCheckoutSession: jest.fn().mockResolvedValue({}),
+      registerRenewal: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -211,6 +217,74 @@ describe('WebhookService', () => {
 
       expect(prisma.payment.create).not.toHaveBeenCalled();
       expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * A renovação — o evento que faltava. Sem ele, `endDate` nunca avançava do
+   * que o checkout gravou e o cron expirava quem estava pagando em dia.
+   */
+  describe('invoice.paid', () => {
+    const fatura = (extra: Record<string, unknown> = {}) => ({
+      id: 'in_1',
+      subscription: 'sub_1',
+      billing_reason: 'subscription_cycle',
+      amount_paid: 3990,
+      currency: 'brl',
+      lines: { data: [{ period: { end: 1790000000 } }] },
+      ...extra,
+    });
+
+    it('registra a renovação com o fim de ciclo que o Stripe mandou', async () => {
+      await service.handleEvent(makeEvent('invoice.paid', fatura()));
+
+      expect(subscriptions.registerRenewal).toHaveBeenCalledWith({
+        id: 'in_1',
+        stripeSubscriptionId: 'sub_1',
+        amountPaid: 39.9,
+        currency: 'brl',
+        periodEnd: new Date(1790000000 * 1000),
+      });
+    });
+
+    it('não registra a primeira fatura: quem a trata é o checkout', async () => {
+      // As duas juntas gravariam o mesmo pagamento duas vezes.
+      await service.handleEvent(
+        makeEvent(
+          'invoice.paid',
+          fatura({ billing_reason: 'subscription_create' }),
+        ),
+      );
+
+      expect(subscriptions.registerRenewal).not.toHaveBeenCalled();
+    });
+
+    it('resolve a assinatura quando o Stripe manda o objeto expandido', async () => {
+      await service.handleEvent(
+        makeEvent('invoice.paid', fatura({ subscription: { id: 'sub_9' } })),
+      );
+
+      expect(subscriptions.registerRenewal).toHaveBeenCalledWith(
+        expect.objectContaining({ stripeSubscriptionId: 'sub_9' }),
+      );
+    });
+
+    it('ignora fatura sem assinatura associada', async () => {
+      await service.handleEvent(
+        makeEvent('invoice.paid', fatura({ subscription: null })),
+      );
+
+      expect(subscriptions.registerRenewal).not.toHaveBeenCalled();
+    });
+
+    it('sem linha de período, deixa a data a cargo do serviço', async () => {
+      await service.handleEvent(
+        makeEvent('invoice.paid', fatura({ lines: { data: [] } })),
+      );
+
+      expect(subscriptions.registerRenewal).toHaveBeenCalledWith(
+        expect.objectContaining({ periodEnd: null }),
+      );
     });
   });
 

@@ -395,6 +395,114 @@ export class SubscriptionsService {
     }
   }
 
+  /**
+   * Registra a **renovação** paga de uma assinatura — a fatura do segundo mês
+   * em diante, que não passa por checkout nenhum.
+   *
+   * **Sem isto, quem paga em dia perde o acesso.** O `endDate` era gravado uma
+   * única vez, no checkout (hoje + 30 ou + 365 dias), e nada o atualizava
+   * depois. O Stripe cobrava o mês seguinte, o dinheiro entrava, e o cron
+   * `check-subscriptions` — que varre `endDate < agora` — marcava a assinatura
+   * como `EXPIRED` e rebaixava o plano no 31º dia. O caminho oposto existia
+   * desde sempre (`invoice.payment_failed` → `PAST_DUE`); o de sucesso, não.
+   * Não aparece em teste manual: só um mês depois da primeira assinatura.
+   *
+   * **A data vem do Stripe, não de `+30 dias`.** Quem decide o fim do ciclo é
+   * quem cobra; somar dias aqui faria as duas datas divergirem um pouco a cada
+   * mês, até o acesso cair antes da cobrança (ou sobrar depois dela).
+   *
+   * Idempotente pela fatura: a mesma pode chegar por mais de um evento
+   * (`invoice.paid` e `invoice.payment_succeeded` descrevem a mesma cobrança),
+   * e a trava por `event.id` não cobre isso — ela só impede reprocessar o
+   * **mesmo** evento.
+   */
+  async registerRenewal(invoice: {
+    id: string;
+    stripeSubscriptionId: string;
+    amountPaid: number;
+    currency: string;
+    periodEnd: Date | null;
+  }): Promise<void> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { stripeSubscriptionId: invoice.stripeSubscriptionId },
+      include: { user: true },
+    });
+
+    if (!subscription) {
+      this.logger.warn(
+        `Renovação sem assinatura conhecida (stripeSubscriptionId=${invoice.stripeSubscriptionId})`,
+      );
+      return;
+    }
+
+    const jaRegistrado = await this.prisma.payment.findFirst({
+      where: { stripeInvoiceId: invoice.id },
+    });
+
+    if (jaRegistrado) {
+      this.logger.debug(`Fatura ${invoice.id} já registrada, ignorando`);
+      return;
+    }
+
+    const now = new Date();
+
+    // Sem data do Stripe, o ciclo declarado na assinatura é o melhor palpite —
+    // melhor do que deixar o acesso vencer por falta de informação.
+    const endDate =
+      invoice.periodEnd ??
+      new Date(
+        now.getTime() +
+          (subscription.billingPeriod === 'YEARLY' ? 365 : 30) *
+            24 *
+            60 *
+            60 *
+            1000,
+      );
+
+    await this.prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        // `PAST_DUE` volta a valer: uma cobrança que falhou e foi recuperada
+        // na tentativa seguinte não pode deixar a assinatura marcada como
+        // atrasada.
+        status: 'ACTIVE',
+        endDate,
+      },
+    });
+
+    const payment = await this.prisma.payment.create({
+      data: {
+        subscriptionId: subscription.id,
+        stripeInvoiceId: invoice.id,
+        amount: invoice.amountPaid,
+        finalAmount: invoice.amountPaid,
+        currency: invoice.currency.toUpperCase(),
+        status: 'APPROVED',
+        paymentMethod: 'CREDIT_CARD',
+        payerEmail: subscription.user.email,
+        paidAt: now,
+      },
+    });
+
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: subscription.id,
+        userId: subscription.userId,
+        action: 'RENEWED',
+        toPlan: subscription.planType,
+        toPrice: subscription.price,
+        reason: 'Renovação cobrada pelo Stripe',
+      },
+    });
+
+    await this.invoicesService.createFromPayment(subscription.id, payment.id);
+    await this.updateUserPlanCache(subscription.userId);
+
+    this.logger.log(
+      `Assinatura ${subscription.id} renovada até ${endDate.toISOString()}`,
+    );
+  }
+
   async cancel(
     userId: string,
     dto: CancelSubscriptionDto,
