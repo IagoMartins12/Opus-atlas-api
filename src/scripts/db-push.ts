@@ -3,9 +3,9 @@ import { PrismaClient } from '@prisma/client';
 import { envFilePath } from '../config/env-files';
 import { errorMessage } from '../common/utils/error.util';
 import {
-  NewsletterIndexesService,
   PARTIAL_UNIQUE_INDEXES,
-} from '../newsletter/newsletter-indexes.service';
+  PartialUniqueIndexesService,
+} from '../common/database/partial-unique-indexes.service';
 import { TextIndexService } from '../common/search/text-index.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -25,7 +25,7 @@ import type { PrismaService } from '../prisma/prisma.service';
  *
  * - o **schema** precisa do `@unique` em `userId` (a relação 1:1 com `User`
  *   exige) e o Prisma o materializa como índice único comum;
- * - o **`NewsletterIndexesService`** troca esse índice por um **parcial**,
+ * - o **`PartialUniqueIndexesService`** troca esse índice por um **parcial**,
  *   porque no MongoDB um único comum trata campo ausente como valor: só um
  *   documento pode ficar sem ele, e a API não grava `confirmationToken` nem
  *   `unsubscribeToken` no inscrito. Sem a troca, **toda inscrição depois da
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
       // subir a aplicação inteira só para recriar índice.
       const comoService = prismaDepois as unknown as PrismaService;
 
-      await new NewsletterIndexesService(comoService).ensurePartialIndexes();
+      await new PartialUniqueIndexesService(comoService).ensurePartialIndexes();
 
       const relatorio = await new TextIndexService(comoService).ensureAll();
 

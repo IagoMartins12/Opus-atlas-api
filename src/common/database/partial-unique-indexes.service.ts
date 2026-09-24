@@ -1,31 +1,71 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { errorMessage } from '../common/utils/error.util';
-import { PrismaService } from '../prisma/prisma.service';
+import { errorMessage } from '../utils/error.util';
+import { PrismaService } from '../../prisma/prisma.service';
 
-const COLLECTION = 'newsletter_subscribers';
-
-/** Campos opcionais com `@unique` no schema: a unicidade só vale para quem tem o campo preenchido. */
+/**
+ * Campos **opcionais** com `@unique` no schema — e a armadilha que isso é no
+ * MongoDB.
+ *
+ * Um índice único comum trata campo ausente como um valor: **só um documento
+ * pode ficar sem ele**. O segundo recebe `E11000 duplicate key` num campo que
+ * ninguém preencheu. O Prisma gera exatamente esse índice a cada `db push`, e
+ * o estrago é proporcional ao quanto o campo é usado:
+ *
+ * - `payments.mpPaymentId` (id do Mercado Pago) é nulo em **todo** pagamento
+ *   feito por Stripe. Achado em homologação: o primeiro pagamento ocupou o
+ *   índice e **o segundo pagamento da plataforma inteira falhava** — tanto a
+ *   renovação quanto um novo checkout, de qualquer pessoa;
+ * - `User.username` e `User.email` hoje estão preenchidos em todas as contas,
+ *   mas basta uma sem para o cadastro seguinte quebrar;
+ * - os três de `newsletter_subscribers` já tinham sido corrigidos assim
+ *   quando toda inscrição depois da primeira falhava.
+ *
+ * O parcial (`partialFilterExpression`) faz a unicidade valer só para quem
+ * tem o campo preenchido — que é o que `@unique` num campo opcional quer
+ * dizer.
+ */
 export const PARTIAL_UNIQUE_INDEXES = [
   {
+    collection: 'newsletter_subscribers',
     name: 'newsletter_subscribers_userId_key',
     field: 'userId',
     type: 'objectId',
   },
   {
+    collection: 'newsletter_subscribers',
     name: 'newsletter_subscribers_confirmationToken_key',
     field: 'confirmationToken',
     type: 'string',
   },
   {
+    collection: 'newsletter_subscribers',
     name: 'newsletter_subscribers_unsubscribeToken_key',
     field: 'unsubscribeToken',
+    type: 'string',
+  },
+  {
+    collection: 'payments',
+    name: 'payments_mpPaymentId_key',
+    field: 'mpPaymentId',
+    type: 'string',
+  },
+  {
+    collection: 'User',
+    name: 'User_username_key',
+    field: 'username',
+    type: 'string',
+  },
+  {
+    collection: 'User',
+    name: 'User_email_key',
+    field: 'email',
     type: 'string',
   },
 ] as const;
 
 @Injectable()
-export class NewsletterIndexesService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(NewsletterIndexesService.name);
+export class PartialUniqueIndexesService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(PartialUniqueIndexesService.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -80,13 +120,13 @@ export class NewsletterIndexesService implements OnApplicationBootstrap {
     // O nome está ocupado pelo índice único comum que o `prisma db push` cria.
     try {
       await this.prisma.$runCommandRaw({
-        dropIndexes: COLLECTION,
+        dropIndexes: spec.collection,
         index: spec.name,
       });
       await this.createPartial(spec);
 
       this.logger.log(
-        `Índice único comum trocado pelo parcial: ${COLLECTION}.${spec.name}`,
+        `Índice único comum trocado pelo parcial: ${spec.collection}.${spec.name}`,
       );
     } catch (error: unknown) {
       this.logger.warn(
@@ -99,7 +139,7 @@ export class NewsletterIndexesService implements OnApplicationBootstrap {
     spec: (typeof PARTIAL_UNIQUE_INDEXES)[number],
   ): Promise<void> {
     await this.prisma.$runCommandRaw({
-      createIndexes: COLLECTION,
+      createIndexes: spec.collection,
       indexes: [
         {
           key: { [spec.field]: 1 },

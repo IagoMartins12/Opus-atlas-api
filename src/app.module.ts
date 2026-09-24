@@ -41,6 +41,7 @@ import { AppCacheModule } from './common/cache/cache.module';
 import { QueueModule } from './common/queue/queue.module';
 import { runsWorkers } from './common/queue/queue-role';
 import { WorkerModule } from './workers/worker.module';
+import { DatabaseIndexesModule } from './common/database/database-indexes.module';
 import { SearchModule } from './common/search/search.module';
 import { StorageModule } from './common/storage/storage.module';
 import { RevalidationModule } from './revalidation/revalidation.module';
@@ -138,6 +139,7 @@ import { OriginGuard } from './common/guards/origin.guard';
     AuditModule,
     AppCacheModule,
     SearchModule,
+    DatabaseIndexesModule,
     AppEventsModule,
     StorageModule,
 
