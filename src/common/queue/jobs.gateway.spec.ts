@@ -23,7 +23,7 @@ const superAdmin = {
   type: 'access' as const,
 };
 
-const admin = { ...superAdmin, sub: 'admin-1', role: 1 };
+const professor = { ...superAdmin, sub: 'prof-1', role: 1 };
 
 interface FakeSocket {
   handshake: {
@@ -331,14 +331,8 @@ describe('JobsGateway', () => {
     });
 
     describe('quem pode acompanhar o quê', () => {
-      beforeEach(() => {
-        jwt.verify.mockReturnValue(admin);
-        socket = socketOf();
-        gateway.handleConnection(asSocket(socket));
-      });
-
-      it('administrador acompanha o job que pediu', async () => {
-        status.describe.mockResolvedValue({ requestedBy: 'admin-1' });
+      it('administrador acompanha job que não pediu', async () => {
+        status.describe.mockResolvedValue({ requestedBy: 'outra-pessoa' });
 
         const reply = await gateway.watch(asSocket(socket), {
           queue: 'scraper',
@@ -348,16 +342,23 @@ describe('JobsGateway', () => {
         expect(reply).toMatchObject({ ok: true });
       });
 
-      it('administrador não acompanha job de outra pessoa', async () => {
-        status.describe.mockResolvedValue({ requestedBy: 'outro-admin' });
+      /**
+       * O socket não pode ser porta mais larga que a rota REST. Com `ADMIN`
+       * valendo `role: 1`, todo professor vindo do legado entrava aqui.
+       */
+      it('professor não acompanha nada', async () => {
+        jwt.verify.mockReturnValue(professor);
+        const socketProf = socketOf();
+        gateway.handleConnection(asSocket(socketProf));
+        status.describe.mockResolvedValue({ requestedBy: 'prof-1' });
 
-        const reply = await gateway.watch(asSocket(socket), {
+        const reply = await gateway.watch(asSocket(socketProf), {
           queue: 'scraper',
           jobId: 'j1',
         });
 
         expect(reply).toMatchObject({ ok: false });
-        expect(socket.join).not.toHaveBeenCalled();
+        expect(socketProf.join).not.toHaveBeenCalled();
       });
     });
   });

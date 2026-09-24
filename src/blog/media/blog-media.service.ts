@@ -32,6 +32,7 @@ import {
   UpdateMediaDto,
 } from './dto/media.dto';
 import { buildUsage, formatBytes, MediaUsage } from './media-usage';
+import { ROLE } from '../../common/auth/roles';
 
 /** Dono do arquivo de um artigo em `StoredAsset` — o nome que a varredura de órfãos conhece. */
 export const ARTICLE_ASSET_ENTITY = 'blogArticle';
@@ -47,7 +48,7 @@ export const BLOG_ASSET_KINDS: StorageAssetKind[] = [
   StorageAssetKind.BLOG_AUDIO,
 ];
 
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 const MEDIA_FIELDS = [
   'title',

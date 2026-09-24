@@ -77,7 +77,7 @@ describe('ModerationSweepService', () => {
     await service.sweep(agora);
 
     expect(prisma.user.findMany.mock.calls[0][0].where).toEqual({
-      role: { gte: 1 },
+      role: { gte: 2 },
     });
   });
 

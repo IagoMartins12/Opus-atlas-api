@@ -4,35 +4,29 @@ import {
   watchRefusal,
 } from './job-watch.policy';
 
-const admin = { sub: 'admin-1', role: 1 };
-const superAdmin = { sub: 'super-1', role: 2 };
+const admin = { sub: 'admin-1', role: 2 };
+const professor = { sub: 'prof-1', role: 1 };
 const comum = { sub: 'user-1', role: 0 };
 
 describe('watchRefusal', () => {
-  it('super administrador acompanha qualquer job', () => {
-    expect(
-      watchRefusal(superAdmin, { requestedBy: 'outra-pessoa' }),
-    ).toBeNull();
-    expect(watchRefusal(superAdmin, { requestedBy: null })).toBeNull();
-  });
-
-  // `POST /scrapers/:id/run` é `@Roles('ADMIN')`: sem isto, um administrador
-  // dispara uma varredura de dez minutos e não tem como ver se ela anda.
-  it('administrador acompanha o job que ele mesmo pediu', () => {
+  it('administrador acompanha qualquer job', () => {
+    expect(watchRefusal(admin, { requestedBy: 'outra-pessoa' })).toBeNull();
+    expect(watchRefusal(admin, { requestedBy: null })).toBeNull();
     expect(watchRefusal(admin, { requestedBy: 'admin-1' })).toBeNull();
   });
 
-  // O socket não pode ser uma porta mais larga do que `GET /admin/jobs/...`,
-  // que exige SUPER_ADMIN para ver qualquer job.
-  it('administrador não acompanha job de outra pessoa', () => {
-    expect(watchRefusal(admin, { requestedBy: 'admin-2' })).toMatch(
-      /outra pessoa/,
+  /**
+   * O nível 1 é professor, e professor não tem acesso administrativo nenhum.
+   * Enquanto `ADMIN` valia 1, quem tivesse esse papel — toda conta que o
+   * painel antigo promoveu a professor — entrava aqui.
+   */
+  it('professor não acompanha nada', () => {
+    expect(watchRefusal(professor, { requestedBy: 'prof-1' })).toMatch(
+      /permissão/,
     );
-  });
-
-  // Disparo automático não tem dono: ninguém "pediu" para poder acompanhar.
-  it('administrador não acompanha disparo automático', () => {
-    expect(watchRefusal(admin, { requestedBy: null })).not.toBeNull();
+    expect(watchRefusal(professor, { requestedBy: null })).toMatch(
+      /permissão/,
+    );
   });
 
   it('usuário comum não acompanha nada', () => {
@@ -40,7 +34,7 @@ describe('watchRefusal', () => {
   });
 
   it('job inexistente é recusa, não silêncio', () => {
-    expect(watchRefusal(superAdmin, null)).toMatch(/não encontrado/);
+    expect(watchRefusal(admin, null)).toMatch(/não encontrado/);
   });
 });
 

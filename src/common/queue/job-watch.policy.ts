@@ -1,7 +1,8 @@
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 
-export const ROLE_ADMIN = 1;
-export const ROLE_SUPER_ADMIN = 2;
+import { ROLE } from '../auth/roles';
+
+export const ROLE_ADMIN = ROLE.ADMIN;
 
 /** Teto de jobs observados por conexão. */
 export const MAX_WATCHES_PER_SOCKET = 20;
@@ -15,22 +16,20 @@ export interface WatchableJob {
  * Diz por que este usuário não pode acompanhar este job — ou `null`.
  *
  * **O socket não pode ser uma porta mais larga do que a rota REST.** O que ele
- * entrega é a mesma informação de `GET /admin/jobs/:queue/:jobId`, que exige
- * `SUPER_ADMIN`; se o gateway pedisse menos, a autorização da rota viraria
- * decoração — bastaria abrir o WebSocket para contornar.
+ * entrega é a mesma informação de `GET /admin/jobs/:queue/:jobId`; se o
+ * gateway pedisse menos, a autorização da rota viraria decoração — bastaria
+ * abrir o WebSocket para contornar.
  *
- * Só que exigir `SUPER_ADMIN` aqui deixaria a funcionalidade sem serventia
- * justamente para quem mais precisa dela: `POST /scrapers/:id/run` é
- * `@Roles('ADMIN')`, então um administrador comum **dispara** uma varredura de
- * dez minutos e não teria como ver se ela anda. A saída não é afrouxar a rota,
- * é usar o dado que o envelope de todo job já carrega: `requestedBy`.
+ * **A regra era mais fina e deixou de precisar ser.** Enquanto `ADMIN` valia
+ * `role: 1` e `SUPER_ADMIN` valia 2, havia dois graus de administrador: o de
+ * nível 1 disparava uma varredura (`POST /scrapers/:id/run` é `@Roles('ADMIN')`)
+ * mas não podia ver a rota REST do job, então o socket lhe dava só os jobs que
+ * ele mesmo tinha pedido, por `requestedBy`. Com o nível 1 devolvido ao
+ * professor — que não tem acesso administrativo nenhum —, **todo mundo que
+ * passa por aqui é nível 2**, e a distinção não separa mais ninguém.
  *
- * - `SUPER_ADMIN` acompanha qualquer job — é o que a rota REST já lhe dá.
- * - `ADMIN` acompanha **os jobs que ele mesmo pediu**, e nada além.
- *
- * Ninguém passa a ver nada que já não pudesse ver, e quem apertou o botão vê a
- * barra andar. Disparo automático (`requestedBy: null`) não tem dono, e por
- * isso continua restrito ao `SUPER_ADMIN`.
+ * `requestedBy` continua no envelope: é quem a auditoria lê, e é o que traria
+ * a regra de volta se um dia existir um nível 3.
  */
 export function watchRefusal(
   user: Pick<AccessTokenPayload, 'sub' | 'role'>,
@@ -40,19 +39,11 @@ export function watchRefusal(
     return 'Job não encontrado — pode ter saído da janela de retenção';
   }
 
-  if (user.role >= ROLE_SUPER_ADMIN) {
-    return null;
-  }
-
   if (user.role < ROLE_ADMIN) {
     return 'Você não tem permissão para acompanhar jobs';
   }
 
-  if (job.requestedBy && job.requestedBy === user.sub) {
-    return null;
-  }
-
-  return 'Este job foi pedido por outra pessoa. Só um super administrador acompanha jobs que não pediu.';
+  return null;
 }
 
 /** Nome da sala do socket.io que reúne quem observa um job. */

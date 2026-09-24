@@ -6,6 +6,7 @@ import { CacheNamespace, CacheTtl } from '../../common/cache/cache-keys';
 import { cachedRead, cacheKey } from '../shared/cached-read';
 import { BlogCalendarQueryDto } from './dto/calendar.dto';
 import { colorsFor, eventWindow, timeZoneOf } from './event-time';
+import { ROLE } from '../../common/auth/roles';
 
 /** Maior período que uma consulta ao calendário abrange. */
 export const MAX_RANGE_DAYS = 400;
@@ -13,7 +14,7 @@ export const MAX_RANGE_DAYS = 400;
 /** Compositores mostrados por evento, como no legado. */
 const COMPOSERS_PER_EVENT = 5;
 
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 /**
  * O calendário público de concertos.

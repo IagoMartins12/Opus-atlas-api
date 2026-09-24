@@ -41,6 +41,7 @@ import { AppCacheModule } from './common/cache/cache.module';
 import { QueueModule } from './common/queue/queue.module';
 import { runsWorkers } from './common/queue/queue-role';
 import { WorkerModule } from './workers/worker.module';
+import { CuratorGuard } from './common/auth/curator.guard';
 import { DatabaseIndexesModule } from './common/database/database-indexes.module';
 import { SearchModule } from './common/search/search.module';
 import { StorageModule } from './common/storage/storage.module';
@@ -187,6 +188,10 @@ import { OriginGuard } from './common/guards/origin.guard';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // 3. Autorização por papel — só age quando a rota usa `@Roles(...)`.
     { provide: APP_GUARD, useClass: RolesGuard },
+    // 3b. Curadoria do catálogo: administrador ou professor aprovado. Só age
+    //     nas rotas com `@Curator()`, e depois do papel, porque precisa do
+    //     usuário já autenticado.
+    { provide: APP_GUARD, useClass: CuratorGuard },
     // 4. Anti-CSRF para mutações baseadas em cookie. Depois do JWT porque
     //    requisição com Bearer é isenta, e isso só se sabe após autenticar.
     { provide: APP_GUARD, useClass: OriginGuard },

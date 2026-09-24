@@ -8,14 +8,16 @@ import { PrismaService } from '../prisma/prisma.service';
  * Lista quem tem papel administrativo — **só lê, não altera nada**.
  *
  * **Por que existe.** No legado, `role = 1` era professor e `role = 2`,
- * administrador. Na API, `1` é `ADMIN` e `2` é `SUPER_ADMIN`; professor é o
- * campo `isTeacher`. Toda conta que o painel antigo promoveu a professor ficou
- * com `role = 1` — e, na API, isso é acesso de administrador (anúncios,
- * métricas, moderação).
+ * administrador. Na migração o `1` virou o nível de `ADMIN` na checagem de
+ * permissão — e, como o guard compara `role >= exigido`, **toda conta que o
+ * painel antigo promoveu a professor passou a abrir rotas administrativas**
+ * (anúncios, métricas, moderação). Corrigido em 23/09: `1` é professor de
+ * novo e só `2` abre o painel (`common/auth/roles.ts`).
  *
- * Ser professor e administrador ao mesmo tempo é permitido: são campos
- * independentes. O que este script mostra é **quem tem o papel sem que se
- * saiba se foi dado de propósito**, para alguém decidir conta a conta.
+ * O script continua útil para revisar quem ficou com papel: ser professor é
+ * `isTeacher`, campo à parte, e uma conta em `role: 1` hoje não tem acesso
+ * administrativo nenhum — mas também não deveria ter papel, se a intenção era
+ * só dar aula.
  *
  * Uso:  node dist/scripts/audit-admin-roles.js
  */
@@ -49,7 +51,7 @@ async function main(): Promise<void> {
       users.map((user) => ({
         id: user.id,
         email: user.email,
-        papel: user.role === 2 ? 'SUPER_ADMIN' : 'ADMIN',
+        papel: user.role === 2 ? 'ADMIN' : 'TEACHER (sem acesso ao painel)',
         professor: user.isTeacher
           ? `sim (${user.teacherProfile?.status ?? 'sem perfil'})`
           : 'não',

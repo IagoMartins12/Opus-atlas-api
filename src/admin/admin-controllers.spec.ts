@@ -97,6 +97,36 @@ describe('AdminBillingController e AdminCatalogController', () => {
     expect(service.pricingHistory).toHaveBeenCalledWith('PLUS');
   });
 
+  /**
+   * Professor aprovado edita o catálogo (ver `CuratorGuard`), mas o selo de
+   * verificado é da curadoria administrativa: é ele que separa o dado revisado
+   * do importado.
+   */
+  it('só administrador marca compositor ou obra como verificado', async () => {
+    const service = echoMock('updateComposer', 'updateWork');
+    const controller = new AdminCatalogController(
+      as(service),
+      as(echoMock('overview')),
+    );
+    const professor = { ...admin, role: 0, isTeacher: true };
+
+    await expect(
+      controller.updateComposer(professor, 'c1', { isVerified: true } as never),
+    ).rejects.toThrow(/curadoria administrativa/);
+    await expect(
+      controller.updateWork(professor, 'w1', { isVerified: true } as never),
+    ).rejects.toThrow(/curadoria administrativa/);
+
+    expect(service.updateComposer).not.toHaveBeenCalled();
+    expect(service.updateWork).not.toHaveBeenCalled();
+
+    // O resto dos campos, esse ele edita.
+    await controller.updateComposer(professor, 'c1', {
+      fullName: 'Nome novo',
+    } as never);
+    expect(service.updateComposer).toHaveBeenCalled();
+  });
+
   it('catálogo e métricas', async () => {
     const service = echoMock(
       'listComposers',

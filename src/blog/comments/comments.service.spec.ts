@@ -117,7 +117,7 @@ describe('CommentsService', () => {
         publishedAt: null,
       });
 
-      await service.list(ARTICLE, 'newest', { sub: STRANGER, role: 1 });
+      await service.list(ARTICLE, 'newest', { sub: STRANGER, role: 2 });
 
       expect(prisma.blogComment.findMany.mock.calls[0][0].where).toEqual({
         articleId: ARTICLE,
@@ -387,7 +387,7 @@ describe('CommentsService', () => {
 
     it('administrador apaga comentário alheio', async () => {
       await expect(
-        service.remove(C1, { sub: STRANGER, role: 1 }),
+        service.remove(C1, { sub: STRANGER, role: 2 }),
       ).resolves.toMatchObject({ success: true });
     });
 

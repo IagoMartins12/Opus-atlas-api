@@ -7,16 +7,15 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 import { AccessTokenPayload } from '../interfaces/jwt-payload.interface';
-
-const ROLE_NAME_TO_LEVEL: Record<string, number> = {
-  USER: 0,
-  ADMIN: 1,
-  SUPER_ADMIN: 2,
-};
+import { ROLE_NAME_TO_LEVEL } from '../../common/auth/roles';
 
 /**
- * Autoriza por papel numérico do `User.role` (0 comum, 1 admin, 2 super admin).
- * Usado em conjunto com `@Roles('ADMIN')` em rotas administrativas.
+ * Autoriza por papel numérico do `User.role` — 0 pessoa comum, **1 professor**,
+ * 2 administrador. Os níveis vêm de `common/auth/roles.ts`, fonte única.
+ *
+ * Usado com `@Roles('ADMIN')` nas rotas administrativas. Antes `ADMIN` valia 1,
+ * e como a comparação é `role >= exigido`, **todo professor abria o painel**:
+ * o legado usava `role: 1` para marcar professor e essas contas vieram assim.
  */
 @Injectable()
 export class RolesGuard implements CanActivate {

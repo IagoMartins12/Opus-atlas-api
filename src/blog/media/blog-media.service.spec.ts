@@ -204,7 +204,7 @@ describe('BlogMediaService', () => {
         service.listArticleMedia(ARTICLE, {}),
       ).rejects.toBeInstanceOf(NotFoundException);
       await expect(
-        service.listArticleMedia(ARTICLE, {}, { role: 1 }),
+        service.listArticleMedia(ARTICLE, {}, { role: 2 }),
       ).resolves.toMatchObject({ success: true });
     });
 

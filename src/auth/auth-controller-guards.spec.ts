@@ -180,12 +180,25 @@ describe('RolesGuard', () => {
   });
 
   it('papel igual ou maior passa; menor é 403', () => {
-    expect(guardWith(['ADMIN']).canActivate(contextWith({ role: 1 }))).toBe(
-      true,
-    );
     expect(guardWith(['ADMIN']).canActivate(contextWith({ role: 2 }))).toBe(
       true,
     );
+    expect(guardWith(['TEACHER']).canActivate(contextWith({ role: 2 }))).toBe(
+      true,
+    );
+    expect(() =>
+      guardWith(['ADMIN']).canActivate(contextWith({ role: 0 })),
+    ).toThrow(ForbiddenException);
+  });
+
+  /**
+   * O nível 1 é professor. Enquanto `ADMIN` valia 1, toda conta que o painel
+   * antigo promoveu a professor abria as rotas administrativas.
+   */
+  it('professor não passa por rota administrativa', () => {
+    expect(() =>
+      guardWith(['ADMIN']).canActivate(contextWith({ role: 1 })),
+    ).toThrow(ForbiddenException);
     expect(() =>
       guardWith(['SUPER_ADMIN']).canActivate(contextWith({ role: 1 })),
     ).toThrow(ForbiddenException);
@@ -193,7 +206,9 @@ describe('RolesGuard', () => {
 
   it('com vários papéis vale o menor; papel desconhecido nunca é atingido', () => {
     expect(
-      guardWith(['SUPER_ADMIN', 'ADMIN']).canActivate(contextWith({ role: 1 })),
+      guardWith(['SUPER_ADMIN', 'TEACHER']).canActivate(
+        contextWith({ role: 1 }),
+      ),
     ).toBe(true);
     expect(() =>
       guardWith(['DONO']).canActivate(contextWith({ role: 2 })),

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -27,6 +28,8 @@ import { Audited } from '../../common/audit/audit.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { AdminCatalogMetricsService } from './admin-catalog-metrics.service';
+import { Curator } from '../../common/auth/curator.guard';
+import { isAdmin } from '../../common/auth/roles';
 import { AdminCatalogService } from './admin-catalog.service';
 import {
   ListComposersQueryDto,
@@ -61,6 +64,26 @@ export class AdminCatalogController {
     private readonly metrics: AdminCatalogMetricsService,
   ) {}
 
+  /**
+   * O selo de verificado é da curadoria administrativa.
+   *
+   * Professor aprovado edita os dados — nome, datas, biografia —, mas quem
+   * carimba "conferido" é administrador: o selo é o que diferencia o dado
+   * revisado do importado, e hoje 207.888 das 207.892 obras estão sem ele.
+   * A rota aceita o campo para o administrador; para o resto, recusa em vez
+   * de ignorar em silêncio, senão a edição pareceria ter funcionado.
+   */
+  private recusarSeloDeQuemNaoEAdmin(
+    user: AccessTokenPayload,
+    dto: { isVerified?: boolean },
+  ): void {
+    if (dto.isVerified !== undefined && !isAdmin(user.role)) {
+      throw new ForbiddenException(
+        'Só a curadoria administrativa marca um registro como verificado',
+      );
+    }
+  }
+
   // --- Compositores ---
 
   @Get('composers')
@@ -70,6 +93,8 @@ export class AdminCatalogController {
     return this.service.listComposers(query);
   }
 
+  @Roles('USER')
+  @Curator()
   @Patch('composers/:id')
   @Audited({
     action: 'composer.update',
@@ -92,6 +117,8 @@ export class AdminCatalogController {
     @Param('id') id: string,
     @Body() dto: UpdateComposerDto,
   ) {
+    this.recusarSeloDeQuemNaoEAdmin(user, dto);
+
     return this.service.updateComposer(user.sub, id, dto);
   }
 
@@ -165,6 +192,8 @@ export class AdminCatalogController {
     return this.service.listWorks(query);
   }
 
+  @Roles('USER')
+  @Curator()
   @Patch('works/:id')
   @Audited({ action: 'work.update', entityType: 'work', entityIdParam: 'id' })
   @ApiOperation({
@@ -183,6 +212,8 @@ export class AdminCatalogController {
     @Param('id') id: string,
     @Body() dto: UpdateWorkDto,
   ) {
+    this.recusarSeloDeQuemNaoEAdmin(user, dto);
+
     return this.service.updateWork(user.sub, id, dto);
   }
 
@@ -216,6 +247,8 @@ export class AdminCatalogController {
     return this.service.listScores(query);
   }
 
+  @Roles('USER')
+  @Curator()
   @Patch('scores/:id')
   @Audited({
     action: 'score.update',
@@ -229,6 +262,7 @@ export class AdminCatalogController {
   @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
   @ApiOkResponse({ description: 'Partitura atualizada' })
   @ApiNotFoundResponse({ type: ErrorResponseDto })
+  // Partitura não tem selo de verificação — só `Composer` e `Work` têm.
   async updateScore(@Param('id') id: string, @Body() dto: UpdateScoreDto) {
     return this.service.updateScore(id, dto);
   }

@@ -25,6 +25,7 @@ import {
   ReportCommentDto,
   UpdateCommentDto,
 } from './dto/comment.dto';
+import { ROLE } from '../../common/auth/roles';
 
 /** Como o comentário aparece na fila de moderação (`UploadModeration`). */
 export const COMMENT_ENTITY = 'blog-comment' as const;
@@ -35,7 +36,7 @@ export const MAX_COMMENTS_PER_ARTICLE = 2000;
 /** O que aparece no lugar de um comentário apagado que tinha respostas. */
 export const REMOVED_PLACEHOLDER = 'Comentário removido';
 
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 /** Estados em que quem escreveu ainda pode mexer no texto. */
 const EDITABLE = new Set<CommentStatus>([

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { ROLE } from '../common/auth/roles';
 import { errorMessage } from '../common/utils/error.util';
 
 /**
@@ -11,16 +12,18 @@ import { errorMessage } from '../common/utils/error.util';
  * dia de produção, alguém tem de abrir o banco. Este script é esse alguém,
  * com travas e registro.
  *
- * **Os papéis** (`User.role`, lido pelo `RolesGuard`):
+ * **Os papéis** (`User.role`, lido pelo `RolesGuard` — ver
+ * `common/auth/roles.ts`):
  *
  * | Nível | Nome | O que abre |
  * |---|---|---|
  * | 0 | `user` | nada de administrativo |
- * | 1 | `admin` | as rotas `@Roles('ADMIN')` — o painel |
- * | 2 | `super` | idem, e o que exigir `SUPER_ADMIN` |
+ * | 1 | `teacher` | **nada de administrativo** — professor é papel de produto |
+ * | 2 | `admin` | o painel inteiro |
  *
- * O padrão é `admin`: o painel inteiro abre com nível 1, e dar 2 sem precisar
- * é ampliar acesso à toa.
+ * Promover a professor por aqui quase nunca é o que se quer: quem dá aula é
+ * `isTeacher`, campo à parte, com convite e perfil próprios. O nível 1 existe
+ * na tabela porque o legado o usava para marcar professor.
  *
  * **As travas**, porque isto dá poder sobre o sistema:
  *
@@ -36,14 +39,14 @@ import { errorMessage } from '../common/utils/error.util';
  * até expirar (15 min) ou até um novo login.
  *
  * Uso:  npm run admin:promote:hml -- --email voce@exemplo.com --confirmar opus-hml
- *       npm run admin:promote:prd -- --email voce@exemplo.com --confirmar opus --nivel super
+ *       npm run admin:promote:prd -- --email voce@exemplo.com --confirmar opus
  *       …                          --nivel user      (rebaixa)
  */
 
 export const NIVEIS: Record<string, number> = {
-  user: 0,
-  admin: 1,
-  super: 2,
+  user: ROLE.USER,
+  teacher: ROLE.TEACHER,
+  admin: ROLE.ADMIN,
 };
 
 export function nomeDoNivel(nivel: number): string {

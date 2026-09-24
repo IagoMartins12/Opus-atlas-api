@@ -4,12 +4,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
 import { SLA_HOURS, slaMillis } from './moderation-sla';
 import { ReportPriority } from './report-categories';
+import { ROLE } from '../../common/auth/roles';
 
 /** Quantos administradores são avisados por rodada. */
 const MAX_ADMINS = 50;
 
 /** `User.role` numérico: 0 comum, 1 admin, 2 super admin. */
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 export interface OverdueSweepResult {
   /** Denúncias pendentes que passaram do prazo. */

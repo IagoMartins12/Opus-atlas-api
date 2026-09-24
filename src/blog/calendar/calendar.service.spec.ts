@@ -62,7 +62,7 @@ describe('CalendarService', () => {
   });
 
   it('administrador vê todos, e pode filtrar por estado', async () => {
-    await service.calendar({ ...query, status: 'CANCELLED' }, { role: 1 });
+    await service.calendar({ ...query, status: 'CANCELLED' }, { role: 2 });
 
     expect(where().status).toBe('CANCELLED');
   });

@@ -24,6 +24,7 @@ import { ARTICLE_ASSET_ENTITY } from '../media/blog-media.service';
 import { cloudinaryPublicId, concatMp3 } from './mp3';
 import { articleSpeechText, splitForSpeech } from './speech-text';
 import { SPEECH_SYNTHESIZER, SpeechSynthesizer } from './speech-synthesizer';
+import { ROLE } from '../../common/auth/roles';
 
 /** Voz padrão do legado. */
 export const DEFAULT_VOICE = 'pt-BR-Neural2-A';
@@ -48,7 +49,7 @@ export const AUDIO_BYTES_PER_CHAR = 700;
 
 const MB = 1024 * 1024;
 
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 /**
  * O áudio "ouvir o artigo".

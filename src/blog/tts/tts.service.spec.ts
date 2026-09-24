@@ -10,7 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TtsService } from './tts.service';
 
 const ARTICLE = '690273c1ecac0fb66b3844e7';
-const ADMIN = { sub: '690273c1ecac0fb66b3844bb', role: 1 };
+const ADMIN = { sub: '690273c1ecac0fb66b3844bb', role: 2 };
 const READER = { sub: '690273c1ecac0fb66b3844cc', role: 0 };
 const LEGACY_URL =
   'https://res.cloudinary.com/dikufxgpb/video/upload/v1761768436/blog/tts/690273c1ecac0fb66b3844e7/tts_audio_1761768434866.mp3';

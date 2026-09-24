@@ -542,7 +542,10 @@ model User {
   updatedAt      DateTime  @updatedAt
   lastSeen       DateTime?
 
-  role Int @default(0) //0 = usuario comum 2, 1 = admin 2 = super admin
+  /// 0 = pessoa comum · 1 = professor · 2 = administrador (o painel).
+  /// O nível 1 NÃO dá acesso administrativo: ser professor é `isTeacher`.
+  /// Níveis e checagem em `common/auth/roles.ts`.
+  role Int @default(0)
 
   userType            UserType?
   onboardingCompleted Boolean   @default(false)

@@ -18,8 +18,9 @@ import {
   UpdateVenueDto,
 } from './dto/calendar.dto';
 import { parseTime } from './event-time';
+import { ROLE } from '../../common/auth/roles';
 
-const ROLE_ADMIN = 1;
+const ROLE_ADMIN = ROLE.ADMIN;
 
 type Data = Record<string, unknown>;
 

@@ -30,8 +30,15 @@ describe('promote-admin', () => {
       expect(args.email).toBe('alguem@exemplo.com');
     });
 
-    it('promove a admin por padrão, não a super admin', () => {
+    it('promove a administrador por padrão', () => {
       expect(lerArgumentos(base).nivel).toBe(NIVEIS.admin);
+    });
+
+    it('administrador é o nível 2; o 1 é professor e não abre o painel', () => {
+      // Enquanto `ADMIN` valia 1, promover a admin dava o papel que o legado
+      // usava para marcar professor — e todo professor abria o painel.
+      expect(NIVEIS.admin).toBe(2);
+      expect(NIVEIS.teacher).toBe(1);
     });
 
     it('aceita os três níveis pelo nome', () => {
@@ -42,7 +49,7 @@ describe('promote-admin', () => {
 
     it('recusa nível desconhecido em vez de cair no padrão', () => {
       // Cair no padrão faria "--nivel sudo" promover em silêncio a admin.
-      expect(() => lerArgumentos([...base, '--nivel', 'sudo'])).toThrow(
+      expect(() => lerArgumentos([...base, '--nivel', 'super'])).toThrow(
         /nivel inválido/i,
       );
     });
@@ -72,8 +79,8 @@ describe('promote-admin', () => {
   describe('nomeDoNivel', () => {
     it('traduz os níveis conhecidos', () => {
       expect(nomeDoNivel(0)).toBe('user');
-      expect(nomeDoNivel(1)).toBe('admin');
-      expect(nomeDoNivel(2)).toBe('super');
+      expect(nomeDoNivel(1)).toBe('teacher');
+      expect(nomeDoNivel(2)).toBe('admin');
     });
 
     it('não esconde um valor fora da tabela', () => {
