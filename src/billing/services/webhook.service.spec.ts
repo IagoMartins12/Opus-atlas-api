@@ -196,6 +196,32 @@ describe('WebhookService', () => {
       });
     });
 
+    /**
+     * Estava quebrado desde a mudança de versão da API: sem ler o formato
+     * novo, nenhuma cobrança falha marcava PAST_DUE — e o log só dizia
+     * "ignorando".
+     */
+    it('marca PAST_DUE também quando a assinatura vem no formato novo', async () => {
+      await service.handleEvent(
+        makeEvent('invoice.payment_failed', {
+          parent: {
+            type: 'subscription_details',
+            subscription_details: { subscription: 'sub_novo' },
+          },
+          amount_due: 3990,
+          currency: 'brl',
+        }),
+      );
+
+      expect(prisma.subscription.findFirst).toHaveBeenCalledWith({
+        where: { stripeSubscriptionId: 'sub_novo' },
+      });
+      expect(prisma.subscription.update).toHaveBeenCalledWith({
+        where: { id: 'local_sub_1' },
+        data: { status: 'PAST_DUE' },
+      });
+    });
+
     it('não grava nada quando a fatura não tem assinatura associada', async () => {
       await service.handleEvent(
         makeEvent('invoice.payment_failed', { amount_due: 1000 }),
@@ -275,6 +301,29 @@ describe('WebhookService', () => {
       );
 
       expect(subscriptions.registerRenewal).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A partir das versões novas da API (a nossa é 2026-08-26.dahlia) a fatura
+     * não traz mais `subscription` no topo. Conferido numa fatura real.
+     */
+    it('acha a assinatura no formato novo da fatura', async () => {
+      await service.handleEvent(
+        makeEvent(
+          'invoice.paid',
+          fatura({
+            subscription: undefined,
+            parent: {
+              type: 'subscription_details',
+              subscription_details: { subscription: 'sub_novo' },
+            },
+          }),
+        ),
+      );
+
+      expect(subscriptions.registerRenewal).toHaveBeenCalledWith(
+        expect.objectContaining({ stripeSubscriptionId: 'sub_novo' }),
+      );
     });
 
     it('sem linha de período, deixa a data a cargo do serviço', async () => {

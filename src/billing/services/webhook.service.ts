@@ -5,16 +5,40 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 type StripeInvoiceWithSubscription = Stripe.Invoice & {
+  /** Só nas versões da API até 2025; ver `subscriptionIdOf`. */
   subscription?: string | Stripe.Subscription | null;
 };
 
-/** O id da assinatura na fatura, esteja ela expandida ou não. */
+/**
+ * O id da assinatura na fatura — **nos dois lugares onde o Stripe já o pôs**.
+ *
+ * A fatura trazia `subscription` no topo. Nas versões novas da API (a nossa é
+ * `2026-08-26.dahlia`) esse campo **não existe mais**: a assinatura passou a
+ * viver em `parent.subscription_details.subscription`. Conferido numa fatura
+ * real da homologação, onde o topo vem ausente.
+ *
+ * **Isso já estava quebrado antes desta renovação existir:** o
+ * `invoice.payment_failed` lia só o campo antigo, não achava a assinatura e
+ * saía pelo `return` de "fatura sem assinatura associada" — nenhuma cobrança
+ * falha jamais marcou `PAST_DUE`. O log dizia "ignorando", e ninguém lê log de
+ * webhook que funciona.
+ *
+ * Os dois formatos ficam aceitos: o novo é o que chega hoje, o antigo protege
+ * contra uma conta ou reentrega presa a uma versão anterior.
+ */
 function subscriptionIdOf(
   invoice: StripeInvoiceWithSubscription,
 ): string | undefined {
-  return typeof invoice.subscription === 'string'
-    ? invoice.subscription
-    : (invoice.subscription?.id ?? undefined);
+  const antigo =
+    typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id;
+
+  if (antigo) return antigo;
+
+  const novo = invoice.parent?.subscription_details?.subscription;
+
+  return typeof novo === 'string' ? novo : (novo?.id ?? undefined);
 }
 
 /**
