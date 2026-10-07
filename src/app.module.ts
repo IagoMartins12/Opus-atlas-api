@@ -48,6 +48,7 @@ import { StorageModule } from './common/storage/storage.module';
 import { RevalidationModule } from './revalidation/revalidation.module';
 import { SeoModule } from './seo/seo.module';
 import { AdsModule } from './ads/ads.module';
+import { SiteSearchModule } from './site-search/site-search.module';
 import { AuditInterceptor } from './common/audit/audit.interceptor';
 import { PublicCacheInterceptor } from './common/interceptors/public-cache.interceptor';
 import { AppThrottlerGuard } from './common/throttler/app-throttler.guard';
@@ -157,6 +158,7 @@ import { OriginGuard } from './common/guards/origin.guard';
     ProfileModule,
     LibraryModule,
     BlogModule,
+    SiteSearchModule,
     PublicTeachersModule,
     NewsletterModule,
     ContactModule,

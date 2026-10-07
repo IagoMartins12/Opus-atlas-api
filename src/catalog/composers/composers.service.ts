@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { IS_COMPOSER } from './composer-role';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Cache } from 'cache-manager';
@@ -17,7 +18,6 @@ import { ComposerWorkTypeCountsResponseDto } from './dto/composer-work-type-coun
 import { FeaturedComposerResponseDto } from './dto/featured-composer-response.dto';
 import { DifficultyLevelDto } from '../works/dto/work-filter-option-item.dto';
 
-const COMPOSER_ROLE_ID = '685d591c1e3db0c5aaa893e4';
 const COMPOSERS_LIST_TTL_MS = 5 * 60 * 1000;
 const COMPOSERS_COUNT_TTL_MS = 15 * 60 * 1000;
 const COMPOSERS_CURATED_TTL_MS = 6 * 60 * 60 * 1000;
@@ -401,12 +401,7 @@ export class ComposersService {
 
     if (!picked) {
       const fallback = await this.prisma.composer.findFirst({
-        where: {
-          OR: [
-            { primaryRoleId: COMPOSER_ROLE_ID },
-            { roles: { contains: COMPOSER_ROLE_ID } },
-          ],
-        },
+        where: IS_COMPOSER,
         select: FEATURED_COMPOSER_SELECT,
       });
 
@@ -854,25 +849,16 @@ export class ComposersService {
     search?: string,
     epochId?: string,
   ): Prisma.ComposerWhereInput {
-    const roleFilter: Prisma.ComposerWhereInput[] = [
-      {
-        primaryRoleId: COMPOSER_ROLE_ID,
-      },
-      {
-        roles: {
-          contains: COMPOSER_ROLE_ID,
-        },
-      },
-    ];
+    const roleFilter = IS_COMPOSER;
 
     const hasSearch = Boolean(search?.trim());
     const hasEpochId = Boolean(epochId?.trim());
 
     if (!hasSearch && !hasEpochId) {
-      return { OR: roleFilter };
+      return roleFilter;
     }
 
-    const andConditions: Prisma.ComposerWhereInput[] = [{ OR: roleFilter }];
+    const andConditions: Prisma.ComposerWhereInput[] = [roleFilter];
 
     if (hasSearch) {
       const terms = search!.trim().split(/\s+/);
