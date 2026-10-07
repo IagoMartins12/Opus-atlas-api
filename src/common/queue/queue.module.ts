@@ -7,6 +7,7 @@ import { QueueService } from './queue.service';
 import { JobStatusService } from './job-status.service';
 import { JobEventsService } from './job-events.service';
 import { JobsGateway } from './jobs.gateway';
+import { TaskRunsService } from './task-runs.service';
 
 /**
  * Infraestrutura de fila (Etapa 1.6).
@@ -44,7 +45,19 @@ import { JobsGateway } from './jobs.gateway';
     }),
     BullModule.registerQueue(...QUEUE_NAMES.map((name) => ({ name }))),
   ],
-  providers: [QueueService, JobStatusService, JobEventsService, JobsGateway],
-  exports: [QueueService, JobStatusService, JobEventsService, BullModule],
+  providers: [
+    QueueService,
+    JobStatusService,
+    JobEventsService,
+    JobsGateway,
+    TaskRunsService,
+  ],
+  exports: [
+    QueueService,
+    JobStatusService,
+    JobEventsService,
+    TaskRunsService,
+    BullModule,
+  ],
 })
 export class QueueModule {}

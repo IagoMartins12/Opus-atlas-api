@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NotificationSweepService } from './notification-sweep.service';
+import {
+  NotificationSweepService,
+  wantsReminder,
+} from './notification-sweep.service';
 import { NotificationsService } from './notifications.service';
 
 const lessonRow = (scheduledAt: Date) => ({
@@ -22,7 +25,7 @@ describe('NotificationSweepService', () => {
     assignment: { findMany: jest.Mock };
     teacherStudent: { findMany: jest.Mock };
   };
-  let notifications: { notifyMany: jest.Mock };
+  let notifications: { notifyMany: jest.Mock; flushEmails: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -31,7 +34,10 @@ describe('NotificationSweepService', () => {
       teacherStudent: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
-    notifications = { notifyMany: jest.fn().mockResolvedValue(undefined) };
+    notifications = {
+      notifyMany: jest.fn().mockResolvedValue(undefined),
+      flushEmails: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -152,5 +158,21 @@ describe('NotificationSweepService', () => {
 
     await expect(service.sweep()).rejects.toThrow('banco fora');
     expect(prisma.assignment.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('lembretes que o professor escolheu', () => {
+  it('lista vazia é o padrão: véspera e "começa logo"', () => {
+    expect(wantsReminder({ lessonReminderMinutes: [] }, 'eve')).toBe(true);
+    expect(wantsReminder({ lessonReminderMinutes: [] }, 'soon')).toBe(true);
+  });
+
+  it('só véspera desliga o "começa logo", e vice-versa', () => {
+    expect(wantsReminder({ lessonReminderMinutes: [1440] }, 'eve')).toBe(true);
+    expect(wantsReminder({ lessonReminderMinutes: [1440] }, 'soon')).toBe(
+      false,
+    );
+    expect(wantsReminder({ lessonReminderMinutes: [30] }, 'eve')).toBe(false);
+    expect(wantsReminder({ lessonReminderMinutes: [30] }, 'soon')).toBe(true);
   });
 });

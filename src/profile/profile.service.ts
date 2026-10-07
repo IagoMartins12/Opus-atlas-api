@@ -174,9 +174,17 @@ export class ProfileService {
     private readonly portal: PortalProfileService,
   ) {}
 
-  /** O diretório público de professores mostra estes dados, e tem cache. */
+  /**
+   * Nome, foto e bio aparecem em páginas públicas com cache: o diretório de
+   * professores e o blog (autor do artigo, página do autor). Sem derrubar o
+   * do blog, a bio nova não aparecia e o blog seguia com o texto de reserva
+   * ("Escreve no Blog do Opus Atlas").
+   */
   private async refreshTeacherDirectory(): Promise<void> {
-    await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    await this.cache.invalidateMany([
+      CacheNamespace.TEACHERS,
+      CacheNamespace.BLOG_ARTICLES,
+    ]);
   }
 
   // -------------------------------------------------------------------

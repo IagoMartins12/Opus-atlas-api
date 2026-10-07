@@ -242,11 +242,12 @@ export class InteractionsService {
 
     const cacheKey = this.onceKey('view', articleId, viewer);
 
-    if (!cacheKey || (await this.cache.get(cacheKey))) {
+    // Reserva atômica: duas chamadas ao mesmo tempo (o efeito montado duas
+    // vezes, duas abas) não contam duas (ver `AppCacheService.claimOnce`).
+    if (!cacheKey || !(await this.cache.claimOnce(cacheKey, VIEW_WINDOW_MS))) {
       return { success: true, counted: false };
     }
 
-    await this.cache.set(cacheKey, 1, VIEW_WINDOW_MS);
     await this.prisma.blogArticle.update({
       where: { id: articleId },
       data: { viewCount: { increment: 1 } },
@@ -278,11 +279,9 @@ export class InteractionsService {
 
     const cacheKey = this.onceKey('read', articleId, viewer);
 
-    if (!cacheKey || (await this.cache.get(cacheKey))) {
+    if (!cacheKey || !(await this.cache.claimOnce(cacheKey, READ_WINDOW_MS))) {
       return { success: true, counted: false };
     }
-
-    await this.cache.set(cacheKey, 1, READ_WINDOW_MS);
 
     const sample = clampReadSeconds(readSeconds, article.estimatedReadTime);
 

@@ -5,7 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Subscription } from '@prisma/client';
+import { PlanType, Prisma, Subscription, TeacherStatus } from '@prisma/client';
+import { AppCacheService } from '../../common/cache/cache.service';
+import { CacheNamespace } from '../../common/cache/cache-keys';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -23,9 +25,20 @@ import { SubscriptionActionResponseDto } from '../dto/subscription-action-respon
 import { UpgradeSubscriptionDto } from '../dto/upgrade-subscription.dto';
 import { InvoicesService } from './invoices.service';
 import { PlanPricingService } from './plan-pricing.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { StripeService } from './stripe.service';
 
+/**
+ * Toda recusa de cupom diz a mesma coisa. Dizer "já usado", "esgotado" ou
+ * "de outro plano" confirmava que o código existe — quem chuta códigos
+ * aprendia quais são de verdade.
+ */
+const COUPON_INVALID = 'Cupom inválido ou expirado';
+
 const ACTIVE_STATUSES: Subscription['status'][] = ['TRIAL', 'ACTIVE'];
+
+/** Os planos para professores: assiná-los faz da conta um professor. */
+export const TEACHER_PLANS: PlanType[] = ['MENTOR', 'MAESTRO'];
 
 /**
  * O que dá acesso ao plano: teste, ativa, e cancelada **até o fim do período
@@ -50,9 +63,11 @@ export class SubscriptionsService {
     private readonly prisma: PrismaService,
     private readonly planPricingService: PlanPricingService,
     private readonly stripeService: StripeService,
+    private readonly stripeCatalog: StripeCatalogService,
     private readonly invoicesService: InvoicesService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly cache: AppCacheService,
   ) {}
 
   /** Assinatura ativa (TRIAL ou ACTIVE, ainda dentro do período) do usuário —
@@ -187,7 +202,7 @@ export class SubscriptionsService {
       ? await this.findValidCoupon(dto.couponCode, userId, dto.planType)
       : null;
 
-    const { finalPrice, discount } =
+    const { finalPrice, discount, originalPrice } =
       await this.planPricingService.calculateFinalPrice(
         dto.planType,
         dto.billingPeriod!,
@@ -220,6 +235,19 @@ export class SubscriptionsService {
       billingPeriod: dto.billingPeriod!,
       successUrl: `${frontendBaseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${frontendBaseUrl}/pricing`,
+      priceId: await this.stripeCatalog.priceIdFor(
+        dto.planType,
+        dto.billingPeriod!,
+      ),
+      // O cupom vai na sessão: antes ele só existia no nosso banco, a tela
+      // dizia "cupom aplicado" e o Stripe cobrava o preço cheio.
+      stripeCouponId: coupon
+        ? await this.stripeCatalog.checkoutCouponId(
+            coupon,
+            originalPrice,
+            discount,
+          )
+        : null,
     });
 
     const subscription = await this.prisma.subscription.create({
@@ -252,6 +280,13 @@ export class SubscriptionsService {
           : 'Assinatura criada',
       },
     });
+
+    // Com teste, o plano já dá acesso: um plano para professores já faz da
+    // conta um professor. Sem teste, isso espera o pagamento
+    // (`confirmCheckoutSession`).
+    if (trialEndDate) {
+      await this.activateTeacherForPlan(userId, dto.planType);
+    }
 
     // O cupom só é consumido quando o pagamento confirma
     // (`confirmCheckoutSession`): antes, checkout abandonado queimava o cupom
@@ -384,6 +419,10 @@ export class SubscriptionsService {
     }
 
     await this.updateUserPlanCache(subscription.userId);
+    await this.activateTeacherForPlan(
+      subscription.userId,
+      subscription.planType,
+    );
 
     if (subscription.user.email) {
       await this.mailService.sendPaymentApprovedEmail(subscription.user.email, {
@@ -682,6 +721,10 @@ export class SubscriptionsService {
       billingPeriod: dto.billingPeriod ?? 'MONTHLY',
       successUrl: `${frontendBaseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${frontendBaseUrl}/pricing`,
+      priceId: await this.stripeCatalog.priceIdFor(
+        dto.newPlanType,
+        dto.billingPeriod ?? 'MONTHLY',
+      ),
     });
 
     const newSubscription = await this.prisma.subscription.create({
@@ -724,6 +767,99 @@ export class SubscriptionsService {
         checkoutUrl: checkoutSession.url!,
       },
     };
+  }
+
+  /**
+   * Assinar um plano para professores (Mentor ou Maestro) faz da conta um
+   * professor, **sem verificação nem convite**: o portal de ensino fica
+   * liberado assim que o plano dá acesso — no início do teste ou na
+   * confirmação do pagamento. O perfil nasce (ou volta) ativo; o selo de
+   * verificado continua sendo decisão da equipe.
+   *
+   * Idempotente: roda de novo a cada confirmação e só mexe no que falta.
+   */
+  async activateTeacherForPlan(userId: string, planType: PlanType) {
+    if (!TEACHER_PLANS.includes(planType)) return;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        isTeacher: true,
+        teacherProfile: { select: { id: true, status: true } },
+      },
+    });
+    if (!user) return;
+
+    const profile = user.teacherProfile;
+    if (user.isTeacher && profile?.status === TeacherStatus.ACTIVE) return;
+
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { isTeacher: true },
+      });
+      if (!profile) {
+        await tx.teacher.create({
+          data: { userId, status: TeacherStatus.ACTIVE, isVerified: false },
+        });
+      } else if (profile.status !== TeacherStatus.ACTIVE) {
+        await tx.teacher.update({
+          where: { id: profile.id },
+          data: { status: TeacherStatus.ACTIVE },
+        });
+      }
+    });
+
+    // Um professor novo muda o diretório público.
+    await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    this.logger.log(`Conta ${userId} virou professor pelo plano ${planType}`);
+  }
+
+  /**
+   * Plano concedido pela equipe, sem cobrança — o que acompanha um convite
+   * para ser professor. Assinatura ativa, sem Stripe e sem renovação;
+   * `expiresAt` nulo é sem vencimento. Quando vence, o cron
+   * `check-subscriptions` a expira como qualquer outra e a conta volta ao
+   * plano gratuito.
+   */
+  async grantPlan(
+    userId: string,
+    planType: PlanType,
+    expiresAt: Date | null,
+    grantedBy?: string,
+  ): Promise<Subscription> {
+    if (planType === 'FREE') {
+      throw new BadRequestException('Conceda um plano pago');
+    }
+
+    const subscription = await this.prisma.subscription.create({
+      data: {
+        userId,
+        planType,
+        status: 'ACTIVE',
+        startDate: new Date(),
+        endDate: expiresAt,
+        price: 0,
+        autoRenew: false,
+        metadata: { origin: 'GRANTED_BY_TEAM', grantedBy: grantedBy ?? null },
+      },
+    });
+
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: subscription.id,
+        userId,
+        action: 'CREATED',
+        toPlan: planType,
+        toPrice: 0,
+        reason: expiresAt
+          ? `Concedido pela equipe até ${expiresAt.toISOString().slice(0, 10)}`
+          : 'Concedido pela equipe, sem vencimento',
+      },
+    });
+
+    await this.updateUserPlanCache(userId);
+    return subscription;
   }
 
   async updateUserPlanCache(userId: string): Promise<void> {
@@ -786,25 +922,25 @@ export class SubscriptionsService {
     });
 
     if (!coupon) {
-      throw new BadRequestException('Cupom inválido ou expirado');
+      throw new BadRequestException(COUPON_INVALID);
     }
 
     const usage = await this.prisma.couponUsage.findUnique({
       where: { couponId_userId: { couponId: coupon.id, userId } },
     });
     if (usage) {
-      throw new BadRequestException('Você já utilizou este cupom');
+      throw new BadRequestException(COUPON_INVALID);
     }
 
     if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) {
-      throw new BadRequestException('Cupom esgotado');
+      throw new BadRequestException(COUPON_INVALID);
     }
 
     if (
       coupon.applicablePlans.length > 0 &&
       !coupon.applicablePlans.includes(planType)
     ) {
-      throw new BadRequestException('Cupom não aplicável a este plano');
+      throw new BadRequestException(COUPON_INVALID);
     }
 
     return coupon;

@@ -27,6 +27,7 @@ import {
 import { Request } from 'express';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
+import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { UploadHistoryService } from '../shared/upload-history.service';
 import { CheckWorkDuplicateDto } from './dto/check-work-duplicate.dto';
@@ -131,6 +132,12 @@ export class WorkUploadsController {
   }
 
   @Patch(':id')
+  @Audited({
+    action: 'upload.work.update',
+    entityType: 'work',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @ApiOperation({ summary: 'Edita uma obra que o próprio usuário cadastrou' })
   @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
   @ApiOkResponse({
@@ -155,6 +162,12 @@ export class WorkUploadsController {
   }
 
   @Delete(':id')
+  @Audited({
+    action: 'upload.work.delete',
+    entityType: 'work',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove uma obra cadastrada pelo próprio usuário' })
   @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })

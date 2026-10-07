@@ -9,10 +9,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isMongoId } from 'class-validator';
 import {
+  LessonRequestStatus,
+  LessonStatus,
   NotificationPriority,
   NotificationType,
   Prisma,
+  SchoolActivityAction,
   StudentInviteStatus,
   TokenType,
 } from '@prisma/client';
@@ -24,6 +28,7 @@ import { UserTokenService } from '../../auth/user-token.service';
 import { MailService } from '../../mail/mail.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SchoolActivitiesService } from '../school-activities/school-activities.service';
 import { InviteStudentDto } from './dto/invite-student.dto';
 import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateRelationshipDto } from './dto/update-relationship.dto';
@@ -41,6 +46,40 @@ const USER_SUMMARY_SELECT = {
   image: true,
 } as const;
 
+const STUDENT_ROW_INCLUDE = {
+  student: {
+    select: {
+      id: true,
+      userId: true,
+      level: true,
+      mainInstrument: true,
+      status: true,
+      totalLessonsAttended: true,
+      completedAssignments: true,
+      totalAssignments: true,
+      currentStreak: true,
+      lastActiveAt: true,
+      user: { select: USER_SUMMARY_SELECT },
+    },
+  },
+} as const;
+
+type StudentRow = Prisma.TeacherStudentGetPayload<{
+  include: typeof STUDENT_ROW_INCLUDE;
+}>;
+
+/** Os números de um aluno na tabela de alunos. */
+export interface StudentStats {
+  nextLessonAt: Date | null;
+  lastLessonAt: Date | null;
+  /** Só sobre aula que já aconteceu; `null` sem nenhuma. */
+  attendanceRate: number | null;
+  practiceMinutes7d: number;
+  practiceGoalMinutes: number | null;
+  openAssignments: number;
+  overdueAssignments: number;
+}
+
 @Injectable()
 export class RelationshipsService {
   private readonly logger = new Logger(RelationshipsService.name);
@@ -53,6 +92,7 @@ export class RelationshipsService {
     private readonly configService: ConfigService,
     private readonly subscriptions: SubscriptionsService,
     private readonly cache: AppCacheService,
+    private readonly activities: SchoolActivitiesService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -140,6 +180,47 @@ export class RelationshipsService {
           },
         });
 
+    // "Evitar verificação" (04/10/2026): só existe para conta que já existe —
+    // que é o único caso deste convite, feito por id de usuário. O vínculo
+    // nasce aceito, sem e-mail; o aluno recebe o aviso no portal dizendo quem
+    // o adicionou e que pode sair da turma.
+    const studentName =
+      [studentUser.firstName, studentUser.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim() ||
+      studentUser.email ||
+      'aluno';
+    await this.activities.record({
+      userId: teacherUserId,
+      userType: 'teacher',
+      action: SchoolActivityAction.STUDENT_ADDED,
+      entityType: 'student',
+      entityId: student.id,
+      entityName: studentName,
+      title: dto.skipVerification
+        ? `Adicionou ${studentName} à turma`
+        : `Convidou ${studentName}`,
+    });
+
+    if (dto.skipVerification) {
+      const activated = await this.activate(
+        {
+          id: relationship.id,
+          teacherId: teacher.id,
+          studentId: student.id,
+          teacher: { userId: teacherUserId, user: teacher.user },
+          student: { userId: dto.studentUserId, user: studentUser },
+        },
+        'added',
+      );
+      return {
+        relationshipId: activated.relationshipId,
+        inviteStatus: StudentInviteStatus.ACCEPTED,
+        student: studentUser,
+      };
+    }
+
     await this.sendInvitation(
       relationship.id,
       teacher.user,
@@ -200,7 +281,121 @@ export class RelationshipsService {
       token,
       TokenType.STUDENT_INVITATION_ACCEPT,
     );
+    return this.activate(relationship, 'accepted');
+  }
 
+  /**
+   * O aluno aceita de dentro do portal, logado — a tela de convite pendente
+   * (04/10/2026). Mesmo efeito do link do e-mail; o link deixa de funcionar
+   * porque o vínculo já não está pendente.
+   */
+  async acceptAsStudent(studentUserId: string, relationshipId: string) {
+    const relationship = await this.requirePendingOfStudent(
+      studentUserId,
+      relationshipId,
+    );
+    await this.assertWithinStudentLimit(
+      relationship.teacher.userId,
+      relationship.teacherId,
+    );
+    return this.activate(relationship, 'accepted');
+  }
+
+  async declineAsStudent(studentUserId: string, relationshipId: string) {
+    const relationship = await this.requirePendingOfStudent(
+      studentUserId,
+      relationshipId,
+    );
+    return this.decline(relationship);
+  }
+
+  /**
+   * O aluno sai da turma (04/10/2026). Mesmo efeito de o professor encerrar:
+   * as aulas futuras e os pedidos pendentes são cancelados (sem vínculo não
+   * há aula, e elas virariam "sem desfecho"), e o histórico continua dos dois.
+   */
+  async leaveAsStudent(studentUserId: string, relationshipId: string) {
+    const relationship = await this.prisma.teacherStudent.findFirst({
+      where: {
+        id: relationshipId,
+        isActive: true,
+        inviteStatus: StudentInviteStatus.ACCEPTED,
+        student: { is: { userId: studentUserId } },
+      },
+      include: {
+        teacher: {
+          select: {
+            id: true,
+            userId: true,
+            user: { select: USER_SUMMARY_SELECT },
+          },
+        },
+        student: {
+          select: { userId: true, user: { select: USER_SUMMARY_SELECT } },
+        },
+      },
+    });
+    if (!relationship) throw new NotFoundException('Turma não encontrada');
+
+    await this.prisma.$transaction([
+      this.prisma.teacherStudent.update({
+        where: { id: relationshipId },
+        data: {
+          isActive: false,
+          endDate: new Date(),
+          pauseReason: 'Saída do aluno',
+        },
+      }),
+      this.prisma.teacher.update({
+        where: { id: relationship.teacher.id },
+        data: { totalStudents: { decrement: 1 } },
+      }),
+      ...this.cancelFutureOf(relationship.teacher.id, relationship.studentId),
+    ]);
+    await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+
+    await this.notifications.notify({
+      userId: relationship.teacher.userId,
+      type: NotificationType.STUDENT_DECLINED_INVITE,
+      priority: NotificationPriority.MEDIUM,
+      title: 'Aluno saiu da turma',
+      message: `${this.displayName(relationship.student.user)} saiu da sua turma. O histórico fica guardado.`,
+      relatedEntityType: 'teacherStudent',
+      relatedEntityId: relationshipId,
+    });
+
+    const teacherName = this.displayName(relationship.teacher.user);
+    await this.activities.record({
+      userId: studentUserId,
+      userType: 'student',
+      action: SchoolActivityAction.TEACHER_LEFT,
+      entityType: 'teacher',
+      entityId: relationshipId,
+      entityName: teacherName,
+      title: `Saiu da turma de ${teacherName}`,
+    });
+  }
+
+  /**
+   * Ativa o vínculo — o único lugar que faz isso, para os quatro caminhos
+   * (link do e-mail, aceite no portal, convite sem verificação).
+   */
+  private async activate(
+    relationship: {
+      id: string;
+      teacherId: string;
+      studentId: string;
+      teacher: {
+        userId: string;
+        user: { firstName: string | null; lastName: string | null };
+      };
+      student: {
+        userId: string;
+        user: { firstName: string | null; lastName: string | null };
+      };
+    },
+    how: 'accepted' | 'added',
+  ) {
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.teacherStudent.update({
         where: { id: relationship.id },
@@ -230,25 +425,47 @@ export class RelationshipsService {
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
 
     const studentName = this.displayName(relationship.student.user);
+    const teacherName = this.displayName(relationship.teacher.user);
 
-    await this.notifications.notify({
-      userId: relationship.teacher.userId,
-      type: NotificationType.STUDENT_ACCEPTED_INVITE,
-      priority: NotificationPriority.MEDIUM,
-      title: 'Convite aceito',
-      message: `${studentName} aceitou seu convite e agora é seu aluno.`,
-      actionText: 'Ver aluno',
-      actionUrl: `/teacher/students/${relationship.student.userId}`,
-      relatedEntityType: 'teacherStudent',
-      relatedEntityId: relationship.id,
-    });
+    if (how === 'accepted') {
+      await this.activities.record({
+        userId: relationship.student.userId,
+        userType: 'student',
+        action: SchoolActivityAction.INVITE_ACCEPTED,
+        entityType: 'teacher',
+        entityId: relationship.id,
+        entityName: teacherName,
+        title: `Aceitou o convite de ${teacherName}`,
+      });
+
+      await this.notifications.notify({
+        userId: relationship.teacher.userId,
+        type: NotificationType.STUDENT_ACCEPTED_INVITE,
+        priority: NotificationPriority.MEDIUM,
+        title: 'Convite aceito',
+        message: `${studentName} aceitou seu convite e agora é seu aluno.`,
+        actionText: 'Ver aluno',
+        actionUrl: `/teacher/students/${relationship.studentId}`,
+        relatedEntityType: 'teacherStudent',
+        relatedEntityId: relationship.id,
+      });
+    }
 
     await this.notifications.notify({
       userId: relationship.student.userId,
-      type: NotificationType.WELCOME_NEW_STUDENT,
+      type:
+        how === 'added'
+          ? NotificationType.STUDENT_ADDED_BY_TEACHER
+          : NotificationType.WELCOME_NEW_STUDENT,
       priority: NotificationPriority.MEDIUM,
-      title: 'Bem-vindo ao portal do aluno',
-      message: `Você agora é aluno de ${this.displayName(relationship.teacher.user)}.`,
+      title:
+        how === 'added'
+          ? `${teacherName} adicionou você como aluno`
+          : 'Bem-vindo ao portal do aluno',
+      message:
+        how === 'added'
+          ? `Você agora é aluno de ${teacherName}. Se não reconhece, dá para sair da turma no Perfil do portal.`
+          : `Você agora é aluno de ${teacherName}.`,
       actionText: 'Abrir portal',
       actionUrl: '/student',
       relatedEntityType: 'teacherStudent',
@@ -258,8 +475,39 @@ export class RelationshipsService {
     return {
       accepted: true,
       relationshipId: updated.id,
-      teacherName: this.displayName(relationship.teacher.user),
+      teacherName,
     };
+  }
+
+  private async requirePendingOfStudent(
+    studentUserId: string,
+    relationshipId: string,
+  ) {
+    const relationship = await this.prisma.teacherStudent.findFirst({
+      where: {
+        id: relationshipId,
+        inviteStatus: StudentInviteStatus.PENDING,
+        student: { is: { userId: studentUserId } },
+      },
+      include: {
+        teacher: {
+          select: {
+            id: true,
+            userId: true,
+            user: { select: USER_SUMMARY_SELECT },
+          },
+        },
+        student: {
+          select: {
+            id: true,
+            userId: true,
+            user: { select: USER_SUMMARY_SELECT },
+          },
+        },
+      },
+    });
+    if (!relationship) throw new NotFoundException('Convite não encontrado');
+    return relationship;
   }
 
   async declineInvitation(token: string) {
@@ -267,7 +515,20 @@ export class RelationshipsService {
       token,
       TokenType.STUDENT_INVITATION_DECLINE,
     );
+    return this.decline(relationship);
+  }
 
+  private async decline(relationship: {
+    id: string;
+    teacher: {
+      userId: string;
+      user: { firstName: string | null; lastName: string | null };
+    };
+    student: {
+      userId: string;
+      user: { firstName: string | null; lastName: string | null };
+    };
+  }) {
     await this.prisma.teacherStudent.update({
       where: { id: relationship.id },
       data: {
@@ -285,6 +546,17 @@ export class RelationshipsService {
       message: `${this.displayName(relationship.student.user)} recusou seu convite.`,
       relatedEntityType: 'teacherStudent',
       relatedEntityId: relationship.id,
+    });
+
+    const teacherName = this.displayName(relationship.teacher.user);
+    await this.activities.record({
+      userId: relationship.student.userId,
+      userType: 'student',
+      action: SchoolActivityAction.INVITE_DECLINED,
+      entityType: 'teacher',
+      entityId: relationship.id,
+      entityName: teacherName,
+      title: `Recusou o convite de ${teacherName}`,
     });
 
     return {
@@ -341,23 +613,7 @@ export class RelationshipsService {
     const [relationships, total] = await Promise.all([
       this.prisma.teacherStudent.findMany({
         where,
-        include: {
-          student: {
-            select: {
-              id: true,
-              userId: true,
-              level: true,
-              mainInstrument: true,
-              status: true,
-              totalLessonsAttended: true,
-              completedAssignments: true,
-              totalAssignments: true,
-              currentStreak: true,
-              lastActiveAt: true,
-              user: { select: USER_SUMMARY_SELECT },
-            },
-          },
-        },
+        include: STUDENT_ROW_INCLUDE,
         orderBy: [{ inviteStatus: 'asc' }, { startDate: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -365,27 +621,152 @@ export class RelationshipsService {
       this.prisma.teacherStudent.count({ where }),
     ]);
 
+    const stats = await this.studentStats(
+      teacher.id,
+      relationships
+        .filter((r) => r.inviteStatus === StudentInviteStatus.ACCEPTED)
+        .map((r) => r.student.id),
+    );
+
     return {
-      students: relationships.map((relationship) => ({
-        relationshipId: relationship.id,
-        inviteStatus: relationship.inviteStatus,
-        isActive: relationship.isActive,
-        startDate: relationship.startDate,
-        endDate: relationship.endDate,
-        maxLessonsPerWeek: relationship.maxLessonsPerWeek,
-        lessonDuration: relationship.lessonDuration,
-        preferredDays: relationship.preferredDays,
-        preferredTimes: relationship.preferredTimes,
-        currentFocus: relationship.currentFocus,
-        learningPlan: relationship.learningPlan,
-        nextGoals: relationship.nextGoals,
-        teacherNotes: relationship.teacherNotes,
-        totalLessons: relationship.totalLessons,
-        completedLessons: relationship.completedLessons,
-        student: relationship.student,
-      })),
+      students: relationships.map((relationship) =>
+        this.toStudentRow(relationship, stats.get(relationship.student.id)),
+      ),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
+  }
+
+  /**
+   * Um aluno do professor, para a página do aluno: o vínculo mais recente
+   * (ativo, pendente ou encerrado) e os mesmos números da tabela. O legado
+   * buscava todos os vínculos para achar um.
+   */
+  async getStudent(teacherUserId: string, studentId: string) {
+    const teacher = await this.requireTeacherProfile(teacherUserId);
+    const relationship = isMongoId(studentId)
+      ? await this.prisma.teacherStudent.findFirst({
+          // Avisos antigos apontavam para o id de usuário do aluno.
+          where: {
+            teacherId: teacher.id,
+            OR: [{ studentId }, { student: { is: { userId: studentId } } }],
+          },
+          include: STUDENT_ROW_INCLUDE,
+          orderBy: [{ isActive: 'desc' }, { startDate: 'desc' }],
+        })
+      : null;
+
+    if (!relationship) {
+      throw new NotFoundException('Aluno não encontrado');
+    }
+
+    const profileId = relationship.student.id;
+    const stats =
+      relationship.inviteStatus === StudentInviteStatus.ACCEPTED
+        ? await this.studentStats(teacher.id, [profileId])
+        : new Map<string, StudentStats>();
+
+    return this.toStudentRow(relationship, stats.get(profileId));
+  }
+
+  private toStudentRow(relationship: StudentRow, stats?: StudentStats) {
+    return {
+      stats: stats ?? null,
+      relationshipId: relationship.id,
+      inviteStatus: relationship.inviteStatus,
+      isActive: relationship.isActive,
+      startDate: relationship.startDate,
+      endDate: relationship.endDate,
+      maxLessonsPerWeek: relationship.maxLessonsPerWeek,
+      lessonDuration: relationship.lessonDuration,
+      preferredDays: relationship.preferredDays,
+      preferredTimes: relationship.preferredTimes,
+      currentFocus: relationship.currentFocus,
+      learningPlan: relationship.learningPlan,
+      nextGoals: relationship.nextGoals,
+      teacherNotes: relationship.teacherNotes,
+      totalLessons: relationship.totalLessons,
+      completedLessons: relationship.completedLessons,
+      student: relationship.student,
+    };
+  }
+
+  /**
+   * Os números da tabela de alunos (04/10/2026), em lote para a página:
+   * próxima e última aula, presença (só sobre aula que já aconteceu — "sem
+   * dado" não é 0%), prática dos últimos 7 dias contra a meta e tarefas
+   * abertas e atrasadas. Quatro consultas, seja qual for o tamanho da página.
+   */
+  private async studentStats(teacherId: string, studentIds: string[]) {
+    const result = new Map<string, StudentStats>();
+    if (studentIds.length === 0) return result;
+
+    const now = new Date();
+    const [lessons, practice, goals, assignments] = await Promise.all([
+      this.prisma.lesson.findMany({
+        where: {
+          teacherId,
+          studentId: { in: studentIds },
+          scheduledAt: { gte: new Date(now.getTime() - 365 * 864e5) },
+          status: { not: LessonStatus.CANCELLED },
+        },
+        select: { studentId: true, scheduledAt: true, status: true },
+        orderBy: { scheduledAt: 'asc' },
+        take: 5000,
+      }),
+      this.prisma.practiceLog.groupBy({
+        by: ['studentId'],
+        where: {
+          studentId: { in: studentIds },
+          practicedAt: { gte: new Date(now.getTime() - 7 * 864e5), lte: now },
+        },
+        _sum: { minutes: true },
+      }),
+      this.prisma.student.findMany({
+        where: { id: { in: studentIds } },
+        select: { id: true, practiceTime: true },
+      }),
+      this.prisma.assignment.findMany({
+        where: {
+          studentId: { in: studentIds },
+          isCompleted: false,
+          lesson: { is: { teacherId } },
+        },
+        select: { studentId: true, dueDate: true },
+        take: 5000,
+      }),
+    ]);
+
+    for (const id of studentIds) {
+      const own = lessons.filter((l) => l.studentId === id);
+      const past = own.filter((l) => l.scheduledAt < now);
+      const attended = past.filter(
+        (l) => l.status === LessonStatus.COMPLETED,
+      ).length;
+      const missed = past.filter(
+        (l) => l.status === LessonStatus.NO_SHOW,
+      ).length;
+      const open = assignments.filter((a) => a.studentId === id);
+      result.set(id, {
+        nextLessonAt:
+          own.find(
+            (l) => l.scheduledAt >= now && l.status === LessonStatus.SCHEDULED,
+          )?.scheduledAt ?? null,
+        lastLessonAt: past.length ? past[past.length - 1].scheduledAt : null,
+        attendanceRate:
+          attended + missed > 0
+            ? Math.round((attended / (attended + missed)) * 100)
+            : null,
+        practiceMinutes7d:
+          practice.find((p) => p.studentId === id)?._sum.minutes ?? 0,
+        practiceGoalMinutes:
+          goals.find((g) => g.id === id)?.practiceTime ?? null,
+        openAssignments: open.length,
+        overdueAssignments: open.filter((a) => a.dueDate && a.dueDate < now)
+          .length,
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -439,15 +820,13 @@ export class RelationshipsService {
     });
 
     if (!student) {
-      return { teachers: [] };
+      return { teachers: [], invitations: [], past: [] };
     }
 
-    const relationships = await this.prisma.teacherStudent.findMany({
-      where: {
-        studentId: student.id,
-        inviteStatus: StudentInviteStatus.ACCEPTED,
-        isActive: true,
-      },
+    // Uma consulta, três listas: com quem estuda, convites pendentes e turmas
+    // que acabaram — o que a tela de convite e a de orientação mostram.
+    const all = await this.prisma.teacherStudent.findMany({
+      where: { studentId: student.id },
       include: {
         teacher: {
           select: {
@@ -462,8 +841,31 @@ export class RelationshipsService {
       },
       orderBy: { startDate: 'desc' },
     });
+    const relationships = all.filter(
+      (r) => r.inviteStatus === StudentInviteStatus.ACCEPTED && r.isActive,
+    );
+    const INVITE_DAYS = 30;
 
     return {
+      invitations: all
+        .filter((r) => r.inviteStatus === StudentInviteStatus.PENDING)
+        .map((r) => ({
+          relationshipId: r.id,
+          invitedAt: r.startDate,
+          expiresAt: new Date(r.startDate.getTime() + INVITE_DAYS * 86_400_000),
+          teacher: r.teacher,
+        })),
+      past: all
+        .filter(
+          (r) => r.inviteStatus === StudentInviteStatus.ACCEPTED && !r.isActive,
+        )
+        .map((r) => ({
+          relationshipId: r.id,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          totalLessons: r.totalLessons,
+          teacher: r.teacher,
+        })),
       teachers: relationships.map((relationship) => ({
         relationshipId: relationship.id,
         startDate: relationship.startDate,
@@ -518,6 +920,12 @@ export class RelationshipsService {
           where: { id: teacher.id },
           data: { totalStudents: { decrement: 1 } },
         });
+
+        // Sem vínculo não há aula: as futuras saem da agenda dos dois (antes
+        // ficavam marcadas e viravam "sem desfecho"). As que já passaram ficam.
+        await Promise.all(
+          this.cancelFutureOf(teacher.id, relationship.studentId, tx),
+        );
       }
     });
 
@@ -749,6 +1157,34 @@ export class RelationshipsService {
     }
 
     return teacher;
+  }
+
+  /** Aulas futuras e pedidos pendentes de um par professor–aluno, cancelados. */
+  private cancelFutureOf(
+    teacherId: string,
+    studentId: string,
+    client: Pick<PrismaService, 'lesson' | 'lessonRequest'> = this.prisma,
+  ) {
+    const now = new Date();
+    return [
+      client.lesson.updateMany({
+        where: {
+          teacherId,
+          studentId,
+          status: LessonStatus.SCHEDULED,
+          scheduledAt: { gte: now },
+        },
+        data: {
+          status: LessonStatus.CANCELLED,
+          cancelledAt: now,
+          cancelReason: 'Vínculo encerrado',
+        },
+      }),
+      client.lessonRequest.updateMany({
+        where: { teacherId, studentId, status: LessonRequestStatus.PENDING },
+        data: { status: LessonRequestStatus.CANCELLED },
+      }),
+    ] as const;
   }
 
   private async requireRelationship(relationshipId: string, teacherId: string) {

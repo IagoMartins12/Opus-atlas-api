@@ -299,6 +299,15 @@ enum NotificationType {
   WELCOME_NEW_TEACHER // Parabéns por se tornar professor
   STUDENT_DECLINED_INVITE // Aluno declinou convite para ser aluno
   STUDENT_ACCEPTED_INVITE
+
+  // Portal (04/10/2026)
+  LESSON_REQUESTED // Aluno pediu aula num horário livre
+  LESSON_REQUEST_ACCEPTED // Professor aceitou o pedido
+  LESSON_REQUEST_DECLINED // Professor recusou o pedido
+  TEACHER_ANNOUNCEMENT // Aviso avulso do professor para alunos
+  PROGRESS_REPORT_SHARED // Professor compartilhou um relatório
+  STUDENT_ADDED_BY_TEACHER // Professor vinculou o aluno sem convite (conta existente)
+  WORK_SUGGESTED // Professor sugeriu uma obra para o "quero aprender"
   // NOTIFICAÇÕES ANTIGAS (manter para compatibilidade)
   LESSON_NO_SHOW
   ASSIGNMENT_FEEDBACK_NEEDED // 🗑️ SERÁ REMOVIDA do check/route.ts
@@ -347,6 +356,40 @@ enum SchoolActivityAction {
   LESSON_ABSENCE_INFORMED // Informou ausência
   LESSON_COMPLETED // Concluiu aula
   STUDENT_PROFILE_UPDATED // Alterou perfil de aluno
+
+  // Portal (04/10/2026)
+  LESSON_REQUESTED // Aluno pediu aula
+  LESSON_REQUEST_ANSWERED // Professor respondeu a um pedido
+  PRACTICE_LOGGED // Aluno registrou prática
+  REPORT_SHARED // Professor compartilhou relatório
+  ANNOUNCEMENT_SENT // Professor enviou aviso
+  WORK_SUGGESTED // Professor sugeriu obra
+
+  // Ações do aluno que não entravam no histórico (05/10/2026)
+  PRACTICE_REMOVED // Apagou um registro de prática
+  PRACTICE_GOAL_SET // Definiu a meta semanal de prática
+  LESSON_REQUEST_CANCELLED // Cancelou um pedido de aula
+  INVITE_ACCEPTED // Aceitou o convite de um professor
+  INVITE_DECLINED // Recusou o convite de um professor
+  TEACHER_LEFT // Saiu da turma de um professor
+  ASSIGNMENT_PROGRESS_UPDATED // Atualizou o andamento de uma tarefa
+  ASSIGNMENT_SUBMISSION_REMOVED // Apagou um envio da tarefa
+  REPORT_COMMENTED // Comentou um relatório
+  WORK_WANTED // Pôs uma obra no "quero aprender"
+  WORK_LEARNED // Pôs uma obra no "já aprendi"
+}
+
+enum LessonRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED // O próprio aluno desistiu
+  EXPIRED // O horário passou sem resposta
+}
+
+enum ReportVisibility {
+  TEACHER_ONLY // Rascunho de acompanhamento: o aluno não vê
+  SHARED // Compartilhado com o aluno
 }
 
 enum AchievementCategory {
@@ -614,6 +657,14 @@ model User {
 
   isTeacher Boolean @default(false)
   isStudent Boolean @default(false)
+
+  // Avisos do portal fora do portal (04/10/2026): por tipo de aviso, os canais
+  // aceitos — `{ "LESSON_STARTING_SOON": { "email": true, "sms": false } }`.
+  // O portal recebe sempre. SMS fica guardado até o envio existir.
+  notificationChannels Json?
+  quietHoursStart      String? // "22:00" no fuso do usuário
+  quietHoursEnd        String? // "07:00"
+  calendarFeed         CalendarFeed?
 
   // Relações:
   teacherProfile Teacher?
@@ -1119,7 +1170,6 @@ model Work {
   @@index([difficultyLevel, instrumentId]) // Dificuldade + instrumento
   @@index([workType, epochId]) // Tipo + época
   @@index([workType, instrumentId]) // Tipo + instrumento
-
   // ORDENACOES DO CATALOGO PUBLICO (SPEC secao 10.2, ordem ESR)
   // Obras mais anotadas primeiro, depois alfabetico: e a ordenacao padrao de
   // GET /works. Sem este indice o Mongo varre as 207 mil obras a cada chamada.
@@ -1175,6 +1225,7 @@ model WantToLearn {
   progressMilestones  Json? // Milestones de progresso por instrumento
   progress            Float?           @default(0) // Progresso calculado (0-100%)
   // 🔄 RELAÇÃO CORRETA COM WORKSCORE - ATUALIZADA PARA SetNull
+  suggestedByUserId   String?          @db.ObjectId // Professor que sugeriu (04/10/2026)
   selectedWorkScoreId String?          @db.ObjectId
   selectedWorkScore   WorkScore?       @relation("WantToLearnSelectedScore", fields: [selectedWorkScoreId], references: [id], onDelete: SetNull)
 
@@ -2013,9 +2064,20 @@ model Teacher {
   highlightedWorks String[] @default([]) // Obras que o professor destaca
 
   // Configurações de ensino
-  defaultLessonDuration Int    @default(60) // Duração padrão em minutos
-  maxStudentsPerWeek    Int    @default(50) // Limite de aulas por semana
-  timezone              String @default("America/Sao_Paulo")
+  defaultLessonDuration Int @default(60) // Duração padrão em minutos
+
+  // Esquema de aulas (04/10/2026) — a régua do motor de agenda.
+  bufferMinutes         Int       @default(15) // Folga mínima entre duas aulas
+  travelMinutes         Int       @default(40) // Para ir de um lugar físico a outro
+  maxLessonsPerDay      Int? // Sem valor: sem limite
+  maxLessonsPerWeek     Int?
+  acceptsLessonRequests Boolean   @default(true)
+  requestLeadHours      Int       @default(12) // Antecedência mínima de um pedido
+  requestHorizonDays    Int       @default(45) // Até quantos dias à frente
+  lessonReminderMinutes Int[]     @default([1440, 30]) // Lembretes antes da aula
+  portalOnboardedAt     DateTime? // Passou pelas boas-vindas do portal
+  maxStudentsPerWeek    Int       @default(50) // Limite de aulas por semana
+  timezone              String    @default("America/Sao_Paulo")
 
   // Metodologia e estilo de ensino
   teachingMethod String? // Descrição da metodologia
@@ -2050,6 +2112,7 @@ model Teacher {
   sharedReports      SharedProgressReport[]     @relation("TeacherSharedReports")
   availability       TeacherAvailability[]
   availabilityBlocks TeacherAvailabilityBlock[]
+  lessonRequests     LessonRequest[]
 
   // Índices otimizados
   @@index([status, isVerified])
@@ -2103,6 +2166,8 @@ model Student {
   longestStreak        Int    @default(0)
   progressScore        Float? @default(0) // Score geral de progresso
 
+  portalOnboardedAt DateTime? // Passou pelas boas-vindas do portal (04/10/2026)
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2114,6 +2179,8 @@ model Student {
   assignments    Assignment[]           @relation("StudentAssignments")
   sharedReports  SharedProgressReport[] @relation("StudentSharedReports")
   reportComments SharedReportComment[]  @relation("StudentReportComments")
+  practiceLogs   PracticeLog[]
+  lessonRequests LessonRequest[]
 
   // Índices otimizados
   @@index([status, lastActiveAt])
@@ -2209,7 +2276,8 @@ model Lesson {
 
   // Conteúdo e materiais da aula
   workScoreIds String[] @default([]) @db.ObjectId // Partituras específicas
-  worksIds     String[] @default([]) @db.ObjectId // Partituras específicas  
+  worksIds     String[] @default([]) @db.ObjectId // Obras da aula
+  composerIds  String[] @default([]) @db.ObjectId // Compositores em foco, com ou sem obra (04/10/2026)
   topics       String[] @default([]) // Tópicos abordados
   techniques   String[] @default([]) // Técnicas trabalhadas
   repertoire   String[] @default([]) // Repertório estudado
@@ -2369,6 +2437,13 @@ model Notification {
   expiresAt    DateTime? // Data de expiração (auto-cleanup)
 
   // Controle de entrega
+  // E-mail do aviso (04/10/2026): "pending" espera o fim do horário de
+  // silêncio (ou o envio agendado); "sent", "skipped" (a pessoa não quer por
+  // e-mail) ou "failed". SMS ainda não sai: `smsStatus` fica "unsupported".
+  emailStatus String?
+  emailAfter  DateTime?
+  smsStatus   String?
+
   toastShown   Boolean @default(false) // Toast já foi mostrado
   browserShown Boolean @default(false) // Notificação browser já foi mostrada
 
@@ -2395,6 +2470,7 @@ model Notification {
   // 🆕 ÍNDICES PARA PREVENÇÃO DE DUPLICATAS
   @@index([userId, type, relatedEntityId, status]) // Principal para verificar duplicatas
   @@index([uniqueHash]) // Para verificação rápida por hash
+  @@index([emailStatus, emailAfter]) // Varredura dos e-mails adiados
   @@index([userId, type, relatedEntityId, expiresAt]) // Para verificação com expiração
   @@map("notifications")
 }
@@ -2530,8 +2606,12 @@ model SharedProgressReport {
   reportData Json // Dados completos do relatório
 
   // Configurações de visibilidade
-  isPublic      Boolean @default(false) // Se pode ser acessado sem login
-  allowComments Boolean @default(false) // Se aluno pode comentar
+  // TEACHER_ONLY: acompanhamento do professor, invisível para o aluno; pode
+  // virar SHARED depois (`sharedAt` marca quando).
+  visibility    ReportVisibility @default(SHARED)
+  sharedAt      DateTime?
+  isPublic      Boolean          @default(false) // Se pode ser acessado sem login
+  allowComments Boolean          @default(false) // Se aluno pode comentar
 
   // Mensagem personalizada do professor
   teacherMessage String?
@@ -2638,6 +2718,11 @@ model BlogArticle {
   coverImageCredit String? // Crédito do fotógrafo
   ttsAudioUrl      String? // ✅ NOVO
 
+  // Idioma em que foi escrito e a versão no outro (title, description,
+  // content, metaTitle, metaDescription, coverImageAlt). Ver ArticleTranslationDto.
+  language    String @default("pt")
+  translation Json?
+
   // Status e visibilidade
   status        ArticleStatus @default(DRAFT)
   isFeatured    Boolean       @default(false) // Artigo em destaque (máx 5)
@@ -2725,16 +2810,24 @@ model BlogCategory {
   description String? // Descrição da categoria
 
   // Hierarquia (subcategorias)
-  parentId   String?        @db.ObjectId
-  parent     BlogCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children   BlogCategory[] @relation("CategoryHierarchy")
-  showInMenu Boolean        @default(true)
-  isActive   Boolean        @default(true)
-  image      String?
+  parentId    String?        @db.ObjectId
+  parent      BlogCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children    BlogCategory[] @relation("CategoryHierarchy")
+  showInMenu  Boolean        @default(true)
+  // Atalho no menu "Categorias" do blog (o chevron; sublista no telefone).
+  inMoreMenu  Boolean        @default(false)
+  // Ganha seção própria no início do blog, com os últimos artigos (na `order`).
+  showOnHome  Boolean        @default(false)
+  // A posição da seção no início (as marcadas, de cima para baixo).
+  homeOrder   Int?
+  // Nome, descrição e SEO em inglês: { name, description, metaTitle, metaDescription }
+  translation Json?
+  isActive    Boolean        @default(true)
+  image       String?
   // Aparência
-  icon       String? // Emoji ou classe de ícone
-  color      String? // Cor hex (#000000)
-  coverImage String? // Imagem de capa da categoria
+  icon        String? // Emoji ou classe de ícone
+  color       String? // Cor hex (#000000)
+  coverImage  String? // Imagem de capa da categoria
 
   // Ordem de exibição
   order Int @default(0)
@@ -2765,6 +2858,8 @@ model BlogTag {
   // Metadados
   description String? // Descrição da tag
   color       String? // Cor hex para visualização
+  // Nome e descrição em inglês: { name, description }
+  translation Json?
 
   // Contadores (cache)
   articleCount Int @default(0) // Quantos artigos usam essa tag
@@ -3224,6 +3319,12 @@ model Coupon {
   // Descrição
   description String?
 
+  // Espelho no Stripe: o checkout aplica este cupom na sessão. Sem ele, o
+  // desconto valia só na nossa conta e a pessoa pagava o preço cheio.
+  stripeCouponId  String?
+  stripeSyncedAt  DateTime?
+  stripeSyncError String? // Por que o espelho não foi criado, para o painel
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3286,6 +3387,16 @@ model PlanPricing {
   features     Json? // Features incluídas no plano
   description  String?
   displayOrder Int     @default(0) // Ordem de exibição
+
+  // Espelho no Stripe: os Prices que cobram esta versão. Vazio, o checkout
+  // cai nos `STRIPE_PRICE_*` do ambiente (como era antes da sincronização).
+  stripeProductId      String?
+  stripeMonthlyPriceId String?
+  stripeYearlyPriceId  String?
+  stripeSyncedAt       DateTime?
+  stripeSyncError      String?
+  // De onde veio esta versão: do painel ou de uma mudança feita no Stripe.
+  origin               String? // "painel" | "stripe"
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -3466,8 +3577,11 @@ model Event {
   ageRating String? // Classificação etária
 
   // Destaque e featured
+  // Até 3 por mês (pelo mês do início), cada um numa posição (1 a 3) do
+  // mosaico da agenda; `featuredSize` "large" ocupa a largura toda.
   isFeatured    Boolean @default(false)
-  featuredOrder Int? // Ordem no carrossel
+  featuredOrder Int? // Posição no mosaico do mês (1-3)
+  featuredSize  String? // "large" | "normal"
 
   // Dados de scraping (se aplicável)
   externalId  String?
@@ -3789,4 +3903,123 @@ model BackupRun {
 
   @@index([startedAt(sort: Desc)])
   @@map("backup_runs")
+}
+
+// ==================== EXECUÇÕES E AGENDAMENTOS DAS FILAS ====================
+
+/// Uma execução de tarefa agendada (ou disparada à mão): manutenção, varreduras
+/// do portal, publicação de artigos, rodadas de scraper.
+///
+/// O histórico da fila vive no Redis, com teto de mil e sete dias, e a
+/// publicação de artigos (de minuto em minuto) o renovava em menos de um dia.
+/// Aqui fica o que importa: quem disparou, quanto tempo levou, o que mudou.
+/// Varredura que não fez nada não é gravada — não polui o banco.
+model TaskRun {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  queue       String
+  task        String // id da tarefa ("tokens.prune", "scraper:osesp", ...)
+  taskName    String
+  trigger     String // "agendado" | "manual"
+  requestedBy String?  @db.ObjectId // quem clicou; nulo quando foi o agendamento
+  jobId       String
+  attempt     Int      @default(1)
+  status      String // "ok" | "falhou"
+  dryRun      Boolean  @default(false)
+  startedAt   DateTime
+  finishedAt  DateTime
+  durationMs  Int
+  summary     Json? // os números do resultado ("removidos": 12, ...)
+  sample      String[] @default([]) // amostra do que foi afetado
+  warnings    String[] @default([])
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@index([task, startedAt])
+  @@index([startedAt])
+  @@map("task_runs")
+}
+
+/// O agendamento que deve existir, guardado fora do Redis.
+///
+/// O Redis local salva em disco no máximo a cada hora; se ele cair ou for
+/// recriado, os agendamentos somem. O worker reaplica estes ao subir. Um
+/// agendamento removido fica com `enabled: false` — é o que impede o padrão
+/// de voltar sozinho.
+model TaskSchedule {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  schedulerId String   @unique
+  queue       String
+  job         String
+  cron        String
+  timezone    String
+  payload     Json
+  requestedBy String?  @db.ObjectId
+  options     Json? // tentativas e espera, quando diferem do padrão
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("task_schedules")
+}
+
+/// Pedido de aula do aluno num horário livre do professor (04/10/2026).
+/// Nada fica marcado até o professor aceitar; aceitar cria a aula pelo mesmo
+/// caminho (e as mesmas regras de agenda) que a marcação do professor.
+model LessonRequest {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  teacherId String @db.ObjectId
+  studentId String @db.ObjectId
+
+  scheduledAt DateTime
+  duration    Int
+  note        String?
+
+  status      LessonRequestStatus @default(PENDING)
+  lessonId    String?             @db.ObjectId // A aula criada ao aceitar
+  answer      String? // Recado do professor ao recusar ou sugerir outro horário
+  respondedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId, status, scheduledAt])
+  @@index([studentId, status, scheduledAt])
+  @@map("lesson_requests")
+}
+
+/// Diário de prática do aluno (04/10/2026). Uma linha por sessão registrada.
+model PracticeLog {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  studentId String @db.ObjectId
+
+  practicedAt DateTime // Quando estudou (o dia conta no fuso do aluno)
+  minutes     Int
+  workId      String?  @db.ObjectId // Obra estudada, quando for do acervo
+  topic       String? // "Escalas", "Cadências" — quando não é uma obra
+  note        String?
+
+  createdAt DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, practicedAt])
+  @@map("practice_logs")
+}
+
+/// Assinatura do calendário do portal (04/10/2026). O endereço público leva um
+/// token aleatório; aqui fica só o hash dele, e trocar o token derruba o link
+/// antigo.
+model CalendarFeed {
+  id         String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String    @unique @db.ObjectId
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("calendar_feeds")
 }

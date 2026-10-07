@@ -3,6 +3,7 @@ import { BillingModule } from '../billing/billing.module';
 import { UploadsController } from './uploads.controller';
 import { UploadsService } from './uploads.service';
 import { UploadHistoryService } from './shared/upload-history.service';
+import { ContributionLimitService } from './shared/contribution-limit.service';
 import { ComposerUploadsController } from './composers/composer-uploads.controller';
 import { ComposerUploadsService } from './composers/composer-uploads.service';
 import { WorkUploadsController } from './works/work-uploads.controller';
@@ -39,6 +40,7 @@ import { UploadSupportService } from './support/upload-support.service';
   providers: [
     UploadsService,
     UploadHistoryService,
+    ContributionLimitService,
     UploadHistoryQueryService,
     UploadSupportService,
     ModerationService,

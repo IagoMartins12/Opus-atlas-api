@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { getQueueToken } from '@nestjs/bullmq';
+import { Prisma } from '@prisma/client';
 import { JobsOptions, Queue } from 'bullmq';
+import { PrismaService } from '../../prisma/prisma.service';
 import { QueueName } from './queue.constants';
 import { envelope, JobEnvelope } from './job-contract';
 
@@ -138,6 +140,13 @@ export class QueueService {
     job: string;
     payload: TPayload;
     requestedBy?: string | null;
+    /** Tentativas e espera; o padrão é o de todo job (3, exponencial). */
+    options?: Pick<JobsOptions, 'attempts' | 'backoff'>;
+    /**
+     * Guarda no Mongo para o worker reaplicar ao subir. Só `false` na própria
+     * reaplicação, que lê de lá.
+     */
+    persistir?: boolean;
   }): Promise<void> {
     const body: JobEnvelope<TPayload> = envelope({
       // Cada disparo é um trabalho novo, então a chave do envelope identifica o
@@ -151,12 +160,142 @@ export class QueueService {
     await this.queue(input.queue).upsertJobScheduler(
       input.schedulerId,
       { pattern: input.cron, tz: input.timezone },
-      { name: input.job, data: body, opts: DEFAULT_OPTIONS },
+      {
+        name: input.job,
+        data: body,
+        opts: { ...DEFAULT_OPTIONS, ...input.options },
+      },
     );
+
+    if (input.persistir !== false) {
+      await this.prisma()
+        ?.taskSchedule.upsert({
+          where: { schedulerId: input.schedulerId },
+          create: {
+            schedulerId: input.schedulerId,
+            queue: input.queue,
+            job: input.job,
+            cron: input.cron,
+            timezone: input.timezone,
+            payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+            requestedBy: input.requestedBy ?? null,
+            options: (input.options ?? {}) as Prisma.InputJsonValue,
+            enabled: true,
+          },
+          update: {
+            queue: input.queue,
+            job: input.job,
+            cron: input.cron,
+            timezone: input.timezone,
+            payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+            requestedBy: input.requestedBy ?? null,
+            options: (input.options ?? {}) as Prisma.InputJsonValue,
+            enabled: true,
+          },
+        })
+        .catch((error: unknown) =>
+          this.logger.error(
+            `Agendamento ${input.schedulerId} não foi guardado no banco: ${String(error)}`,
+          ),
+        );
+    }
 
     this.logger.log(
       `Agendamento salvo: ${input.queue}/${input.schedulerId} (${input.cron} ${input.timezone})`,
     );
+  }
+
+  /**
+   * O Prisma, achado sem injeção: este serviço é global e montado também em
+   * testes que não têm banco. Sem ele, o agendamento vale só no Redis.
+   */
+  private prisma(): PrismaService | null {
+    try {
+      const prisma = this.moduleRef.get(PrismaService, { strict: false });
+      return prisma && 'taskSchedule' in prisma ? prisma : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Reaplica no Redis todo agendamento ativo guardado no Mongo — o que o
+   * worker faz ao subir. Antes, os agendamentos de manutenção e de scraper
+   * existiam só no Redis, que salva em disco no máximo a cada hora: um Redis
+   * recriado os perdia sem aviso. O agendamento que só está no Redis (criado
+   * antes disto) é trazido para o Mongo, com a carga que o próprio Redis
+   * guarda.
+   */
+  async reaplicarAgendamentos(filas: readonly QueueName[]): Promise<number> {
+    const prisma = this.prisma();
+    if (!prisma) return 0;
+
+    for (const fila of filas) {
+      const vivos = await this.queue(fila).getJobSchedulers();
+      for (const vivo of vivos) {
+        const guardado = await prisma.taskSchedule.findUnique({
+          where: { schedulerId: vivo.key },
+        });
+        const dados = vivo.template?.data as JobEnvelope<unknown> | undefined;
+        if (!guardado && vivo.pattern && vivo.name) {
+          await prisma.taskSchedule.create({
+            data: {
+              schedulerId: vivo.key,
+              queue: fila,
+              job: vivo.name,
+              cron: vivo.pattern,
+              timezone: vivo.tz ?? 'America/Sao_Paulo',
+              payload: (dados?.payload ?? {}) as Prisma.InputJsonValue,
+              requestedBy: dados?.requestedBy ?? null,
+              enabled: true,
+            },
+          });
+        }
+      }
+    }
+
+    const ativos = await prisma.taskSchedule.findMany({
+      where: { enabled: true, queue: { in: [...filas] } },
+    });
+    for (const a of ativos) {
+      await this.upsertSchedule({
+        queue: a.queue as QueueName,
+        schedulerId: a.schedulerId,
+        cron: a.cron,
+        timezone: a.timezone,
+        job: a.job,
+        payload: a.payload,
+        requestedBy: a.requestedBy,
+        options: (a.options ?? undefined) as
+          | Pick<JobsOptions, 'attempts' | 'backoff'>
+          | undefined,
+        persistir: false,
+      });
+    }
+
+    return ativos.length;
+  }
+
+  /**
+   * Cria o agendamento só se ele nunca existiu. Removido por alguém
+   * (`enabled: false`), continua removido — o padrão não volta sozinho.
+   */
+  async agendarSeNuncaExistiu<TPayload>(
+    input: Parameters<QueueService['upsertSchedule']>[0] & {
+      payload: TPayload;
+    },
+  ): Promise<boolean> {
+    const prisma = this.prisma();
+    if (!prisma) return false;
+
+    const existe = await prisma.taskSchedule.findUnique({
+      where: { schedulerId: input.schedulerId },
+      select: { id: true },
+    });
+    if (existe) return false;
+
+    await this.upsertSchedule(input);
+    return true;
   }
 
   /** Agendamentos vivos de uma fila, direto do Redis. */
@@ -178,6 +317,15 @@ export class QueueService {
     schedulerId: string,
   ): Promise<boolean> {
     const removed = await this.queue(queueName).removeJobScheduler(schedulerId);
+
+    // Fica guardado como desligado: é o que impede o worker de recriá-lo ao
+    // subir (o padrão das limpezas só entra quando nunca existiu).
+    await this.prisma()
+      ?.taskSchedule.updateMany({
+        where: { schedulerId },
+        data: { enabled: false },
+      })
+      .catch(() => undefined);
 
     if (removed) {
       this.logger.log(`Agendamento removido: ${queueName}/${schedulerId}`);

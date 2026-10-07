@@ -37,6 +37,10 @@ export class AdminMetricsService {
     return this.overviewService.overview();
   }
 
+  activity(days: number) {
+    return this.overviewService.activity(days);
+  }
+
   /**
    * Reúne os insights das áreas pedidas.
    *

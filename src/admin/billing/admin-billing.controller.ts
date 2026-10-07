@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -23,6 +24,12 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
+import {
+  PLANOS_PAGOS,
+  type PlanoPago,
+} from '../../billing/services/stripe-catalog.service';
 import { Audited } from '../../common/audit/audit.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
@@ -115,6 +122,27 @@ export class AdminBillingController {
     return this.service.toggleCoupon(id);
   }
 
+  @Post('coupons/:id/sync')
+  @HttpCode(HttpStatus.OK)
+  @Audited({
+    action: 'coupon.sync',
+    entityType: 'coupon',
+    entityIdParam: 'id',
+  })
+  @ApiOperation({
+    summary: 'Cria ou refaz o cupom no Stripe',
+    description:
+      'O checkout só dá o desconto se o cupom existir no Stripe. Criar e ' +
+      'editar já espelham; esta rota é para o cupom antigo ou para quando o ' +
+      'Stripe recusou. O motivo de uma falha volta em `stripeSyncError`.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'Cupom com o estado do espelho' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async syncCoupon(@Param('id') id: string) {
+    return this.service.syncCoupon(id);
+  }
+
   @Delete('coupons/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Audited({
@@ -149,6 +177,52 @@ export class AdminBillingController {
     return this.service.listPricing();
   }
 
+  @Get('plan-pricing/stripe')
+  @ApiOperation({
+    summary: 'Painel e Stripe lado a lado',
+    description:
+      'Para cada plano pago: o preço do painel, o Price que vale no Stripe ' +
+      '(mensal e anual) e se os dois batem — em valor e no id que o checkout ' +
+      'usa.',
+  })
+  @ApiOkResponse({ description: 'Estado da sincronização por plano' })
+  async pricingStripeStatus() {
+    return this.service.pricingStripeStatus();
+  }
+
+  @Post('plan-pricing/:planType/push')
+  @HttpCode(HttpStatus.OK)
+  @Audited({ action: 'plan-pricing.push', entityType: 'planPricing' })
+  @ApiOperation({
+    summary: 'Envia o preço do painel ao Stripe',
+    description:
+      'Cria o Price que falta, faz dele o padrão do produto e arquiva o ' +
+      'anterior. Quem já assina continua no preço antigo.',
+  })
+  @ApiParam({ name: 'planType', enum: PLANOS_PAGOS })
+  @ApiOkResponse({ description: 'Versão vigente, com os ids do Stripe' })
+  async pushPricing(@Param('planType') planType: string) {
+    return this.service.pushPricing(this.planoPago(planType));
+  }
+
+  @Post('plan-pricing/:planType/pull')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Traz para o painel o preço que vale no Stripe',
+    description:
+      'Cria uma versão nova com os valores do Stripe (origem `stripe`). É o ' +
+      'mesmo que o webhook faz sozinho quando o preço muda lá. Auditada pelo ' +
+      'serviço, que sabe o antes e o depois.',
+  })
+  @ApiParam({ name: 'planType', enum: PLANOS_PAGOS })
+  @ApiOkResponse({ description: 'Se adotou, e por quê' })
+  async pullPricing(
+    @Param('planType') planType: string,
+    @CurrentUser() user: AccessTokenPayload,
+  ) {
+    return this.service.pullPricing(this.planoPago(planType), user.sub);
+  }
+
   @Get('plan-pricing/:planType/history')
   @ApiOperation({
     summary: 'Histórico de preços de um plano',
@@ -178,5 +252,17 @@ export class AdminBillingController {
   })
   async setPricing(@Body() dto: SetPlanPricingDto) {
     return this.service.setPricing(dto);
+  }
+
+  private planoPago(planType: string): PlanoPago {
+    const plano = planType.toUpperCase();
+
+    if (!(PLANOS_PAGOS as readonly string[]).includes(plano)) {
+      throw new BadRequestException(
+        `Só planos pagos têm preço no Stripe: ${PLANOS_PAGOS.join(', ')}.`,
+      );
+    }
+
+    return plano as PlanoPago;
   }
 }

@@ -49,17 +49,18 @@ function makePrisma() {
 describe('InteractionsService', () => {
   let prisma: ReturnType<typeof makePrisma>;
   let store: Map<string, unknown>;
-  let cache: { get: jest.Mock; set: jest.Mock };
+  let cache: { claimOnce: jest.Mock };
   let service: InteractionsService;
 
   beforeEach(() => {
     prisma = makePrisma();
     store = new Map();
+    // Como o `SET NX` do Redis: confere e grava num passo só.
     cache = {
-      get: jest.fn((key: string) => Promise.resolve(store.get(key))),
-      set: jest.fn((key: string, value: unknown) => {
-        store.set(key, value);
-        return Promise.resolve();
+      claimOnce: jest.fn((key: string) => {
+        if (store.has(key)) return Promise.resolve(false);
+        store.set(key, 1);
+        return Promise.resolve(true);
       }),
     };
     service = new InteractionsService(
@@ -69,6 +70,16 @@ describe('InteractionsService', () => {
   });
 
   describe('visita', () => {
+    it('duas chamadas ao mesmo tempo contam uma vez só', async () => {
+      const [a, b] = await Promise.all([
+        service.registerView(ARTICLE, anonymous),
+        service.registerView(ARTICLE, anonymous),
+      ]);
+
+      expect([a.counted, b.counted].filter(Boolean)).toHaveLength(1);
+      expect(prisma.blogArticle.update).toHaveBeenCalledTimes(1);
+    });
+
     // O legado somava um a cada chamada: um laço inflava qualquer matéria.
     it('o mesmo leitor conta uma vez na janela', async () => {
       const first = await service.registerView(ARTICLE, anonymous);
@@ -77,9 +88,8 @@ describe('InteractionsService', () => {
       expect(first.counted).toBe(true);
       expect(second.counted).toBe(false);
       expect(prisma.blogArticle.update).toHaveBeenCalledTimes(1);
-      expect(cache.set).toHaveBeenCalledWith(
+      expect(cache.claimOnce).toHaveBeenCalledWith(
         expect.stringMatching(/^blog-view:/),
-        1,
         VIEW_WINDOW_MS,
       );
     });
@@ -98,7 +108,7 @@ describe('InteractionsService', () => {
     it('a chave fica fora do namespace de cache dos artigos', async () => {
       await service.registerView(ARTICLE, { userId: USER });
 
-      expect(cache.set.mock.calls[0][0]).not.toMatch(/^blog:articles/);
+      expect(cache.claimOnce.mock.calls[0][0]).not.toMatch(/^blog:articles/);
     });
 
     it('pré-visualização de rascunho não conta', async () => {

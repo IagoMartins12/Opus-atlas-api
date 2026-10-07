@@ -17,6 +17,8 @@ export interface JobStatusView {
   attemptsMade: number;
   requestedBy: string | null;
   requestedAt: string | null;
+  /** O que o job recebeu (a casa, a tarefa). Só na listagem de recentes. */
+  payload?: unknown;
   processedAt: Date | null;
   finishedAt: Date | null;
   /** O que o processor devolveu. Só existe em `completed`. */
@@ -93,9 +95,24 @@ export class JobStatusService {
       requestedAt: isEnvelope(body) ? body.requestedAt : null,
       processedAt: job.processedOn ? new Date(job.processedOn) : null,
       finishedAt: job.finishedOn ? new Date(job.finishedOn) : null,
-      result: state === 'completed' ? job.returnvalue : null,
+      result: state === 'completed' ? semBruto(job.returnvalue) : null,
       failedReason: job.failedReason ?? null,
     };
+  }
+
+  /**
+   * O resultado inteiro de um job concluído, com o que `describe` esconde
+   * (os eventos lidos de uma prévia). Para quem vai usar o dado, não para a
+   * tela que acompanha o andamento.
+   */
+  async resultadoCompleto(
+    queueName: QueueName,
+    jobId: string,
+  ): Promise<{ state: string; result: unknown } | null> {
+    const job = await this.queue(queueName).getJob(jobId);
+    if (!job) return null;
+
+    return { state: await job.getState(), result: job.returnvalue };
   }
 
   /** Saúde de todas as filas registradas neste processo. */
@@ -126,6 +143,57 @@ export class JobStatusService {
         failedAt: job.finishedOn ? new Date(job.finishedOn) : null,
       };
     });
+  }
+
+  /**
+   * As rodadas mais recentes de uma fila — em andamento, esperando, feitas e
+   * falhas —, as mais novas primeiro. É o que as telas de scraper e de
+   * manutenção mostram como "últimas rodadas", com o resultado de cada uma.
+   * `job` filtra por nome do job (ex.: uma tarefa de manutenção só).
+   */
+  async recent(
+    queueName: QueueName,
+    limit = 20,
+    jobName?: string,
+  ): Promise<JobStatusView[]> {
+    // Lê mais que o pedido quando filtra por nome: o filtro é depois.
+    const janela = jobName ? Math.min(limit * 10, 500) : limit;
+    const jobs = await this.queue(queueName).getJobs(
+      ['active', 'waiting', 'delayed', 'completed', 'failed'],
+      0,
+      Math.max(0, janela - 1),
+      false,
+    );
+
+    const vistos = await Promise.all(
+      jobs
+        .filter(
+          (job) =>
+            !jobName || job.name === jobName || jobDataName(job) === jobName,
+        )
+        .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
+        .slice(0, limit)
+        .map(async (job) => {
+          const state = await job.getState();
+          const body = job.data as unknown;
+          return {
+            queue: queueName,
+            jobId: job.id ?? '',
+            job: job.name,
+            state,
+            progress: readProgress(job.progress),
+            attemptsMade: job.attemptsMade,
+            requestedBy: isEnvelope(body) ? body.requestedBy : null,
+            requestedAt: isEnvelope(body) ? body.requestedAt : null,
+            processedAt: job.processedOn ? new Date(job.processedOn) : null,
+            finishedAt: job.finishedOn ? new Date(job.finishedOn) : null,
+            result: state === 'completed' ? semBruto(job.returnvalue) : null,
+            failedReason: job.failedReason ?? null,
+            payload: isEnvelope(body) ? body.payload : null,
+          };
+        }),
+    );
+    return vistos;
   }
 
   private async healthOf(queueName: QueueName): Promise<QueueHealthView> {
@@ -170,4 +238,26 @@ export class JobStatusService {
     this.resolved.set(name, queue);
     return queue;
   }
+}
+
+/** O nome "de dentro" do job (ex.: a tarefa de manutenção), quando há. */
+function jobDataName(job: { data: unknown }): string | null {
+  const body = job.data as unknown;
+  if (!isEnvelope(body)) return null;
+  const payload = body.payload as Record<string, unknown> | null;
+  const nome = payload?.taskId ?? payload?.scraperId;
+  return typeof nome === 'string' ? nome : null;
+}
+
+/**
+ * Tira do resultado o que é dado bruto: a prévia do scraper guarda até 300
+ * eventos completos em `lidos`, e a tela que acompanha a rodada consulta o job
+ * a cada segundo e meio — mandar isso toda vez seria centenas de KB à toa.
+ */
+function semBruto(resultado: unknown): unknown {
+  if (resultado && typeof resultado === 'object' && 'lidos' in resultado) {
+    const { lidos: _lidos, ...resto } = resultado as Record<string, unknown>;
+    return resto;
+  }
+  return resultado;
 }

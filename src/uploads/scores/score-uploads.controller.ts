@@ -29,6 +29,7 @@ import {
 import { Request } from 'express';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
+import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { UploadHistoryService } from '../shared/upload-history.service';
 import { CreateScoreContributionDto } from './dto/create-score-contribution.dto';
@@ -110,6 +111,12 @@ export class ScoreUploadsController {
   }
 
   @Patch(':id')
+  @Audited({
+    action: 'upload.score.update',
+    entityType: 'workScore',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @ApiOperation({
     summary: 'Edita os metadados de uma partitura enviada pelo próprio usuário',
     description:
@@ -139,6 +146,12 @@ export class ScoreUploadsController {
   }
 
   @Delete(':id')
+  @Audited({
+    action: 'upload.score.delete',
+    entityType: 'workScore',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove uma partitura enviada pelo próprio usuário',

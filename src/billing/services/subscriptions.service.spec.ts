@@ -1,3 +1,4 @@
+import { AppCacheService } from '../../common/cache/cache.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -5,6 +6,7 @@ import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoicesService } from './invoices.service';
 import { PlanPricingService } from './plan-pricing.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { StripeService } from './stripe.service';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -37,7 +39,13 @@ describe('SubscriptionsService', () => {
     };
     subscriptionHistory: { create: jest.Mock; findMany: jest.Mock };
     payment: { findMany: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
-    user: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
+    user: {
+      findUniqueOrThrow: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
+    teacher: { create: jest.Mock; update: jest.Mock };
+    $transaction: jest.Mock;
     coupon: { findFirst: jest.Mock; update: jest.Mock };
     couponUsage: { findUnique: jest.Mock; create: jest.Mock };
   };
@@ -46,12 +54,14 @@ describe('SubscriptionsService', () => {
     createCheckoutSession: jest.Mock;
     retrieveCheckoutSession: jest.Mock;
   };
+  let catalog: { priceIdFor: jest.Mock; checkoutCouponId: jest.Mock };
   let invoices: { createFromPayment: jest.Mock };
   let mail: {
     sendPaymentApprovedEmail: jest.Mock;
     sendSubscriptionCancelledEmail: jest.Mock;
   };
   let service: SubscriptionsService;
+  let cache: { invalidateMany: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -81,8 +91,17 @@ describe('SubscriptionsService', () => {
           email: 'ana@x.com',
           firstName: 'Ana',
         }),
+        findUnique: jest.fn().mockResolvedValue({
+          isTeacher: false,
+          teacherProfile: null,
+        }),
         update: jest.fn().mockResolvedValue({}),
       },
+      teacher: {
+        create: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $transaction: jest.fn(),
       coupon: {
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
@@ -105,7 +124,12 @@ describe('SubscriptionsService', () => {
         .mockResolvedValue({ id: 'cs_1', url: 'https://checkout/cs_1' }),
       retrieveCheckoutSession: jest.fn(),
     };
+    catalog = {
+      priceIdFor: jest.fn().mockResolvedValue('price_vigente'),
+      checkoutCouponId: jest.fn().mockResolvedValue('stripe_cupom'),
+    };
     invoices = { createFromPayment: jest.fn().mockResolvedValue(undefined) };
+    cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
     mail = {
       sendPaymentApprovedEmail: jest.fn().mockResolvedValue(undefined),
       sendSubscriptionCancelledEmail: jest.fn().mockResolvedValue(undefined),
@@ -114,11 +138,17 @@ describe('SubscriptionsService', () => {
       prisma as unknown as PrismaService,
       pricing as unknown as PlanPricingService,
       stripe as unknown as StripeService,
+      catalog as unknown as StripeCatalogService,
       invoices as unknown as InvoicesService,
       mail as unknown as MailService,
       {
         get: jest.fn((_key: string, fallback: string) => fallback),
       } as unknown as ConfigService,
+      cache as unknown as AppCacheService,
+    );
+    // A transação roda o callback com o próprio mock como cliente.
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(prisma),
     );
   });
 
@@ -284,6 +314,35 @@ describe('SubscriptionsService', () => {
       });
       expect(prisma.couponUsage.create).not.toHaveBeenCalled();
       expect(prisma.coupon.update).not.toHaveBeenCalled();
+      // O cupom vai na sessão do Stripe: sem isso a pessoa via "cupom
+      // aplicado" e pagava o preço cheio.
+      expect(catalog.checkoutCouponId).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'cup-1' }),
+        29.9,
+        5.98,
+      );
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priceId: 'price_vigente',
+          stripeCouponId: 'stripe_cupom',
+        }),
+      );
+    });
+
+    it('sem cupom, a sessão usa o preço vigente e nenhum desconto', async () => {
+      await service.create(USER, 'a@x.com', 'Ana', {
+        planType: 'PLUS',
+        billingPeriod: 'YEARLY',
+      });
+
+      expect(catalog.priceIdFor).toHaveBeenCalledWith('PLUS', 'YEARLY');
+      expect(catalog.checkoutCouponId).not.toHaveBeenCalled();
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priceId: 'price_vigente',
+          stripeCouponId: null,
+        }),
+      );
     });
 
     describe('cupom recusado', () => {
@@ -307,9 +366,7 @@ describe('SubscriptionsService', () => {
       it('já usado pela pessoa', async () => {
         prisma.coupon.findFirst.mockResolvedValue(base);
         prisma.couponUsage.findUnique.mockResolvedValue({ id: 'u' });
-        await expect(tryCoupon()).rejects.toThrow(
-          'Você já utilizou este cupom',
-        );
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
 
       it('esgotado', async () => {
@@ -318,7 +375,7 @@ describe('SubscriptionsService', () => {
           maxUses: 5,
           usedCount: 5,
         });
-        await expect(tryCoupon()).rejects.toThrow('Cupom esgotado');
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
 
       it('de outro plano', async () => {
@@ -326,9 +383,7 @@ describe('SubscriptionsService', () => {
           ...base,
           applicablePlans: ['MAESTRO'],
         });
-        await expect(tryCoupon()).rejects.toThrow(
-          'Cupom não aplicável a este plano',
-        );
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
     });
   });
@@ -713,6 +768,78 @@ describe('SubscriptionsService', () => {
       const [{ data }] = prisma.subscriptionHistory.create.mock.calls[0];
       expect(data).toMatchObject({ action: 'RENEWED', subscriptionId: SUB });
       expect(invoices.createFromPayment).toHaveBeenCalledWith(SUB, 'pay-1');
+    });
+  });
+
+  describe('professor pela assinatura', () => {
+    it('plano Mentor com teste grátis: vira professor ativo na hora', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(null);
+      await service.create(USER, 'ana@x.com', 'Ana', {
+        planType: 'MENTOR',
+        billingPeriod: 'MONTHLY',
+      } as never);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: USER },
+        data: { isTeacher: true },
+      });
+      expect(prisma.teacher.create).toHaveBeenCalledWith({
+        data: { userId: USER, status: 'ACTIVE', isVerified: false },
+      });
+      expect(cache.invalidateMany).toHaveBeenCalled();
+    });
+
+    it('plano Plus não mexe no papel de professor', async () => {
+      await service.activateTeacherForPlan(USER, 'PLUS');
+      expect(prisma.teacher.create).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('ex-professor com perfil inativo volta a ativo, sem perfil novo', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        isTeacher: false,
+        teacherProfile: { id: 't1', status: 'INACTIVE' },
+      });
+      await service.activateTeacherForPlan(USER, 'MAESTRO');
+      expect(prisma.teacher.create).not.toHaveBeenCalled();
+      expect(prisma.teacher.update).toHaveBeenCalledWith({
+        where: { id: 't1' },
+        data: { status: 'ACTIVE' },
+      });
+    });
+
+    it('professor já ativo: nada muda', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        isTeacher: true,
+        teacherProfile: { id: 't1', status: 'ACTIVE' },
+      });
+      await service.activateTeacherForPlan(USER, 'MENTOR');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(cache.invalidateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('plano concedido pela equipe', () => {
+    it('cria assinatura ativa, sem cobrança nem renovação, com vencimento', async () => {
+      const ate = new Date(Date.now() + 30 * DAY);
+      await service.grantPlan(USER, 'MAESTRO', ate, 'admin-1');
+      expect(prisma.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: USER,
+          planType: 'MAESTRO',
+          status: 'ACTIVE',
+          endDate: ate,
+          price: 0,
+          autoRenew: false,
+        }),
+      });
+    });
+
+    it('sem vencimento grava endDate nulo', async () => {
+      await service.grantPlan(USER, 'MENTOR', null);
+      expect(prisma.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ endDate: null }),
+      });
     });
   });
 });

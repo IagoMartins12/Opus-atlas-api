@@ -43,18 +43,7 @@ export class PlanPricingService {
     for (const plan of plans) {
       data[plan.planType] = {
         monthly: plan.monthlyPrice,
-        quarterly: this.buildPeriodPricing(
-          plan.monthlyPrice,
-          plan.quarterlyPrice ?? 0,
-          plan.quarterlyDiscount,
-          3,
-        ),
-        biannual: this.buildPeriodPricing(
-          plan.monthlyPrice,
-          plan.biannualPrice ?? 0,
-          plan.biannualDiscount,
-          6,
-        ),
+        // Só mensal e anual: são os únicos períodos que o Stripe vende.
         yearly: this.buildPeriodPricing(
           plan.monthlyPrice,
           plan.yearlyPrice ?? 0,

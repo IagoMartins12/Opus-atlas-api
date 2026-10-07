@@ -1,3 +1,4 @@
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { BadRequestException, HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TokenType } from '@prisma/client';
@@ -23,6 +24,7 @@ describe('TeacherInvitationService', () => {
   };
   let mail: { sendTeacherInvitationEmail: jest.Mock };
   let service: TeacherInvitationService;
+  let subscriptions: { grantPlan: jest.Mock };
 
   const invited = (status = 'PENDING') => ({
     isTeacher: true,
@@ -50,12 +52,14 @@ describe('TeacherInvitationService', () => {
       checkRateLimit: jest.fn().mockResolvedValue({ allowed: true }),
     };
     mail = { sendTeacherInvitationEmail: jest.fn() };
+    subscriptions = { grantPlan: jest.fn().mockResolvedValue({}) };
     service = new TeacherInvitationService(
       prisma as unknown as PrismaService,
       tokens as unknown as UserTokenService,
       mail as unknown as MailService,
       { get: () => 'https://opusatlas.com.br' } as unknown as ConfigService,
       { invalidateMany: jest.fn() } as unknown as AppCacheService,
+      subscriptions as unknown as SubscriptionsService,
     );
   });
 
@@ -137,5 +141,59 @@ describe('TeacherInvitationService', () => {
     tokens.checkRateLimit.mockResolvedValue({ allowed: false });
 
     await expect(service.resend('tok')).rejects.toBeInstanceOf(HttpException);
+  });
+
+  describe('plano que acompanha o convite', () => {
+    it('guarda o plano no link de aceite e o cita no e-mail', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        email: 'ana@example.com',
+        firstName: 'Ana',
+        lastName: null,
+      });
+      const ate = new Date('2027-01-31T12:00:00Z');
+
+      await service.send('u1', undefined, {
+        planType: 'MENTOR',
+        expiresAt: ate,
+      });
+
+      expect(tokens.createToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'TEACHER_INVITATION_ACCEPT',
+          metadata: {
+            planGrant: { planType: 'MENTOR', expiresAt: ate.toISOString() },
+          },
+        }),
+      );
+      expect(mail.sendTeacherInvitationEmail).toHaveBeenCalledWith(
+        'ana@example.com',
+        expect.objectContaining({
+          planGrant: { planName: 'Mentor', until: '31/01/2027' },
+        }),
+      );
+    });
+
+    it('concede o plano quando o convite é aceito', async () => {
+      tokens.validateToken.mockResolvedValue({
+        valid: true,
+        token: {
+          userId: 'u1',
+          metadata: { planGrant: { planType: 'MAESTRO', expiresAt: null } },
+        },
+      });
+
+      await service.accept('tok');
+
+      expect(subscriptions.grantPlan).toHaveBeenCalledWith(
+        'u1',
+        'MAESTRO',
+        null,
+      );
+    });
+
+    it('sem plano no convite, nada é concedido', async () => {
+      await service.accept('tok');
+      expect(subscriptions.grantPlan).not.toHaveBeenCalled();
+    });
   });
 });

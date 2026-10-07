@@ -12,4 +12,6 @@ export const TAG_REF_SELECT = {
   name: true,
   slug: true,
   color: true,
+  // O nome em inglês, para o blog em /en.
+  translation: true,
 } as const;

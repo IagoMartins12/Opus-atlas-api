@@ -34,17 +34,38 @@ const LESSON_SELECT = {
   title: true,
   scheduledAt: true,
   teacher: {
-    select: { user: { select: { id: true, firstName: true, lastName: true } } },
+    select: {
+      lessonReminderMinutes: true,
+      user: { select: { id: true, firstName: true, lastName: true } },
+    },
   },
   student: {
     select: { user: { select: { id: true, firstName: true, lastName: true } } },
   },
 } as const;
 
+/**
+ * Os lembretes que o professor escolheu no esquema de aulas (04/10/2026):
+ * de véspera (12 h ou mais antes) e de "começa logo" (menos que isso). Lista
+ * vazia é o padrão, os dois — é o que vem de professor anterior ao campo.
+ */
+export function wantsReminder(
+  teacher: { lessonReminderMinutes: number[] | null },
+  kind: 'eve' | 'soon',
+): boolean {
+  const minutes = teacher.lessonReminderMinutes ?? [];
+  if (minutes.length === 0) return true;
+  return kind === 'eve'
+    ? minutes.some((m) => m >= 12 * 60)
+    : minutes.some((m) => m < 12 * 60);
+}
+
 export interface SweepResult {
   /** Quantas notificações foram criadas, por regra. */
   created: Record<string, number>;
   total: number;
+  /** E-mails da caixa de saída enviados nesta passada. */
+  emailed: number;
   durationMs: number;
 }
 
@@ -114,9 +135,14 @@ export class NotificationSweepService {
       total += inputs.length;
     }
 
+    // A caixa de saída: os e-mails dos avisos (deste e de outros caminhos)
+    // cujo horário chegou.
+    const { sent } = await this.notifications.flushEmails(now);
+
     const result: SweepResult = {
       created,
       total,
+      emailed: sent,
       durationMs: Date.now() - startedAt,
     };
 
@@ -143,9 +169,9 @@ export class NotificationSweepService {
       take: MAX_PER_RULE,
     });
 
-    return lessons.flatMap((lesson) =>
-      lessonStartingSoon(this.toNotice(lesson)),
-    );
+    return lessons
+      .filter((lesson) => wantsReminder(lesson.teacher, 'soon'))
+      .flatMap((lesson) => lessonStartingSoon(this.toNotice(lesson)));
   }
 
   /**
@@ -167,7 +193,9 @@ export class NotificationSweepService {
       take: MAX_PER_RULE,
     });
 
-    return lessons.flatMap((lesson) => lessonTomorrow(this.toNotice(lesson)));
+    return lessons
+      .filter((lesson) => wantsReminder(lesson.teacher, 'eve'))
+      .flatMap((lesson) => lessonTomorrow(this.toNotice(lesson)));
   }
 
   private async needsStatus(now: Date): Promise<CreateNotificationInput[]> {

@@ -156,7 +156,13 @@ export class GoogleAuthService {
   }
 
   /** Endereço do front para onde o navegador volta. */
-  frontUrl(path: string, error?: GoogleAuthError): string {
+  /**
+   * `newUser` marca a volta de uma conta criada agora (`?new-user=true`): o
+   * front abre as boas-vindas por ela, venha a pessoa do "Criar conta" ou do
+   * "Entrar" — antes só o cadastro marcava, e quem criava a conta pelo botão
+   * de entrar nunca via as boas-vindas.
+   */
+  frontUrl(path: string, error?: GoogleAuthError, newUser = false): string {
     const base = this.config.get<string>(
       'mediaSearch.frontendBaseUrl',
       'http://localhost:3000',
@@ -165,6 +171,10 @@ export class GoogleAuthService {
 
     if (error) {
       url.searchParams.set('authError', error);
+    }
+
+    if (newUser) {
+      url.searchParams.set('new-user', 'true');
     }
 
     return url.toString();

@@ -19,12 +19,6 @@ export class PlanPricingDto {
   monthly: number;
 
   @ApiProperty({ type: PeriodPricingDto })
-  quarterly: PeriodPricingDto;
-
-  @ApiProperty({ type: PeriodPricingDto })
-  biannual: PeriodPricingDto;
-
-  @ApiProperty({ type: PeriodPricingDto })
   yearly: PeriodPricingDto;
 
   @ApiProperty({ example: 7 })

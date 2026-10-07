@@ -149,7 +149,9 @@ export const ASSET_KIND_POLICIES: Record<StorageAssetKind, AssetKindPolicy> = {
     resourceType: StorageResourceType.VIDEO,
     strategy: UploadStrategy.SIGNED_DIRECT,
     maxBytes: 500 * MB,
-    allowedMimeTypes: VIDEO_MIMES,
+    // Gravação de estudo também é áudio (04/10/2026); o Cloudinary trata
+    // áudio como `video`, como em `WORK_AUDIO`.
+    allowedMimeTypes: [...VIDEO_MIMES, ...AUDIO_MIMES],
     replacesPrevious: false,
     requiresOwner: true,
   },

@@ -11,3 +11,9 @@ export class DashboardQueryDto {
   @IsIn(['teacher', 'student'])
   as?: 'teacher' | 'student';
 }
+
+export class PortalOnboardingDto {
+  @ApiPropertyOptional({ enum: ['teacher', 'student'] })
+  @IsIn(['teacher', 'student'])
+  role: 'teacher' | 'student';
+}

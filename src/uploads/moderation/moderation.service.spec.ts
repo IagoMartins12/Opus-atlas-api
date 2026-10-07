@@ -13,6 +13,7 @@ import { ModerationService } from './moderation.service';
 describe('ModerationService', () => {
   let service: ModerationService;
   let prisma: {
+    $runCommandRaw: jest.Mock;
     uploadModeration: {
       create: jest.Mock;
       findFirst: jest.Mock;
@@ -60,6 +61,9 @@ describe('ModerationService', () => {
 
   beforeEach(async () => {
     prisma = {
+      $runCommandRaw: jest
+        .fn()
+        .mockResolvedValue({ cursor: { firstBatch: [] } }),
       uploadModeration: {
         create: jest.fn().mockResolvedValue({ id: 'mod-1' }),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -421,6 +425,9 @@ describe('ModerationService', () => {
 
   describe('list', () => {
     it('pagina e resolve o conteúdo denunciado de cada linha', async () => {
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: { firstBatch: [{ _id: { $oid: 'mod-1' } }] },
+      });
       prisma.uploadModeration.findMany.mockResolvedValue([
         {
           id: 'mod-1',
@@ -446,6 +453,55 @@ describe('ModerationService', () => {
         createdBy: 'autor-1',
       });
       expect(result.pagination.totalPages).toBe(1);
+    });
+
+    // Ordenar `priority` como texto punha as urgentes (24 h) por último.
+    it('a fila aberta vem na ordem do prazo, calculada no banco', async () => {
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: {
+          firstBatch: [
+            { _id: { $oid: 'urgente' } },
+            { _id: { $oid: 'comum' } },
+          ],
+        },
+      });
+      // O banco devolve na ordem que quiser; a lista respeita a do prazo.
+      prisma.uploadModeration.findMany.mockResolvedValue([
+        {
+          id: 'comum',
+          entityType: 'work',
+          entityId: 'w',
+          priority: 'normal',
+          createdAt: new Date(),
+        },
+        {
+          id: 'urgente',
+          entityType: 'work',
+          entityId: 'w',
+          priority: 'urgent',
+          createdAt: new Date(),
+        },
+      ]);
+
+      const result = await service.list({
+        page: 1,
+        limit: 20,
+        status: 'pending',
+      });
+
+      expect(result.reports.map((r) => r.id)).toEqual(['urgente', 'comum']);
+      const pipeline = prisma.$runCommandRaw.mock.calls[0][0].pipeline;
+      expect(pipeline[0]).toEqual({ $match: { status: 'pending' } });
+      expect(pipeline[2]).toEqual({ $sort: { vence: 1, _id: 1 } });
+    });
+
+    it('o histórico vem do mais recente, sem passar pela agregação', async () => {
+      await service.list({ page: 1, limit: 20, status: 'all' });
+
+      expect(prisma.$runCommandRaw).not.toHaveBeenCalled();
+      expect(prisma.uploadModeration.findMany.mock.calls[0][0].orderBy).toEqual(
+        [{ createdAt: 'desc' }, { id: 'desc' }],
+      );
     });
   });
 

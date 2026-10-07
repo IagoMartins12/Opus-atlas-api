@@ -106,11 +106,13 @@ export class GoogleAuthController {
         return back(pending.redirect, 'google_unverified');
       }
 
-      const { session } = await this.auth.loginWithGoogle(profile);
+      const { session, isNewUser } = await this.auth.loginWithGoogle(profile);
 
       this.cookies.applySession(response, session);
 
-      return back(pending.redirect);
+      return response.redirect(
+        this.google.frontUrl(pending.redirect, undefined, isNewUser),
+      );
     } catch (failure) {
       this.logger.warn(
         `Login com Google falhou: ${(failure as Error).message}`,

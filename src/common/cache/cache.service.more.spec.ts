@@ -34,6 +34,41 @@ describe('AppCacheService', () => {
     );
   });
 
+  describe('reserva única (claimOnce)', () => {
+    it('com Redis, usa SET NX PX e diz se conseguiu', async () => {
+      const set = jest
+        .fn()
+        .mockResolvedValueOnce('OK')
+        .mockResolvedValueOnce(null);
+      store.store = { client: { set } };
+
+      await expect(service.claimOnce('blog-view:a', 1000)).resolves.toBe(true);
+      await expect(service.claimOnce('blog-view:a', 1000)).resolves.toBe(false);
+      expect(set).toHaveBeenCalledWith('blog-view:a', '1', {
+        NX: true,
+        PX: 1000,
+      });
+    });
+
+    it('sem Redis, duas reservas ao mesmo tempo: só uma consegue', async () => {
+      const gravado = new Map<string, unknown>();
+      store.get.mockImplementation((k: string) =>
+        Promise.resolve(gravado.get(k)),
+      );
+      store.set.mockImplementation((k: string, v: unknown) => {
+        gravado.set(k, v);
+        return Promise.resolve();
+      });
+
+      const resultados = await Promise.all([
+        service.claimOnce('blog-view:b', 1000),
+        service.claimOnce('blog-view:b', 1000),
+      ]);
+
+      expect(resultados.filter(Boolean)).toHaveLength(1);
+    });
+  });
+
   describe('leitura e escrita', () => {
     it('conta acerto e erro por rota, quando informada', async () => {
       store.get.mockResolvedValueOnce({ a: 1 }).mockResolvedValueOnce(null);

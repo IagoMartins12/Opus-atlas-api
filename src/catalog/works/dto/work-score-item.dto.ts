@@ -44,6 +44,18 @@ export class WorkScoreItemDto {
   publisher?: string | null;
 }
 
+export class ImslpScoresStatusDto {
+  @ApiProperty({
+    enum: ['stored', 'pending', 'none', 'unavailable'],
+    description:
+      '`stored`: já guardadas · `pending`: a busca está na fila — pergunte de novo em ' +
+      '`GET /works/:id/scores/imslp-status` · `none`: o IMSLP não tem arquivo · ' +
+      '`unavailable`: não deu para buscar agora (IMSLP fora, fila cheia, robô)',
+    example: 'pending',
+  })
+  status: 'stored' | 'pending' | 'none' | 'unavailable';
+}
+
 export class WorkScoresResponseDto {
   @ApiProperty({ type: [WorkScoreItemDto] })
   scores: WorkScoreItemDto[];
@@ -67,4 +79,11 @@ export class WorkScoresResponseDto {
     },
   })
   totalByType?: Record<string, number>;
+
+  @ApiPropertyOptional({
+    type: ImslpScoresStatusDto,
+    description:
+      'Situação das partituras do IMSLP — só na listagem (sem `sourceId`)',
+  })
+  imslp?: ImslpScoresStatusDto;
 }

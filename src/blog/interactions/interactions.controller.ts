@@ -163,9 +163,10 @@ export class InteractionsController {
   @ApiOperation({
     summary: 'Registra uma visita',
     description:
-      'Uma por leitor a cada 30 minutos, só em artigo publicado. O legado ' +
-      'somava um a cada chamada, sem nenhuma deduplicação. **Nenhuma tela do ' +
-      'front atual chama esta rota.**',
+      'Uma por leitor a cada 30 minutos, só em artigo publicado, com reserva ' +
+      'atômica (duas chamadas ao mesmo tempo contam uma). O legado somava um ' +
+      'a cada chamada. Chamada pela página do artigo (`ContadorDeLeitura`), ' +
+      'uma vez por visita.',
   })
   @ApiParam({ name: 'id', description: 'Id do artigo' })
   @ApiOkResponse({ description: '`counted` diz se a visita contou' })

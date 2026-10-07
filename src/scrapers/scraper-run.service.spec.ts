@@ -21,7 +21,7 @@ describe('ScraperRunService', () => {
     scrapeEvents: jest.Mock;
   };
   let registry: { require: jest.Mock };
-  let importer: { importEvents: jest.Mock };
+  let importer: { importEvents: jest.Mock; existente: jest.Mock };
 
   beforeEach(async () => {
     scraper = {
@@ -31,7 +31,10 @@ describe('ScraperRunService', () => {
     };
 
     registry = { require: jest.fn().mockReturnValue(scraper) };
-    importer = { importEvents: jest.fn().mockResolvedValue(importResult()) };
+    importer = {
+      importEvents: jest.fn().mockResolvedValue(importResult()),
+      existente: jest.fn().mockResolvedValue(null),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -52,7 +55,11 @@ describe('ScraperRunService', () => {
 
     await service.run('osesp');
 
-    expect(importer.importEvents).toHaveBeenCalledWith('osesp', events);
+    expect(importer.importEvents).toHaveBeenCalledWith(
+      'osesp',
+      events,
+      expect.any(Function),
+    );
   });
 
   it('devolve o que foi importado, duplicado e recusado', async () => {
@@ -115,6 +122,30 @@ describe('ScraperRunService', () => {
     expect(result.problems).toEqual([
       'Concerto sem hora: Evento sem horário de início — não importado',
     ]);
+    // Mas cada evento, um a um, volta no resultado com o que houve.
+    expect(result.eventos.map((e) => e.estado)).toEqual([
+      'falhou',
+      'ja-existia',
+    ]);
+  });
+
+  it('avisa o progresso evento a evento durante a importação', async () => {
+    importer.importEvents.mockImplementation(
+      (
+        _id: string,
+        _ev: unknown[],
+        aoImportar: (f: number, t: number, ti: string) => void,
+      ) => {
+        aoImportar(0, 4, 'Primeiro');
+        aoImportar(2, 4, 'Terceiro');
+        return Promise.resolve(importResult());
+      },
+    );
+    const passos: Array<[number, string]> = [];
+    await service.run('osesp', (p, m) => passos.push([p, m]));
+
+    expect(passos).toContainEqual([80, 'Importando 1 de 4: Primeiro']);
+    expect(passos).toContainEqual([90, 'Importando 3 de 4: Terceiro']);
   });
 
   describe('progresso', () => {
@@ -145,5 +176,28 @@ describe('ScraperRunService', () => {
 
       expect(percentuais.every((value) => Number.isFinite(value))).toBe(true);
     });
+  });
+
+  // A rodada manual só lê: nada entra na agenda sem escolha.
+  it('prévia não importa; marca o que já existe e guarda os lidos', async () => {
+    const events = [
+      { title: 'Concerto', startDate: new Date('2026-11-01') },
+      { title: 'Recital', startDate: new Date('2026-11-02') },
+    ];
+    scraper.scrapeEvents.mockResolvedValue(events);
+    importer.existente.mockImplementation((e: { title: string }) =>
+      Promise.resolve(e.title === 'Recital' ? { id: 'ev-1' } : null),
+    );
+
+    const result = await service.run('osesp', undefined, 'previa');
+
+    expect(importer.importEvents).not.toHaveBeenCalled();
+    expect(result.modo).toBe('previa');
+    expect(result.lidos).toHaveLength(2);
+    expect(result.eventos.map((e) => [e.indice, e.estado])).toEqual([
+      [0, 'novo'],
+      [1, 'ja-existia'],
+    ]);
+    expect(result.duplicates).toBe(1);
   });
 });

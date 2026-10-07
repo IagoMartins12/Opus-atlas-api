@@ -122,6 +122,11 @@ export class BlogCalendarQueryDto {
 // Evento
 // -------------------------------------------------------------------------
 
+/** Destaques da agenda: até três por mês (pelo mês em que o evento começa). */
+export const MAX_FEATURED_EVENTS = 3;
+export const FEATURED_SIZES = ['large', 'normal'] as const;
+export type FeaturedSize = (typeof FEATURED_SIZES)[number];
+
 export class CreateEventDto {
   @ApiProperty({ maxLength: 300 })
   @IsString()
@@ -243,12 +248,26 @@ export class CreateEventDto {
   @IsBoolean()
   isFeatured?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: MAX_FEATURED_EVENTS,
+    description:
+      'Posição no mosaico de destaques do mês. Sem ela, a menor livre; ' +
+      'ocupada, o evento que estava nela deixa de ser destaque.',
+  })
   @IsOptional()
   @IsInt()
-  @Min(0)
-  @Max(1000)
+  @Min(1)
+  @Max(MAX_FEATURED_EVENTS)
   featuredOrder?: number | null;
+
+  @ApiPropertyOptional({
+    enum: FEATURED_SIZES,
+    description: '`large` ocupa a largura do mosaico; `normal`, uma coluna',
+  })
+  @IsOptional()
+  @IsIn(FEATURED_SIZES)
+  featuredSize?: FeaturedSize | null;
 
   @ApiPropertyOptional()
   @IsOptional()

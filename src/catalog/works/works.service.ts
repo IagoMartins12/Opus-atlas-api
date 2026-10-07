@@ -1628,13 +1628,23 @@ export class WorksService {
   async getScores(
     workId: string,
     query: GetWorkScoresQueryDto,
+    options: { robot?: boolean } = {},
   ): Promise<WorkScoresResponseDto> {
-    // Obra sem partitura guardada: lê do IMSLP uma vez (ver ImslpScoresService).
     // Só na listagem — a busca por `sourceId` é de partitura que já existe.
-    if (!query.sourceId) {
-      await this.imslpScores.ensure(workId);
-    }
+    if (query.sourceId) return this.listScores(workId, query);
 
+    // Obra sem partitura do IMSLP: a leitura é pedida à fila e a resposta não
+    // espera por ela (ver ImslpScoresService). A tela mostra o aviso enquanto
+    // `imslp.status` for `pending`.
+    const status = await this.imslpScores.request(workId, options);
+    const result = await this.listScores(workId, query);
+    return { ...result, imslp: { status } };
+  }
+
+  private async listScores(
+    workId: string,
+    query: GetWorkScoresQueryDto,
+  ): Promise<WorkScoresResponseDto> {
     if (query.sourceId && query.source) {
       const score = await this.prisma.workScore.findFirst({
         where: {

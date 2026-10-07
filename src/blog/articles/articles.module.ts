@@ -5,12 +5,23 @@ import { ArticlesAdminController } from './articles-admin.controller';
 import { ArticlesService } from './articles.service';
 import { ArticlePublishingService } from './article-publishing.service';
 import { ArticleWriterService } from './article-writer.service';
+import { AuthorArticlesController } from './author-articles.controller';
+import { AuthorArticlesService } from './author-articles.service';
 
 @Module({
   // `BlogMediaModule`: a gravação do artigo adota os arquivos de rascunho.
   imports: [BlogMediaModule],
-  controllers: [ArticlesController, ArticlesAdminController],
-  providers: [ArticlesService, ArticleWriterService, ArticlePublishingService],
+  controllers: [
+    ArticlesController,
+    ArticlesAdminController,
+    AuthorArticlesController,
+  ],
+  providers: [
+    ArticlesService,
+    ArticleWriterService,
+    ArticlePublishingService,
+    AuthorArticlesService,
+  ],
   // `ArticlePublishingService` sai daqui para o worker: é ele que a varredura
   // de agendados chama.
   exports: [ArticlesService, ArticlePublishingService],

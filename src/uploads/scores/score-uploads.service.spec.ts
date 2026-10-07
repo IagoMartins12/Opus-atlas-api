@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { UploadHistoryService } from '../shared/upload-history.service';
+import { ContributionLimitService } from '../shared/contribution-limit.service';
 import { ScoreUploadsService } from './score-uploads.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 
@@ -78,6 +79,10 @@ describe('ScoreUploadsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ActivityTracker, useValue: { track: jest.fn() } },
         { provide: UploadHistoryService, useValue: history },
+        {
+          provide: ContributionLimitService,
+          useValue: { assertWithinLimit: jest.fn() },
+        },
         { provide: StorageService, useValue: storage },
         { provide: AppCacheService, useValue: cache },
       ],

@@ -7,7 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { TeacherStatus, TokenType } from '@prisma/client';
+import { PlanType, TeacherStatus, TokenType } from '@prisma/client';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { UserTokenService } from '../../auth/user-token.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
@@ -17,6 +18,24 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 /** Reenvios que a própria pessoa pode pedir por hora. */
 const MAX_RESENDS_PER_HOUR = 3;
+
+/** O plano que acompanha o convite, guardado no link de aceite. */
+export interface TeacherPlanGrant {
+  planType: PlanType;
+  /** Nulo: sem vencimento. */
+  expiresAt: Date | null;
+}
+
+/** O que vai no `metadata` do token de aceite (JSON: a data como texto). */
+interface GrantMetadata {
+  planGrant?: { planType: PlanType; expiresAt: string | null };
+}
+
+const PLAN_NAME: Partial<Record<PlanType, string>> = {
+  PLUS: 'Plus',
+  MENTOR: 'Mentor',
+  MAESTRO: 'Maestro',
+};
 
 const displayName = (user: {
   firstName: string | null;
@@ -51,10 +70,20 @@ export class TeacherInvitationService {
     private readonly mail: MailService,
     private readonly config: ConfigService,
     private readonly cache: AppCacheService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
-  /** Emite os links e envia o e-mail. Falha de e-mail vira log, não erro. */
-  async send(userId: string, invitedById?: string): Promise<boolean> {
+  /**
+   * Emite os links e envia o e-mail. Falha de e-mail vira log, não erro.
+   *
+   * `grant` é o plano que a equipe decidiu conceder: vai no link de aceite e
+   * só é concedido quando a pessoa aceita.
+   */
+  async send(
+    userId: string,
+    invitedById?: string,
+    grant?: TeacherPlanGrant,
+  ): Promise<boolean> {
     const [user, invitedBy] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
@@ -80,6 +109,14 @@ export class TeacherInvitationService {
       this.tokens.createToken({
         userId,
         type: TokenType.TEACHER_INVITATION_ACCEPT,
+        metadata: grant
+          ? {
+              planGrant: {
+                planType: grant.planType,
+                expiresAt: grant.expiresAt?.toISOString() ?? null,
+              },
+            }
+          : undefined,
       }),
       this.tokens.createToken({
         userId,
@@ -100,6 +137,16 @@ export class TeacherInvitationService {
           : 'A equipe',
         acceptUrl: `${baseUrl}/confirm-teacher-invite/${acceptToken}`,
         declineUrl: `${baseUrl}/decline-teacher-invite/${declineToken}`,
+        planGrant: grant
+          ? {
+              planName: PLAN_NAME[grant.planType] ?? grant.planType,
+              until: grant.expiresAt
+                ? grant.expiresAt.toLocaleDateString('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                  })
+                : null,
+            }
+          : undefined,
       });
       return true;
     } catch (error: unknown) {
@@ -111,7 +158,7 @@ export class TeacherInvitationService {
   }
 
   async accept(token: string) {
-    const userId = await this.consume(
+    const { userId, metadata } = await this.consume(
       token,
       TokenType.TEACHER_INVITATION_ACCEPT,
     );
@@ -132,15 +179,26 @@ export class TeacherInvitationService {
     );
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
 
+    // O plano que veio com o convite, concedido só agora, com o aceite.
+    const planGrant = (metadata as GrantMetadata | null)?.planGrant;
+    if (planGrant) {
+      await this.subscriptions.grantPlan(
+        userId,
+        planGrant.planType,
+        planGrant.expiresAt ? new Date(planGrant.expiresAt) : null,
+      );
+    }
+
     return {
       success: true,
-      message:
-        'Convite aceito. Seu perfil de professor está ativo; a verificação é feita pela equipe.',
+      message: planGrant
+        ? `Convite aceito. Seu perfil de professor está ativo, com o plano ${PLAN_NAME[planGrant.planType] ?? planGrant.planType}; a verificação é feita pela equipe.`
+        : 'Convite aceito. Seu perfil de professor está ativo; a verificação é feita pela equipe.',
     };
   }
 
   async decline(token: string) {
-    const userId = await this.consume(
+    const { userId } = await this.consume(
       token,
       TokenType.TEACHER_INVITATION_DECLINE,
     );
@@ -205,7 +263,26 @@ export class TeacherInvitationService {
       );
     }
 
-    await this.send(record.userId);
+    // O reenvio mantém o plano oferecido no convite anterior.
+    const previous = await this.prisma.userToken.findFirst({
+      where: {
+        userId: record.userId,
+        type: TokenType.TEACHER_INVITATION_ACCEPT,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { metadata: true },
+    });
+    const offered = (previous?.metadata as GrantMetadata | null)?.planGrant;
+    await this.send(
+      record.userId,
+      undefined,
+      offered
+        ? {
+            planType: offered.planType,
+            expiresAt: offered.expiresAt ? new Date(offered.expiresAt) : null,
+          }
+        : undefined,
+    );
     return {
       success: true,
       message: 'Enviamos um novo convite para o seu e-mail.',
@@ -214,7 +291,10 @@ export class TeacherInvitationService {
 
   // -------------------------------------------------------------------
 
-  private async consume(token: string, type: TokenType): Promise<string> {
+  private async consume(
+    token: string,
+    type: TokenType,
+  ): Promise<{ userId: string; metadata: unknown }> {
     const validation = await this.tokens.validateToken(token, type);
 
     if (!validation.valid || !validation.token?.userId) {
@@ -226,7 +306,10 @@ export class TeacherInvitationService {
     }
 
     await this.tokens.markTokenAsUsed(token);
-    return validation.token.userId;
+    return {
+      userId: validation.token.userId,
+      metadata: validation.token.metadata ?? null,
+    };
   }
 
   /** A conta ainda é professor pendente de convite? */

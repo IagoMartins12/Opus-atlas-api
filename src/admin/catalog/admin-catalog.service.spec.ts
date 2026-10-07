@@ -24,6 +24,8 @@ describe('AdminCatalogService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
+      groupBy?: jest.Mock;
     };
     workScore: {
       findUnique: jest.Mock;
@@ -69,6 +71,7 @@ describe('AdminCatalogService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         update: jest.fn().mockResolvedValue({ id: 'work-1' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       workScore: {
         findUnique: jest.fn().mockResolvedValue({ id: 'score-1' }),
@@ -80,7 +83,9 @@ describe('AdminCatalogService', () => {
     };
 
     countFilters = {
-      resolve: jest.fn().mockResolvedValue({ workIds: null, capped: false }),
+      resolve: jest
+        .fn()
+        .mockResolvedValue({ workIds: null, excludeIds: [], capped: false }),
     };
 
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
@@ -223,6 +228,50 @@ describe('AdminCatalogService', () => {
   });
 
   // -----------------------------------------------------------------
+  describe('listagem de compositores', () => {
+    it('mínimo de obras vira a lista dos que estão na faixa', async () => {
+      prisma.work.groupBy = jest
+        .fn()
+        .mockResolvedValue([{ composerId: 'c1', _count: { _all: 12 } }]);
+
+      await service.listComposers({
+        minWorks: 10,
+        maxWorks: 20,
+        hasBio: false,
+      });
+
+      const [args] = prisma.work.groupBy.mock.calls[0];
+      expect(args.having).toEqual({
+        composerId: { _count: { gte: 10, lte: 20 } },
+      });
+      const { where } = prisma.composer.findMany.mock.calls[0][0];
+      expect(where.AND).toContainEqual({ id: { in: ['c1'] } });
+      // "Sem biografia" cobre ausente, nulo e em branco.
+      expect(where.AND).toContainEqual({
+        OR: [{ bio: { isSet: false } }, { bio: null }, { bio: '' }],
+      });
+    });
+
+    it('só máximo: todos menos os que passam dele (inclui quem tem zero)', async () => {
+      prisma.work.groupBy = jest
+        .fn()
+        .mockResolvedValue([{ composerId: 'grande', _count: { _all: 90 } }]);
+
+      await service.listComposers({ maxWorks: 0 });
+
+      const { where } = prisma.composer.findMany.mock.calls[0][0];
+      expect(where.AND).toContainEqual({ id: { notIn: ['grande'] } });
+    });
+
+    it('a linha traz o número de obras', async () => {
+      prisma.composer.findMany.mockResolvedValue([
+        { id: 'c', name: 'Satie', _count: { works: 7 } },
+      ]);
+      const r = await service.listComposers({});
+      expect(r.composers[0]).toEqual({ id: 'c', name: 'Satie', worksCount: 7 });
+    });
+  });
+
   describe('listagem de obras', () => {
     it('sem filtro de contagem, não restringe por id', async () => {
       await service.listWorks({});
@@ -233,6 +282,7 @@ describe('AdminCatalogService', () => {
     it('com filtro de contagem, restringe pelos candidatos', async () => {
       countFilters.resolve.mockResolvedValue({
         workIds: ['a', 'b'],
+        excludeIds: [],
         capped: false,
       });
 
@@ -245,7 +295,11 @@ describe('AdminCatalogService', () => {
 
     // Montar um `IN` vazio e consultar seria trabalho jogado fora.
     it('interseção vazia responde sem consultar obras', async () => {
-      countFilters.resolve.mockResolvedValue({ workIds: [], capped: false });
+      countFilters.resolve.mockResolvedValue({
+        workIds: [],
+        excludeIds: [],
+        capped: false,
+      });
 
       const result = await service.listWorks({ minFavorites: 999 });
 
@@ -256,12 +310,54 @@ describe('AdminCatalogService', () => {
     it('propaga o aviso de cobertura', async () => {
       countFilters.resolve.mockResolvedValue({
         workIds: ['a'],
+        excludeIds: [],
         capped: true,
       });
 
       const result = await service.listWorks({ minScores: 1 });
 
       expect(result.coverage.countFilterCapped).toBe(true);
+    });
+
+    it('máximo vira exclusão; sem partitura vira relação vazia', async () => {
+      countFilters.resolve.mockResolvedValue({
+        workIds: null,
+        excludeIds: ['popular'],
+        capped: false,
+      });
+
+      await service.listWorks({ maxFavorites: 3, hasScore: false });
+
+      const { where } = prisma.work.findMany.mock.calls[0][0];
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { cachedScores: { none: {} } },
+          { id: { notIn: ['popular'] } },
+        ]),
+      );
+    });
+
+    it('cada linha traz as contagens de uso', async () => {
+      prisma.work.findMany.mockResolvedValue([
+        {
+          id: 'w',
+          title: 'Rêverie',
+          _count: {
+            favoriteBy: 4,
+            learners: 1,
+            wantToLearners: 2,
+            cachedScores: 3,
+          },
+        },
+      ]);
+
+      const r = await service.listWorks({});
+
+      expect(r.works[0]).toEqual({
+        id: 'w',
+        title: 'Rêverie',
+        counts: { favorites: 4, learned: 1, wantToLearn: 2, scores: 3 },
+      });
     });
   });
 
@@ -280,6 +376,35 @@ describe('AdminCatalogService', () => {
 
       await expect(
         service.updateScore('score-1', { isActive: false }),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('verificação de obras em lote', () => {
+    it('verifica, diz quais obras mudaram e quais ids não existem', async () => {
+      prisma.work.findMany.mockResolvedValue([{ id: 'w1', title: 'Rêverie' }]);
+      prisma.work.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.verifyWorksInBulk(
+        'admin-1',
+        ['w1', 'w2'],
+        true,
+      );
+
+      const data = prisma.work.updateMany.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        isVerified: true,
+        verificationStatus: 'verified',
+        verifiedBy: 'admin-1',
+      });
+      expect(result.works).toEqual([{ id: 'w1', title: 'Rêverie' }]);
+      expect(result.notFound).toEqual(['w2']);
+    });
+
+    it('nenhuma obra encontrada é 404', async () => {
+      prisma.work.findMany.mockResolvedValue([]);
+      await expect(
+        service.verifyWorksInBulk('admin-1', ['w9'], true),
       ).rejects.toThrow(NotFoundException);
     });
   });

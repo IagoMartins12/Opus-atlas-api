@@ -84,15 +84,27 @@ export class ListUploadHistoryQueryDto {
 
 export class UploadStatsQueryDto {
   @ApiPropertyOptional({
-    default: 14,
     minimum: 1,
-    maximum: 90,
-    description: 'Dias na linha do tempo.',
+    maximum: 3650,
+    description:
+      'Janela em dias até hoje. Ignorado quando `from` vem. Sem `days` e sem `from`: desde o início.',
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(90)
+  @Max(3650)
   days?: number;
+
+  @ApiPropertyOptional({ description: 'Início da janela (ISO 8601).' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Fim da janela (ISO 8601). Padrão: agora.',
+  })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }

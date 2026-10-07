@@ -21,6 +21,7 @@ export const ACTIVITY_ENTITY_TYPES = [
   'student',
   'profile',
   'report',
+  'practice',
 ] as const;
 
 export type ActivityEntityType = (typeof ACTIVITY_ENTITY_TYPES)[number];

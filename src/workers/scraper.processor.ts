@@ -9,7 +9,8 @@ import { JobEnvelope } from '../common/queue/job-contract';
 import { reportProgress } from '../common/queue/job-progress';
 import { ScraperJobPayload } from '../scrapers/scraper-dispatch.service';
 import { ScraperRunService } from '../scrapers/scraper-run.service';
-import { isScraperId } from '../scrapers/scraper-registry';
+import { isScraperId, ScraperRegistry } from '../scrapers/scraper-registry';
+import { TaskRunsService } from '../common/queue/task-runs.service';
 
 type ScraperJob = Job<JobEnvelope<ScraperJobPayload>>;
 
@@ -31,7 +32,11 @@ type ScraperJob = Job<JobEnvelope<ScraperJobPayload>>;
 export class ScraperProcessor extends WorkerHost {
   private readonly logger = new Logger(ScraperProcessor.name);
 
-  constructor(private readonly runner: ScraperRunService) {
+  constructor(
+    private readonly runner: ScraperRunService,
+    private readonly runs: TaskRunsService,
+    private readonly registry: ScraperRegistry,
+  ) {
     super();
   }
 
@@ -43,6 +48,9 @@ export class ScraperProcessor extends WorkerHost {
     }
 
     const { scraperId } = job.data.payload;
+    // Sem `modo` é agendamento criado antes da prévia existir: importa, como
+    // sempre fez. A rodada manual chega com `previa`.
+    const modo = job.data.payload.modo ?? 'importar';
 
     // A carga vem do Redis e pode ter sido gravada por uma versão anterior do
     // código. Uma casa que saiu do catálogo não é erro para tentar de novo.
@@ -54,10 +62,39 @@ export class ScraperProcessor extends WorkerHost {
 
     // A frase vai junto do número. Antes ela ia só para `job.log`, que rota
     // nenhuma lê: quem acompanhava via `80` sem saber 80 do quê.
-    return this.runner.run(scraperId, (percent, message) => {
-      reportProgress(job, percent, message);
-      void job.log(`${percent}% — ${message}`).catch(() => undefined);
-    });
+    return this.runs.rastrear(
+      job,
+      {
+        queue: QUEUE_SCRAPER,
+        task: `scraper:${scraperId}`,
+        taskName: `Eventos: ${this.registry.require(scraperId).getConfig().venueName}`,
+        relato: (r) => ({
+          summary: {
+            modo: r.modo === 'previa' ? 'prévia' : 'importação',
+            lidos: r.eventsFound,
+            importados: r.imported,
+            jaExistiam: r.duplicates,
+            comProblema: r.failed,
+          },
+          sample: r.eventos
+            .filter((e) => e.estado === 'importado' || e.estado === 'falhou')
+            .map(
+              (e) =>
+                `${e.estado === 'importado' ? 'entrou' : 'falhou'}: ${e.titulo}`,
+            ),
+          warnings: r.problems,
+        }),
+      },
+      () =>
+        this.runner.run(
+          scraperId,
+          (percent, message) => {
+            reportProgress(job, percent, message);
+            void job.log(`${percent}% — ${message}`).catch(() => undefined);
+          },
+          modo,
+        ),
+    );
   }
 
   @OnWorkerEvent('failed')

@@ -7,6 +7,7 @@ import { AvailabilityController } from './availability/availability.controller';
 import { AvailabilityService } from './availability/availability.service';
 import { CalendarController } from './calendar/calendar.controller';
 import { CalendarService } from './calendar/calendar.service';
+import { CalendarFeedService } from './calendar/calendar-feed.service';
 import { DashboardController } from './dashboard/dashboard.controller';
 import { DashboardService } from './dashboard/dashboard.service';
 import { PortalProfileService } from './profile/profile.service';
@@ -23,8 +24,15 @@ import { NotificationsService } from './notifications/notifications.service';
 import { NotificationSweepService } from './notifications/notification-sweep.service';
 import { LessonsController } from './lessons/lessons.controller';
 import { LessonSchedulingService } from './lessons/lesson-scheduling.service';
+import { ScheduleRulesService } from './lessons/schedule-rules.service';
 import { LessonsService } from './lessons/lessons.service';
 import { RelationshipsController } from './relationships/relationships.controller';
+import { LessonRequestsController } from './lesson-requests/lesson-requests.controller';
+import { LessonRequestsService } from './lesson-requests/lesson-requests.service';
+import { PracticeController } from './practice/practice.controller';
+import { PracticeService } from './practice/practice.service';
+import { RepertoireController } from './repertoire/repertoire.controller';
+import { RepertoireService } from './repertoire/repertoire.service';
 import { RelationshipsService } from './relationships/relationships.service';
 
 /**
@@ -49,6 +57,9 @@ import { RelationshipsService } from './relationships/relationships.service';
     DashboardController,
     ReportsController,
     SchoolActivitiesController,
+    LessonRequestsController,
+    PracticeController,
+    RepertoireController,
   ],
   providers: [
     NotificationsService,
@@ -56,8 +67,10 @@ import { RelationshipsService } from './relationships/relationships.service';
     RelationshipsService,
     LessonsService,
     LessonSchedulingService,
+    ScheduleRulesService,
     AssignmentsService,
     CalendarService,
+    CalendarFeedService,
     AvailabilityService,
     DashboardService,
     PortalProfileService,
@@ -66,6 +79,9 @@ import { RelationshipsService } from './relationships/relationships.service';
     ProgressReportService,
     SharedReportsService,
     SchoolActivitiesService,
+    LessonRequestsService,
+    PracticeService,
+    RepertoireService,
   ],
   exports: [
     NotificationsService,

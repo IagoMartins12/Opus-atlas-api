@@ -12,6 +12,7 @@ import { UserTokenService } from '../../auth/user-token.service';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SchoolActivitiesService } from '../school-activities/school-activities.service';
 import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { RelationshipsService } from './relationships.service';
 
@@ -29,6 +30,8 @@ describe('RelationshipsService', () => {
       update: jest.Mock;
       count: jest.Mock;
     };
+    lesson: { updateMany: jest.Mock };
+    lessonRequest: { updateMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let tokens: {
@@ -64,6 +67,7 @@ describe('RelationshipsService', () => {
   };
 
   let subscriptions: { checkFeatureAccess: jest.Mock };
+  let lastTx: Record<string, Record<string, jest.Mock>>;
 
   beforeEach(async () => {
     subscriptions = {
@@ -76,7 +80,10 @@ describe('RelationshipsService', () => {
       teacherStudent: { update: jest.fn().mockResolvedValue({ id: 'rel-1' }) },
       teacher: { update: jest.fn().mockResolvedValue({}) },
       user: { update: jest.fn().mockResolvedValue({}) },
+      lesson: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      lessonRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
+    lastTx = tx;
 
     prisma = {
       teacher: {
@@ -106,6 +113,8 @@ describe('RelationshipsService', () => {
         }),
         count: jest.fn().mockResolvedValue(0),
       },
+      lesson: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      lessonRequest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
       $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
         Promise.resolve(callback(tx)),
       ),
@@ -128,6 +137,10 @@ describe('RelationshipsService', () => {
         { provide: MailService, useValue: mail },
         { provide: NotificationsService, useValue: notifications },
         {
+          provide: SchoolActivitiesService,
+          useValue: { record: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
           provide: ConfigService,
           useValue: { get: () => 'https://opusatlas.com' },
         },
@@ -144,6 +157,44 @@ describe('RelationshipsService', () => {
 
   describe('inviteStudent', () => {
     const dto = { studentUserId: 'student-user' };
+
+    // "Evitar verificação": só existe para conta que já existe (o convite é
+    // por id de usuário). Nasce aceito, sem e-mail, e o aluno é avisado no
+    // portal de quem o adicionou.
+    it('sem verificação: nasce aceito, não manda e-mail e avisa o aluno', async () => {
+      const result = await service.inviteStudent(
+        'teacher-user',
+        { ...dto, skipVerification: true },
+        context,
+      );
+
+      expect(result.inviteStatus).toBe(StudentInviteStatus.ACCEPTED);
+      expect(mail.send).not.toHaveBeenCalled();
+      expect(tokens.createToken).not.toHaveBeenCalled();
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'student-user',
+          type: 'STUDENT_ADDED_BY_TEACHER',
+        }),
+      );
+    });
+
+    it('sem verificação ainda respeita o limite de alunos do plano', async () => {
+      subscriptions.checkFeatureAccess.mockResolvedValue({
+        plan: 'MENTOR',
+        hasAccess: true,
+        limit: 1,
+      });
+      prisma.teacherStudent.count.mockResolvedValue(1);
+
+      await expect(
+        service.inviteStudent(
+          'teacher-user',
+          { ...dto, skipVerification: true },
+          context,
+        ),
+      ).rejects.toThrow();
+    });
 
     it('cria o vínculo como pendente e envia o convite', async () => {
       await service.inviteStudent('teacher-user', dto, context);
@@ -456,6 +507,118 @@ describe('RelationshipsService', () => {
     });
   });
 
+  describe('listStudents', () => {
+    // A tabela de alunos: os números vêm em lote, e presença sem aula que já
+    // aconteceu é "sem dado", não 0%.
+    it('traz os números de cada aluno aceito, numa consulta por assunto', async () => {
+      const now = Date.now();
+      const relationship = (id: string, status: StudentInviteStatus) => ({
+        id: `rel-${id}`,
+        inviteStatus: status,
+        isActive: true,
+        startDate: new Date(),
+        student: { id, userId: `${id}-user`, user: studentUser },
+      });
+      prisma.teacherStudent.findMany.mockResolvedValue([
+        relationship('s1', StudentInviteStatus.ACCEPTED),
+        relationship('s2', StudentInviteStatus.ACCEPTED),
+        relationship('s3', StudentInviteStatus.PENDING),
+      ]);
+      const extra = prisma as unknown as Record<string, unknown>;
+      extra.lesson = {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            studentId: 's1',
+            scheduledAt: new Date(now - 864e5 * 7),
+            status: 'COMPLETED',
+          },
+          {
+            studentId: 's1',
+            scheduledAt: new Date(now - 864e5 * 3),
+            status: 'NO_SHOW',
+          },
+          {
+            studentId: 's1',
+            scheduledAt: new Date(now + 864e5 * 2),
+            status: 'SCHEDULED',
+          },
+        ]),
+      };
+      extra.practiceLog = {
+        groupBy: jest
+          .fn()
+          .mockResolvedValue([{ studentId: 's1', _sum: { minutes: 95 } }]),
+      };
+      (prisma.student as unknown as Record<string, unknown>).findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 's1', practiceTime: 180 }]);
+      extra.assignment = {
+        findMany: jest.fn().mockResolvedValue([
+          { studentId: 's1', dueDate: new Date(now - 864e5) },
+          { studentId: 's1', dueDate: null },
+        ]),
+      };
+
+      const result = await service.listStudents('teacher-user', {});
+
+      const [s1, s2, s3] = result.students;
+      expect(s1.stats).toMatchObject({
+        attendanceRate: 50,
+        practiceMinutes7d: 95,
+        practiceGoalMinutes: 180,
+        openAssignments: 2,
+        overdueAssignments: 1,
+      });
+      expect(s1.stats?.nextLessonAt).toBeInstanceOf(Date);
+      expect(s2.stats).toMatchObject({
+        attendanceRate: null,
+        practiceMinutes7d: 0,
+      });
+      expect(s3.stats).toBeNull();
+      const lessonQuery = (extra.lesson as { findMany: jest.Mock }).findMany
+        .mock.calls[0][0];
+      expect(lessonQuery.where.studentId.in).toEqual(['s1', 's2']);
+    });
+  });
+
+  describe('getStudent', () => {
+    it('responde 404 para aluno de outro professor', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getStudent('teacher-user', '685d591c1e3db0c5aaa893e4'),
+      ).rejects.toThrow('Aluno não encontrado');
+      expect(prisma.teacherStudent.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            teacherId: 'teacher-1',
+            OR: [
+              { studentId: '685d591c1e3db0c5aaa893e4' },
+              { student: { is: { userId: '685d591c1e3db0c5aaa893e4' } } },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('convite pendente vem sem números', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue({
+        id: 'rel-9',
+        inviteStatus: StudentInviteStatus.PENDING,
+        isActive: true,
+        startDate: new Date(),
+        student: { id: 's9', userId: 'u9', user: studentUser },
+      });
+
+      const row = await service.getStudent(
+        'teacher-user',
+        '685d591c1e3db0c5aaa893e4',
+      );
+
+      expect(row).toMatchObject({ relationshipId: 'rel-9', stats: null });
+    });
+  });
+
   describe('searchInvitableUsers', () => {
     it('exige ao menos 3 caracteres', async () => {
       await expect(
@@ -543,6 +706,33 @@ describe('RelationshipsService', () => {
       expect(prisma.$transaction).toHaveBeenCalled();
     });
 
+    // Sem vínculo não há aula: as futuras saem da agenda dos dois.
+    it('cancela as aulas futuras e os pedidos pendentes do aluno', async () => {
+      prisma.teacherStudent.findUnique.mockResolvedValue({
+        id: 'rel-1',
+        teacherId: 'teacher-1',
+        studentId: 'student-1',
+        inviteStatus: StudentInviteStatus.ACCEPTED,
+        student: { id: 'student-1', userId: 'student-user', user: studentUser },
+      });
+
+      await service.endRelationship('teacher-user', 'rel-1');
+
+      const lessons = lastTx.lesson.updateMany.mock.calls[0][0];
+      expect(lessons.where).toMatchObject({
+        teacherId: 'teacher-1',
+        studentId: 'student-1',
+        status: 'SCHEDULED',
+      });
+      expect(lessons.where.scheduledAt.gte).toBeInstanceOf(Date);
+      expect(lessons.data.status).toBe('CANCELLED');
+      expect(lastTx.lessonRequest.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'PENDING' }),
+        }),
+      );
+    });
+
     it('esconde o vínculo de outro professor como não encontrado', async () => {
       prisma.teacherStudent.findUnique.mockResolvedValue({
         id: 'rel-1',
@@ -554,6 +744,58 @@ describe('RelationshipsService', () => {
       await expect(
         service.endRelationship('teacher-user', 'rel-1'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('resposta no portal', () => {
+    const pending = {
+      id: 'rel-1',
+      teacherId: 'teacher-1',
+      inviteStatus: StudentInviteStatus.PENDING,
+      teacher: {
+        id: 'teacher-1',
+        userId: 'teacher-user',
+        user: teacherProfile.user,
+      },
+      student: { id: 'student-1', userId: 'student-user', user: studentUser },
+    };
+
+    it('o aluno aceita logado, sem token', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue(pending);
+      const result = await service.acceptAsStudent('student-user', 'rel-1');
+      expect(result.accepted).toBe(true);
+      expect(
+        prisma.teacherStudent.findFirst.mock.calls[0][0].where,
+      ).toMatchObject({
+        id: 'rel-1',
+        inviteStatus: StudentInviteStatus.PENDING,
+        student: { is: { userId: 'student-user' } },
+      });
+    });
+
+    it('não aceita convite de outra pessoa', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue(null);
+      await expect(service.acceptAsStudent('outro', 'rel-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('o aluno sai da turma e o professor é avisado', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue({
+        ...pending,
+        inviteStatus: StudentInviteStatus.ACCEPTED,
+      });
+      (prisma.$transaction as jest.Mock).mockResolvedValueOnce([]);
+      await service.leaveAsStudent('student-user', 'rel-1');
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'teacher-user' }),
+      );
+      // Sem vínculo não há aula: as futuras são canceladas junto.
+      expect(prisma.lesson.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'CANCELLED' }),
+        }),
+      );
     });
   });
 });

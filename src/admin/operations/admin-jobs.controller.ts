@@ -24,7 +24,10 @@ import {
   QUEUE_NAMES,
   QueueName,
 } from '../../common/queue/queue.constants';
-import { ListFailuresQueryDto } from './dto/admin-jobs.dto';
+import {
+  ListFailuresQueryDto,
+  ListRecentJobsQueryDto,
+} from './dto/admin-jobs.dto';
 
 /**
  * Observação da fila.
@@ -74,6 +77,31 @@ export class AdminJobsController {
       failures: await this.status.failures(
         this.requireQueue(queue),
         query.limit ?? 20,
+      ),
+    };
+  }
+
+  @Get(':queue/recent')
+  @ApiOperation({
+    summary: 'Rodadas recentes de uma fila',
+    description:
+      'Em andamento, esperando, feitas e falhas, as mais novas primeiro, com ' +
+      'progresso e resultado. `job` filtra pelo nome do job ou pelo que ele ' +
+      'roda (o id da tarefa de manutenção, o id do scraper). Some com a ' +
+      'retenção da fila (7 dias feitas, 30 falhas).',
+  })
+  @ApiParam({ name: 'queue', enum: QUEUE_NAMES })
+  @ApiOkResponse({ description: 'Rodadas mais recentes primeiro' })
+  async recent(
+    @Param('queue') queue: string,
+    @Query() query: ListRecentJobsQueryDto,
+  ) {
+    return {
+      queue,
+      jobs: await this.status.recent(
+        this.requireQueue(queue),
+        query.limit ?? 20,
+        query.job,
       ),
     };
   }

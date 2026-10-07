@@ -15,6 +15,20 @@ const MAX_EXPORT_ROWS = 5000;
 /** Quantas entidades relacionadas resolver por página. */
 const ENRICH_BATCH = 100;
 
+/**
+ * Tipos cuja existência a trilha confere. Os outros (perfil, obra, pedido,
+ * turma) não são conferidos e nunca aparecem como "removido": antes, todo
+ * tipo fora de aula, tarefa e aluno saía como removido — uma prática recém-
+ * registrada inclusive (05/10/2026).
+ */
+const CHECKED_TYPES = new Set([
+  'lesson',
+  'assignment',
+  'student',
+  'practice',
+  'report',
+]);
+
 export interface RecordActivityInput {
   userId: string;
   userType: 'teacher' | 'student';
@@ -84,6 +98,47 @@ export class SchoolActivitiesService {
           description: input.description,
           changes: toJsonInput(input.changes),
           metadata: toJsonInput(input.metadata),
+        },
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `Falha ao registrar atividade ${input.action} de ${input.userId}: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Como `record`, mas a mesma ação sobre a mesma entidade dentro da janela
+   * atualiza a entrada anterior em vez de criar outra. É para o que o aluno
+   * ajusta aos poucos (o andamento de uma tarefa): vinte cliques no controle
+   * viram uma linha só no histórico, com o valor final. Também nunca lança.
+   */
+  async recordCollapsing(
+    input: RecordActivityInput,
+    windowMs: number,
+  ): Promise<void> {
+    try {
+      const recent = input.entityId
+        ? await this.prisma.schoolActivity.findFirst({
+            where: {
+              userId: input.userId,
+              action: input.action,
+              entityId: input.entityId,
+              createdAt: { gte: new Date(Date.now() - windowMs) },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+          })
+        : null;
+      if (!recent) return this.record(input);
+      await this.prisma.schoolActivity.update({
+        where: { id: recent.id },
+        data: {
+          title: input.title,
+          description: input.description,
+          entityName: input.entityName,
+          metadata: toJsonInput(input.metadata),
+          createdAt: new Date(),
         },
       });
     } catch (error: unknown) {
@@ -240,44 +295,63 @@ export class SchoolActivitiesService {
       idsByType.set(activity.entityType, bucket);
     }
 
-    const [lessons, assignments, students] = await Promise.all([
-      this.namesFor(idsByType.get('lesson'), (ids) =>
-        this.prisma.lesson.findMany({
-          where: { id: { in: ids } },
-          select: { id: true, title: true, scheduledAt: true, status: true },
-        }),
-      ),
-      this.namesFor(idsByType.get('assignment'), (ids) =>
-        this.prisma.assignment.findMany({
-          where: { id: { in: ids } },
-          select: { id: true, title: true, dueDate: true, status: true },
-        }),
-      ),
-      this.namesFor(idsByType.get('student'), (ids) =>
-        this.prisma.student.findMany({
-          where: { id: { in: ids } },
-          select: {
-            id: true,
-            user: { select: { firstName: true, lastName: true, image: true } },
-          },
-        }),
-      ),
-    ]);
+    const [lessons, assignments, students, practices, reports] =
+      await Promise.all([
+        this.namesFor(idsByType.get('lesson'), (ids) =>
+          this.prisma.lesson.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, title: true, scheduledAt: true, status: true },
+          }),
+        ),
+        this.namesFor(idsByType.get('assignment'), (ids) =>
+          this.prisma.assignment.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, title: true, dueDate: true, status: true },
+          }),
+        ),
+        this.namesFor(idsByType.get('student'), (ids) =>
+          this.prisma.student.findMany({
+            where: { id: { in: ids } },
+            select: {
+              id: true,
+              user: {
+                select: { firstName: true, lastName: true, image: true },
+              },
+            },
+          }),
+        ),
+        this.namesFor(idsByType.get('practice'), (ids) =>
+          this.prisma.practiceLog.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, minutes: true, practicedAt: true },
+          }),
+        ),
+        this.namesFor(idsByType.get('report'), (ids) =>
+          this.prisma.sharedProgressReport.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, title: true, isActive: true },
+          }),
+        ),
+      ]);
 
     return activities.map((activity) => {
       const entity = activity.entityId
         ? (lessons.get(activity.entityId) ??
           assignments.get(activity.entityId) ??
           students.get(activity.entityId) ??
+          practices.get(activity.entityId) ??
+          reports.get(activity.entityId) ??
           null)
         : null;
+      const checked =
+        activity.entityId !== null && CHECKED_TYPES.has(activity.entityType);
 
       return {
         ...activity,
         // `entityName` guardado no registro é o nome de quando a ação
         // aconteceu; `entity` é o estado atual, e é `null` se foi removida.
         entity,
-        entityExists: entity !== null || activity.entityId === null,
+        entityExists: !checked || entity !== null,
         changedFields: this.changedFields(activity.changes),
       };
     });

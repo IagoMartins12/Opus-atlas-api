@@ -44,6 +44,7 @@ describe('ScraperRegistry', () => {
       venueName: 'osesp',
       venueSlug: 'osesp',
       baseUrl: 'https://osesp.br',
+      desativado: null,
     });
   });
 
@@ -65,10 +66,35 @@ describe('ScrapersController', () => {
     setSchedule: jest.fn().mockResolvedValue({ ok: true }),
     removeSchedule: jest.fn().mockResolvedValue(true),
   };
+  const preview = {
+    previa: jest.fn().mockResolvedValue({ eventos: [] }),
+    importar: jest.fn().mockResolvedValue({ importados: 2 }),
+  };
+  const importedEvents = {
+    list: jest.fn().mockResolvedValue({ items: [], pagination: {} }),
+  };
   const controller = new ScrapersController(
     registry().registry,
     dispatch as never,
+    importedEvents as never,
+    preview as never,
   );
+
+  it('prévia e importação dos escolhidos vão ao serviço da prévia', async () => {
+    await controller.previewOf('job-1');
+    await controller.importFromPreview('job-1', { indices: [0, 2] });
+
+    expect(preview.previa).toHaveBeenCalledWith('job-1');
+    expect(preview.importar).toHaveBeenCalledWith('job-1', [0, 2]);
+  });
+
+  it('lista os eventos importados repassando os filtros', async () => {
+    await controller.events({ scraperId: 'osesp', page: 2 } as never);
+    expect(importedEvents.list).toHaveBeenCalledWith({
+      scraperId: 'osesp',
+      page: 2,
+    });
+  });
 
   it('lista, roda uma casa e todas', async () => {
     expect(controller.list().scrapers).toHaveLength(SCRAPER_IDS.length);

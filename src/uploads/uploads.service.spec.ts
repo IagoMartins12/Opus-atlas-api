@@ -168,6 +168,24 @@ describe('UploadsService', () => {
     });
   });
 
+  describe('plano pago (limite -1)', () => {
+    it('não barra quem tem limite ilimitado, que a matriz de planos manda como -1', async () => {
+      subscriptions.checkFeatureAccess.mockResolvedValue({
+        plan: 'PLUS',
+        hasAccess: true,
+        limit: -1,
+      });
+      storage.countActiveByOwner.mockResolvedValue(999);
+
+      await expect(
+        service.createSignedUpload('user-1', {
+          kind: StorageAssetKind.PERFORMANCE_VIDEO,
+          scopeId: 'work1',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe('dono do arquivo enviado', () => {
     const file = { buffer: Buffer.alloc(4), originalName: 'f.pdf', size: 4 };
 

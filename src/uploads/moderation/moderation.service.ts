@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { runAggregate, toObjectId } from '../../admin/metrics/raw-aggregate';
 import { errorMessage } from '../../common/utils/error.util';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
@@ -95,6 +96,19 @@ function reportPriority(value: string | null): ReportPriority {
     ? value
     : 'normal';
 }
+
+const MODERATION_INCLUDE = {
+  reporter: {
+    select: { id: true, firstName: true, lastName: true, email: true },
+  },
+  moderator: {
+    select: { id: true, firstName: true, lastName: true },
+  },
+} satisfies Prisma.UploadModerationInclude;
+
+type ModerationRow = Prisma.UploadModerationGetPayload<{
+  include: typeof MODERATION_INCLUDE;
+}>;
 
 @Injectable()
 export class ModerationService {
@@ -347,6 +361,75 @@ export class ModerationService {
     };
   }
 
+  /**
+   * A fila aberta, na ordem do prazo: quem vence primeiro vem primeiro.
+   *
+   * **Corrige 29/09/2026.** A fila era ordenada por `priority` como texto,
+   * crescente — `high`, `low`, `normal`, `urgent`: as denúncias urgentes (24 h)
+   * vinham por último, o contrário da RN-4. O vencimento é `createdAt` mais o
+   * prazo da prioridade, e só existe calculado; o Prisma tipado não ordena
+   * por expressão, então a ordem sai de uma agregação (só os ids) e os
+   * registros completos vêm numa segunda consulta, reordenados.
+   */
+  private async pendingByDeadline(
+    query: ListModerationQueryDto,
+    page: number,
+    limit: number,
+  ): Promise<ModerationRow[]> {
+    const HOUR_MS = 60 * 60 * 1000;
+    const match: Record<string, unknown> = { status: 'pending' };
+    if (query.entityType) match.entityType = query.entityType;
+    if (query.entityId) match.entityId = { $oid: query.entityId };
+
+    const ordem = await runAggregate<{ _id: unknown }>(
+      this.prisma,
+      'upload_moderation',
+      [
+        { $match: match },
+        {
+          $addFields: {
+            vence: {
+              $add: [
+                '$createdAt',
+                {
+                  $switch: {
+                    branches: Object.entries(SLA_HOURS).map(
+                      ([priority, horas]) => ({
+                        case: { $eq: ['$priority', priority] },
+                        then: horas * HOUR_MS,
+                      }),
+                    ),
+                    default: SLA_HOURS.normal * HOUR_MS,
+                  },
+                },
+              ],
+            },
+          },
+        },
+        { $sort: { vence: 1, _id: 1 } },
+        { $skip: (page - 1) * limit },
+        { $limit: limit },
+        { $project: { _id: 1 } },
+      ],
+    );
+
+    const ids = ordem
+      .map((row) => toObjectId(row._id))
+      .filter((id): id is string => id !== null);
+
+    if (ids.length === 0) return [];
+
+    const rows = await this.prisma.uploadModeration.findMany({
+      where: { id: { in: ids } },
+      include: MODERATION_INCLUDE,
+    });
+
+    const posicao = new Map(ids.map((id, i) => [id, i]));
+    return rows.sort(
+      (a, b) => (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0),
+    );
+  }
+
   async list(query: ListModerationQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -358,23 +441,16 @@ export class ModerationService {
     };
 
     const [reports, total] = await Promise.all([
-      this.prisma.uploadModeration.findMany({
-        where,
-        include: {
-          reporter: {
-            select: { id: true, firstName: true, lastName: true, email: true },
-          },
-          moderator: {
-            select: { id: true, firstName: true, lastName: true },
-          },
-        },
-        // **Ordenada por prioridade e depois por idade.** Ordenar só por data
-        // punha uma denúncia comum de hoje na frente de uma urgente de ontem,
-        // que é o oposto do que um prazo serve para fazer.
-        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
+      status === 'pending'
+        ? this.pendingByDeadline(query, page, limit)
+        : this.prisma.uploadModeration.findMany({
+            where,
+            include: MODERATION_INCLUDE,
+            // Histórico: o que foi resolvido por último vem primeiro.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            skip: (page - 1) * limit,
+            take: limit,
+          }),
       this.prisma.uploadModeration.count({ where }),
     ]);
 

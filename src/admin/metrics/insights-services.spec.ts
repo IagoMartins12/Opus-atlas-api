@@ -277,14 +277,17 @@ describe('LearningInsightsService', () => {
   });
 
   it('funil, intenções paradas, faixas de domínio e concentração', async () => {
-    const prisma = prismaMock();
+    const prisma = prismaMock({
+      WantToLearn: [{ _id: { $oid: 'w1' }, n: 6 }],
+      Learned: [
+        { _id: { $oid: 'w1' }, n: 6 },
+        { _id: { $oid: 'w2' }, n: 2 },
+      ],
+    });
     prisma.wantToLearn.count.mockImplementation(({ where } = {}) =>
       Promise.resolve(where?.addedAt ? 30 : 40),
     );
     prisma.learned.count.mockResolvedValue(20);
-    prisma.wantToLearn.groupBy.mockResolvedValue([
-      { workId: 'w1', _count: { _all: 6 } },
-    ]);
     prisma.work.findMany.mockResolvedValue([
       { id: 'w1', title: 'Fantasia', composer: { name: 'Chopin' } },
     ]);
@@ -294,10 +297,6 @@ describe('LearningInsightsService', () => {
         99, 100,
       ].map((mastery) => ({ mastery })),
     );
-    prisma.learned.groupBy.mockResolvedValue([
-      { workId: 'w1', _count: { _all: 6 } },
-      { workId: 'w2', _count: { _all: 2 } },
-    ]);
     prisma.work.count.mockResolvedValue(1000);
 
     const insights = await new LearningInsightsService(
@@ -431,5 +430,141 @@ describe('TeachingInsightsService', () => {
     expect(
       byCode(insights, 'teaching.attendance_health').measurement.value,
     ).toBe(90);
+  });
+});
+
+describe('insights novos (29/09)', () => {
+  it('cancelamento: taxa sobre quem pagava no começo da janela', async () => {
+    const prisma = prismaMock();
+    // base (quem já pagava), depois cancelaram — na ordem das chamadas.
+    prisma.subscription.count.mockImplementation(
+      (args: { where: { cancelledAt?: unknown; startDate?: unknown } }) =>
+        Promise.resolve(
+          args.where.startDate ? 40 : args.where.cancelledAt ? 6 : 0,
+        ),
+    );
+
+    const insights = await new MonetizationInsightsService(
+      prisma as unknown as PrismaService,
+    ).collect();
+    const churn = byCode(insights, 'monetization.churn');
+
+    expect(churn.measurement).toMatchObject({ value: 15, sampleSize: 40 });
+    expect(churn.severity).toBe('critical');
+    expect(churn.action).toMatch(/motivos/);
+  });
+
+  it('checkout abandonado: pendente há mais de um dia sobre os iniciados', async () => {
+    const prisma = prismaMock();
+    prisma.subscription.count.mockImplementation(
+      (args: {
+        where: { status?: string; planType?: unknown; createdAt?: unknown };
+      }) => {
+        if (!args.where.createdAt) return Promise.resolve(0);
+        return Promise.resolve(args.where.status === 'PENDING' ? 7 : 10);
+      },
+    );
+
+    const insights = await new MonetizationInsightsService(
+      prisma as unknown as PrismaService,
+    ).collect();
+    const abandono = byCode(insights, 'monetization.checkout_abandonment');
+
+    expect(abandono.measurement.value).toBe(70);
+    expect(abandono.severity).toBe('warning');
+  });
+
+  it('prazo das denúncias: fração das resolvidas antes de vencer, e as vencidas como evidência', async () => {
+    const prisma = prismaMock();
+    const agora = Date.now();
+    prisma.uploadModeration.findMany.mockImplementation(
+      (args: { where: { resolvedAt?: unknown; status?: string } }) =>
+        Promise.resolve(
+          args.where.status === 'pending'
+            ? [
+                {
+                  id: 'd1',
+                  priority: 'urgent',
+                  createdAt: new Date(agora - 3 * DAY),
+                },
+              ]
+            : [
+                // urgente resolvida em 2 h: no prazo (24 h)
+                ...Array.from({ length: 4 }, () => ({
+                  priority: 'urgent',
+                  createdAt: new Date(agora - 5 * DAY),
+                  resolvedAt: new Date(agora - 5 * DAY + 2 * 3_600_000),
+                })),
+                // urgente resolvida em 3 dias: fora do prazo
+                {
+                  priority: 'urgent',
+                  createdAt: new Date(agora - 10 * DAY),
+                  resolvedAt: new Date(agora - 7 * DAY),
+                },
+              ],
+        ),
+    );
+
+    const insights = await new CatalogInsightsService(
+      prisma as unknown as PrismaService,
+    ).collect();
+    const sla = byCode(insights, 'catalog.moderation_sla');
+
+    expect(sla.measurement).toMatchObject({ value: 80, sampleSize: 5 });
+    expect(sla.severity).toBe('opportunity');
+    expect(sla.evidence).toHaveLength(1);
+  });
+});
+
+describe('PlatformOverviewService.activity', () => {
+  it('um ponto por dia, com zero onde não houve registro', async () => {
+    const { PlatformOverviewService } = await import(
+      './platform-overview.service'
+    );
+    const hoje = new Date().toLocaleDateString('sv-SE', {
+      timeZone: 'America/Sao_Paulo',
+    });
+    const prisma = prismaMock({
+      User: [{ _id: hoje, n: 3 }],
+      work_annotations: [{ _id: hoje, n: 12 }],
+      upload_history: [],
+    });
+
+    const r = await new PlatformOverviewService(
+      prisma as unknown as PrismaService,
+    ).activity(7);
+
+    expect(r.serie).toHaveLength(7);
+    expect(r.serie[6]).toMatchObject({
+      dia: hoje,
+      cadastros: 3,
+      anotacoes: 12,
+      envios: 0,
+      favoritos: 0,
+    });
+    expect(r.serie[0].cadastros).toBe(0);
+    expect(r.totais).toMatchObject({ cadastros: 3, anotacoes: 12, envios: 0 });
+  });
+
+  it('o que caiu antes da janela soma na janela anterior', async () => {
+    const { PlatformOverviewService } = await import(
+      './platform-overview.service'
+    );
+    const prisma = prismaMock({
+      User: [
+        { _id: '2000-01-01', n: 4 },
+        { _id: '9999-12-31', n: 1 },
+      ],
+    });
+
+    const r = await new PlatformOverviewService(
+      prisma as unknown as PrismaService,
+    ).activity(7);
+
+    expect(r.totaisAnteriores.cadastros).toBe(4);
+    // A consulta pega desde o começo da janela anterior.
+    const match = prisma.$runCommandRaw.mock.calls[0][0].pipeline[0].$match;
+    const desde = new Date(match.createdAt.$gte.$date).getTime();
+    expect(Date.now() - desde).toBeGreaterThan(13 * 86_400_000);
   });
 });

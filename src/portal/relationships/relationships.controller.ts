@@ -133,6 +133,22 @@ export class RelationshipsController {
     return this.service.searchInvitableUsers(user.sub, term ?? '');
   }
 
+  @Get('teacher/students/:studentId')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Um aluno do professor (Student.id)',
+    description:
+      'O vínculo mais recente com o aluno e os números da tabela de alunos.',
+  })
+  @ApiOkResponse({ description: 'Vínculo, aluno e números' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async getStudent(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('studentId') studentId: string,
+  ) {
+    return this.service.getStudent(user.sub, studentId);
+  }
+
   @Post('teacher/students/:relationshipId/resend-invite')
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
@@ -207,6 +223,48 @@ export class RelationshipsController {
   @ApiOkResponse({ description: 'Professores do aluno' })
   async listTeachers(@CurrentUser() user: AccessTokenPayload) {
     return this.service.listTeachers(user.sub);
+  }
+
+  @Post('student/invites/:relationshipId/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'O aluno aceita o convite de dentro do portal' })
+  @ApiOkResponse({ description: 'Convite aceito' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async acceptAsStudent(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('relationshipId') id: string,
+  ) {
+    return this.service.acceptAsStudent(user.sub, id);
+  }
+
+  @Post('student/invites/:relationshipId/decline')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'O aluno recusa o convite de dentro do portal' })
+  @ApiOkResponse({ description: 'Convite recusado' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async declineAsStudent(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('relationshipId') id: string,
+  ) {
+    return this.service.declineAsStudent(user.sub, id);
+  }
+
+  @Post('student/teachers/:relationshipId/leave')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'O aluno sai da turma',
+    description: 'O histórico (aulas, tarefas, relatórios) continua dos dois.',
+  })
+  @ApiNoContentResponse()
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async leave(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('relationshipId') id: string,
+  ) {
+    await this.service.leaveAsStudent(user.sub, id);
   }
 
   // ----------------------------------------------------------------

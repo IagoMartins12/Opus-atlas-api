@@ -10,10 +10,12 @@ import { ImslpComposerScraper } from './imslp/imslp-composer.scraper';
 import { ImslpImportService } from './imslp/imslp-import.service';
 import { ImslpWorkScraper } from './imslp/imslp-work.scraper';
 import { ImportService } from './import/import.service';
+import { ImportedEventsService } from './imported-events.service';
 import { OsespScraperService } from './osesp/osesp-scraper.service';
 import { SalaCeciliaMeirelesScraperService } from './sala-cecilia-meireles/sala-cecilia-meireles-scraper.service';
 import { ScraperDispatchService } from './scraper-dispatch.service';
 import { ScraperRegistry } from './scraper-registry';
+import { ScraperPreviewService } from './scraper-preview.service';
 import { ScraperRunService } from './scraper-run.service';
 import { ScrapersController } from './scrapers.controller';
 import { TeatroAmazonasScraperService } from './teatro-amazonas/teatro-amazonas-scraper.service';
@@ -47,8 +49,10 @@ import { WikipediaController } from './wikipedia/wikipedia.controller';
     AuditorioIbirapueraScraperService,
     CidadeDasArtesScraperService,
     ImportService,
+    ImportedEventsService,
     ScraperRegistry,
     ScraperRunService,
+    ScraperPreviewService,
     ScraperDispatchService,
     ExternalPageFetcher,
     ImslpApiClient,

@@ -40,8 +40,10 @@ describe('GoogleAuthController', () => {
       }),
       profileFromCode: jest.fn().mockResolvedValue(profile),
       frontUrl: jest.fn(
-        (path: string, error?: string) =>
-          `http://front${path}${error ? `?authError=${error}` : ''}`,
+        (path: string, error?: string, newUser?: boolean) =>
+          `http://front${path}${error ? `?authError=${error}` : ''}${
+            newUser ? '?new-user=true' : ''
+          }`,
       ),
     };
     auth = {
@@ -96,6 +98,16 @@ describe('GoogleAuthController', () => {
       expect(auth.loginWithGoogle).toHaveBeenCalledWith(profile);
       expect(cookies.applySession).toHaveBeenCalledWith(res(), session);
       expect(response.redirect).toHaveBeenCalledWith('http://front/works');
+    });
+
+    it('conta criada agora volta marcada, para o front abrir as boas-vindas', async () => {
+      auth.loginWithGoogle.mockResolvedValue({ session, isNewUser: true });
+
+      await callback('codigo');
+
+      expect(response.redirect).toHaveBeenCalledWith(
+        'http://front/works?new-user=true',
+      );
     });
 
     it('quem desiste no Google volta com "cancelado"; outro erro do Google, "falhou"', async () => {

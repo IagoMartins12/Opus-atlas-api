@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LessonStatus, StudentInviteStatus } from '@prisma/client';
+import { LessonStatus, Prisma, StudentInviteStatus } from '@prisma/client';
 import { isMongoId } from 'class-validator';
 import { isValidTimeZone } from '../../common/utils/time-zone';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,8 +12,9 @@ import {
   CreateAvailabilityBlockDto,
   FreeSlotsQueryDto,
   ReplaceAvailabilityDto,
+  SchedulingSettingsDto,
 } from './dto/availability.dto';
-import { freeTime, Interval, weeklyProblems } from './free-slots';
+import { freeTime, Interval, subtract, weeklyProblems } from './free-slots';
 
 /** Janela máxima de horas livres calculada de uma vez. */
 const MAX_WINDOW_DAYS = 92;
@@ -157,13 +158,22 @@ export class AvailabilityService {
     const teacher = isMongoId(teacherUserId)
       ? await this.prisma.teacher.findUnique({
           where: { userId: teacherUserId },
-          select: { id: true, userId: true, timezone: true },
+          select: {
+            id: true,
+            userId: true,
+            timezone: true,
+            acceptsLessonRequests: true,
+            requestLeadHours: true,
+            requestHorizonDays: true,
+          },
         })
       : null;
 
     if (!teacher) {
       throw new NotFoundException('Professor não encontrado');
     }
+
+    let studentId: string | null = null;
 
     if (viewerUserId !== teacher.userId) {
       const link = await this.prisma.teacherStudent.findFirst({
@@ -173,7 +183,7 @@ export class AvailabilityService {
           inviteStatus: StudentInviteStatus.ACCEPTED,
           student: { is: { userId: viewerUserId } },
         },
-        select: { id: true },
+        select: { id: true, studentId: true },
       });
 
       if (!link) {
@@ -181,10 +191,12 @@ export class AvailabilityService {
           'Só o professor e os alunos dele veem os horários livres',
         );
       }
+
+      studentId = link.studentId;
     }
 
-    const from = new Date(query.from);
-    const to = new Date(query.to);
+    let from = new Date(query.from);
+    let to = new Date(query.to);
 
     if (to <= from) {
       throw new BadRequestException('`to` precisa ser posterior a `from`');
@@ -196,19 +208,75 @@ export class AvailabilityService {
       );
     }
 
-    const result = await this.computeFreeTime(
-      teacher.id,
-      teacher.timezone,
-      from,
-      to,
-      query.minMinutes ?? DEFAULT_MIN_MINUTES,
-    );
+    const requests = {
+      accepts: teacher.acceptsLessonRequests,
+      leadHours: teacher.requestLeadHours,
+      horizonDays: teacher.requestHorizonDays,
+    };
+
+    // Para o aluno, só o que dá para pedir de fato (04/10/2026): dentro da
+    // antecedência e do horizonte do professor, e sem as aulas que o aluno
+    // já tem em qualquer turma. Antes a tela oferecia horário que o pedido
+    // recusava depois.
+    if (studentId) {
+      const now = Date.now();
+      from = new Date(
+        Math.max(from.getTime(), now + requests.leadHours * 3_600_000),
+      );
+      to = new Date(
+        Math.min(to.getTime(), now + requests.horizonDays * DAY_MS),
+      );
+
+      if (!requests.accepts || to <= from) {
+        return {
+          timezone: teacher.timezone,
+          period: { from, to },
+          freeHours: null,
+          slots: [],
+          requests,
+        };
+      }
+    }
+
+    const [result, studentBusy] = await Promise.all([
+      this.computeFreeTime(
+        teacher.id,
+        teacher.timezone,
+        from,
+        to,
+        query.minMinutes ?? DEFAULT_MIN_MINUTES,
+      ),
+      studentId
+        ? this.prisma.lesson.findMany({
+            where: {
+              studentId,
+              status: LessonStatus.SCHEDULED,
+              scheduledAt: { gte: new Date(from.getTime() - DAY_MS), lt: to },
+            },
+            select: { scheduledAt: true, duration: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const minMs = (query.minMinutes ?? DEFAULT_MIN_MINUTES) * 60_000;
+    const slots = studentBusy.length
+      ? subtract(
+          result.slots,
+          studentBusy.map((lesson) => ({
+            start: lesson.scheduledAt,
+            end: new Date(
+              lesson.scheduledAt.getTime() + lesson.duration * 60_000,
+            ),
+          })),
+        ).filter((slot) => slot.end.getTime() - slot.start.getTime() >= minMs)
+      : result.slots;
 
     return {
       timezone: teacher.timezone,
       period: { from, to },
       freeHours: result.hours,
-      slots: result.slots,
+      slots,
+      requests,
     };
   }
 
@@ -274,6 +342,47 @@ export class AvailabilityService {
     }
 
     return teacher;
+  }
+
+  /** O esquema de aulas, como o motor de agenda usa. */
+  async getSettings(userId: string) {
+    const teacher = await this.requireTeacher(userId);
+    return this.settingsOf(teacher.id);
+  }
+
+  async updateSettings(userId: string, dto: SchedulingSettingsDto) {
+    const teacher = await this.requireTeacher(userId);
+    // Só o que veio no corpo: `null` em limite quer dizer "sem limite".
+    const data = Object.fromEntries(
+      Object.entries(dto).filter(([, value]) => value !== undefined),
+    ) as Prisma.TeacherUpdateInput;
+    if (Array.isArray(dto.lessonReminderMinutes)) {
+      // Em ordem e sem repetição: lembrete duplicado mandaria dois avisos iguais.
+      data.lessonReminderMinutes = [...new Set(dto.lessonReminderMinutes)].sort(
+        (a, b) => b - a,
+      );
+    }
+    await this.prisma.teacher.update({ where: { id: teacher.id }, data });
+    return this.settingsOf(teacher.id);
+  }
+
+  private settingsOf(teacherId: string) {
+    return this.prisma.teacher.findUniqueOrThrow({
+      where: { id: teacherId },
+      select: {
+        timezone: true,
+        defaultLessonDuration: true,
+        bufferMinutes: true,
+        travelMinutes: true,
+        maxLessonsPerDay: true,
+        maxLessonsPerWeek: true,
+        acceptsLessonRequests: true,
+        requestLeadHours: true,
+        requestHorizonDays: true,
+        lessonReminderMinutes: true,
+        portalOnboardedAt: true,
+      },
+    });
   }
 
   private async describe(teacherId: string, timezone: string) {

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { WebhookService } from './webhook.service';
 
@@ -35,6 +36,7 @@ describe('WebhookService', () => {
     confirmCheckoutSession: jest.Mock;
     registerRenewal: jest.Mock;
   };
+  let catalog: { handleEvent: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -55,11 +57,14 @@ describe('WebhookService', () => {
       registerRenewal: jest.fn().mockResolvedValue(undefined),
     };
 
+    catalog = { handleEvent: jest.fn().mockResolvedValue(false) };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WebhookService,
         { provide: PrismaService, useValue: prisma },
         { provide: SubscriptionsService, useValue: subscriptions },
+        { provide: StripeCatalogService, useValue: catalog },
       ],
     }).compile();
 

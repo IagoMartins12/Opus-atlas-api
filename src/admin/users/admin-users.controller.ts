@@ -28,6 +28,7 @@ import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { AdminUsersService } from './admin-users.service';
 import {
   AdminUserAnalyticsQueryDto,
+  AdminUserItemsQueryDto,
   ExportAdminUsersQueryDto,
   ListAdminUsersQueryDto,
   UpdateAdminUserDto,
@@ -69,6 +70,15 @@ export class AdminUsersController {
   @ApiOkResponse({ description: 'Totais, crescimento e distribuição' })
   async analytics(@Query() query: AdminUserAnalyticsQueryDto) {
     return this.service.analytics(query);
+  }
+
+  @Get('overview')
+  @ApiOperation({
+    summary: 'Resumo da base: chegada, retorno, cadastro, uso e pagantes',
+  })
+  @ApiOkResponse({ description: 'Contagens da base de usuários' })
+  async overview() {
+    return this.service.overview();
   }
 
   @Get('export')
@@ -115,6 +125,18 @@ export class AdminUsersController {
   @ApiNotFoundResponse({ type: ErrorResponseDto })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
+  }
+
+  @Get(':id/items')
+  @ApiOperation({
+    summary:
+      'O que a conta guardou ou fez: favoritos, aprendidas, quero aprender, anotações, envios, arquivos',
+  })
+  @ApiParam({ name: 'id', description: 'Id do usuário' })
+  @ApiOkResponse({ description: 'Itens paginados, num formato só' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async items(@Param('id') id: string, @Query() query: AdminUserItemsQueryDto) {
+    return this.service.items(id, query);
   }
 
   @Patch(':id')

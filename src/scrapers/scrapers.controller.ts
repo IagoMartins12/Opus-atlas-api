@@ -9,6 +9,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -28,7 +29,13 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { ScraperDispatchService } from './scraper-dispatch.service';
 import { ScraperRegistry, SCRAPER_IDS } from './scraper-registry';
-import { SetScraperScheduleDto } from './dto/scrapers.dto';
+import {
+  ImportarDaPreviaDto,
+  ListImportedEventsQueryDto,
+  SetScraperScheduleDto,
+} from './dto/scrapers.dto';
+import { ScraperPreviewService } from './scraper-preview.service';
+import { ImportedEventsService } from './imported-events.service';
 
 /**
  * Scraping da programação das casas de espetáculo.
@@ -52,6 +59,8 @@ export class ScrapersController {
   constructor(
     private readonly registry: ScraperRegistry,
     private readonly dispatch: ScraperDispatchService,
+    private readonly importedEvents: ImportedEventsService,
+    private readonly preview: ScraperPreviewService,
   ) {}
 
   @Get()
@@ -64,6 +73,57 @@ export class ScrapersController {
   @ApiOkResponse({ description: 'Identificador, nome e endereço de cada casa' })
   list() {
     return { scrapers: this.registry.list() };
+  }
+
+  @Get('events')
+  @ApiOperation({
+    summary: 'Eventos que entraram por scraper',
+    description:
+      'Todos os eventos de origem `SCRAPER`, dos mais recentes na importação ' +
+      'para os mais antigos, com a casa. Filtra por casa, estado, título, ' +
+      'futuros/passados e data de importação.',
+  })
+  @ApiOkResponse({ description: 'Página de eventos importados' })
+  events(@Query() query: ListImportedEventsQueryDto) {
+    return this.importedEvents.list(query);
+  }
+
+  @Get('runs/:jobId/preview')
+  @ApiOperation({
+    summary: 'A prévia de uma rodada manual',
+    description:
+      'Os eventos lidos, cada um conferido de novo contra a agenda: novo ou ' +
+      'já existente. Nada foi gravado pela rodada.',
+  })
+  @ApiOkResponse({ description: 'Eventos da prévia, com o índice de cada um' })
+  previewOf(@Param('jobId') jobId: string) {
+    return this.preview.previa(jobId);
+  }
+
+  @Post('runs/:jobId/import')
+  @HttpCode(HttpStatus.OK)
+  @Audited({ action: 'scraper.import', entityType: 'scraper' })
+  @ApiOperation({
+    summary: 'Importa os eventos escolhidos de uma prévia',
+    description:
+      'Recebe só as posições. O que já está na agenda é pulado, não duplicado.',
+  })
+  @ApiOkResponse({
+    description: 'O que entrou, o que já existia, o que falhou',
+  })
+  importFromPreview(
+    @Param('jobId') jobId: string,
+    @Body() dto: ImportarDaPreviaDto,
+  ) {
+    return this.preview.importar(jobId, dto.indices);
+  }
+
+  @Get('events/:id')
+  @ApiOperation({ summary: 'Um evento importado, com a casa' })
+  @ApiOkResponse({ description: 'O evento' })
+  @ApiNotFoundResponse({ description: 'Não existe', type: ErrorResponseDto })
+  event(@Param('id') id: string) {
+    return this.importedEvents.get(id);
   }
 
   @Post(':scraperId/run')

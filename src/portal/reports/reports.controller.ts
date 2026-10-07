@@ -157,6 +157,21 @@ export class ReportsController {
     return this.shared.update(user.sub, id, dto);
   }
 
+  @Patch('shared/:id/publish')
+  @ApiOperation({
+    summary: 'Compartilha com o aluno um relatório que era só do professor',
+    description: 'O conteúdo não muda; o aluno passa a ver e é avisado.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'Relatório compartilhado' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async publish(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id') id: string,
+  ) {
+    return this.shared.publish(user.sub, id);
+  }
+
   @Delete('shared/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

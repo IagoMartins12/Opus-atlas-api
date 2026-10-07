@@ -124,7 +124,7 @@ describe('WorksService', () => {
   let appCache: { del: jest.Mock; remember: jest.Mock };
   /** Valor já em cache para uma chave, quando o teste quiser simular um hit. */
   let cacheHit: (key: string) => unknown;
-  let imslp: { ensure: jest.Mock };
+  let imslp: { request: jest.Mock };
   let textIndex: { hasTextIndex: jest.Mock };
   let service: WorksService;
 
@@ -180,7 +180,7 @@ describe('WorksService', () => {
           cacheHit(key) ?? (await load()),
       ),
     };
-    imslp = { ensure: jest.fn().mockResolvedValue(0) };
+    imslp = { request: jest.fn().mockResolvedValue('stored') };
     textIndex = { hasTextIndex: jest.fn().mockReturnValue(false) };
     service = new WorksService(
       prisma as unknown as PrismaService,
@@ -768,13 +768,15 @@ describe('WorksService', () => {
   });
 
   describe('partituras', () => {
-    it('listagem garante o IMSLP antes; busca por sourceId não', async () => {
-      await service.getScores(WORK, {});
-      expect(imslp.ensure).toHaveBeenCalledWith(WORK);
+    it('listagem pede o IMSLP e devolve a situação; busca por sourceId não', async () => {
+      imslp.request.mockResolvedValue('pending');
+      const result = await service.getScores(WORK, {}, { robot: false });
+      expect(imslp.request).toHaveBeenCalledWith(WORK, { robot: false });
+      expect(result.imslp).toEqual({ status: 'pending' });
 
-      imslp.ensure.mockClear();
+      imslp.request.mockClear();
       await service.getScores(WORK, { sourceId: '1', source: 'IMSLP' });
-      expect(imslp.ensure).not.toHaveBeenCalled();
+      expect(imslp.request).not.toHaveBeenCalled();
     });
 
     it('busca direta conta o acesso; inexistente volta vazia', async () => {

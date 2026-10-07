@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TeacherStatus } from '@prisma/client';
+import { PlanType, Prisma, TeacherStatus } from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -14,6 +14,7 @@ import { toCsv } from '../../common/utils/csv.util';
 import { nextCursorOf, pageArgs } from '../../common/pagination/cursor';
 import {
   AdminUserAnalyticsQueryDto,
+  AdminUserItemsQueryDto,
   ExportAdminUsersQueryDto,
   ListAdminUsersQueryDto,
   UpdateAdminUserDto,
@@ -84,7 +85,7 @@ export class AdminUsersService {
   async list(query: ListAdminUsersQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 25;
-    const where = this.buildWhere(query);
+    const where = await this.buildWhere(query);
     const sortBy = query.sortBy ?? 'createdAt';
     const sortOrder = query.sortOrder ?? 'desc';
 
@@ -145,9 +146,392 @@ export class AdminUsersService {
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    const [counts] = await this.withCounts([user]);
+    const agora = new Date();
+    const [[counts], assinatura, historico] = await Promise.all([
+      this.withCounts([user]),
+      // A assinatura que dá acesso hoje (a mais recente das vivas).
+      this.prisma.subscription.findFirst({
+        where: {
+          userId,
+          OR: [
+            { status: { in: ['ACTIVE', 'TRIAL', 'PAST_DUE'] } },
+            { status: 'CANCELLED', endDate: { gt: agora } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          planType: true,
+          billingPeriod: true,
+          status: true,
+          endDate: true,
+          trialEndDate: true,
+        },
+      }),
+      // O que o painel fez com esta conta — a trilha, filtrada pelo alvo.
+      this.prisma.adminAuditLog.findMany({
+        where: { entityType: 'user', entityId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          action: true,
+          actorId: true,
+          metadata: true,
+          success: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
-    return { ...user, counts: counts.counts };
+    return {
+      ...user,
+      counts: counts.counts,
+      assinatura,
+      historicoNoPainel: historico,
+    };
+  }
+
+  /**
+   * O que a conta guardou ou fez, para abrir a partir dos números do
+   * detalhe: favoritos, aprendidas, quero aprender, anotações, envios ao
+   * catálogo e arquivos. Uma linha por item, no mesmo formato para todos os
+   * tipos — a tela só lista.
+   */
+  async items(userId: string, query: AdminUserItemsQueryDto) {
+    const limit = query.limit ?? 20;
+    const page = query.page ?? 1;
+    const skip = (page - 1) * limit;
+    const obra = {
+      select: {
+        id: true,
+        title: true,
+        composer: { select: { name: true } },
+      },
+    } as const;
+
+    const existe = await this.prisma.user.count({ where: { id: userId } });
+    if (!existe) throw new NotFoundException('Usuário não encontrado');
+
+    type Linha = {
+      id: string;
+      titulo: string;
+      detalhe: string | null;
+      em: Date | null;
+      workId?: string | null;
+      entityType?: string | null;
+      entityId?: string | null;
+    };
+    let linhas: Linha[] = [];
+    let total = 0;
+
+    switch (query.kind) {
+      case 'favoritos': {
+        const where = { userId };
+        const [rows, n] = await Promise.all([
+          this.prisma.favoriteWork.findMany({
+            where,
+            orderBy: { id: 'desc' },
+            skip,
+            take: limit,
+            select: { id: true, createdAt: true, work: obra },
+          }),
+          this.prisma.favoriteWork.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: r.work.title,
+          detalhe: r.work.composer?.name ?? null,
+          em: r.createdAt ?? null,
+          workId: r.work.id,
+        }));
+        break;
+      }
+      case 'aprendidas': {
+        const where = { userId };
+        const [rows, n] = await Promise.all([
+          this.prisma.learned.findMany({
+            where,
+            orderBy: { learnedAt: 'desc' },
+            skip,
+            take: limit,
+            select: {
+              id: true,
+              learnedAt: true,
+              mastery: true,
+              work: obra,
+            },
+          }),
+          this.prisma.learned.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: r.work.title,
+          detalhe: [r.work.composer?.name, `domínio ${r.mastery}%`]
+            .filter(Boolean)
+            .join(' · '),
+          em: r.learnedAt,
+          workId: r.work.id,
+        }));
+        break;
+      }
+      case 'quero-aprender': {
+        const where = { userId };
+        const [rows, n] = await Promise.all([
+          this.prisma.wantToLearn.findMany({
+            where,
+            orderBy: { addedAt: 'desc' },
+            skip,
+            take: limit,
+            select: {
+              id: true,
+              addedAt: true,
+              progress: true,
+              work: obra,
+            },
+          }),
+          this.prisma.wantToLearn.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: r.work.title,
+          detalhe: [
+            r.work.composer?.name,
+            r.progress ? `${Math.round(r.progress)}% do caminho` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          em: r.addedAt,
+          workId: r.work.id,
+        }));
+        break;
+      }
+      case 'anotacoes': {
+        const where = { userId };
+        const [rows, n] = await Promise.all([
+          this.prisma.workAnnotation.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit,
+            select: {
+              id: true,
+              title: true,
+              isPublic: true,
+              createdAt: true,
+              work: obra,
+            },
+          }),
+          this.prisma.workAnnotation.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: r.title,
+          detalhe: [r.work.title, r.isPublic ? 'pública' : 'privada']
+            .filter(Boolean)
+            .join(' · '),
+          em: r.createdAt,
+          workId: r.work.id,
+        }));
+        break;
+      }
+      case 'envios': {
+        const where = { userId };
+        const [rows, n] = await Promise.all([
+          this.prisma.uploadHistory.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit,
+            select: {
+              id: true,
+              entityType: true,
+              entityId: true,
+              action: true,
+              changes: true,
+              reason: true,
+              createdAt: true,
+            },
+          }),
+          this.prisma.uploadHistory.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: nomeNoHistorico(r.changes) ?? r.entityType,
+          detalhe: [
+            `${ACAO_ENVIO[r.action] ?? r.action} ${TIPO_ENVIO[r.entityType] ?? r.entityType}`,
+            camposDoEnvio(r.changes),
+            r.reason ? `“${r.reason.slice(0, 120)}”` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          em: r.createdAt,
+          entityType: r.entityType,
+          entityId: r.entityId,
+        }));
+        break;
+      }
+      case 'arquivos': {
+        const where = { ownerId: userId, deletedAt: null };
+        const [rows, n] = await Promise.all([
+          this.prisma.storedAsset.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit,
+            select: {
+              id: true,
+              kind: true,
+              format: true,
+              bytes: true,
+              status: true,
+              createdAt: true,
+              entityType: true,
+              entityId: true,
+            },
+          }),
+          this.prisma.storedAsset.count({ where }),
+        ]);
+        total = n;
+        linhas = rows.map((r) => ({
+          id: r.id,
+          titulo: TIPO_ARQUIVO[r.kind] ?? r.kind,
+          detalhe: [
+            r.format?.toUpperCase(),
+            r.bytes ? `${Math.round(r.bytes / 1024)} KB` : null,
+            r.status === 'PENDING' ? 'não confirmado' : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          em: r.createdAt,
+          entityType: r.entityType,
+          entityId: r.entityId,
+        }));
+        break;
+      }
+    }
+
+    return {
+      kind: query.kind,
+      items: linhas,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * O resumo da base para o topo da tela de usuários: quem chega, quem volta,
+   * quem termina o cadastro, quem confirma o e-mail, quem paga, e quanto da
+   * base de fato usa o site (guarda, estuda, anota, contribui).
+   */
+  async overview() {
+    const agora = Date.now();
+    const desde = (dias: number) => new Date(agora - dias * DAY_MS);
+
+    const [
+      total,
+      novos30,
+      novosAnteriores,
+      ativos7,
+      ativos30,
+      nunca,
+      verificados,
+      onboarding,
+      publicos,
+      porNivel,
+      porTipo,
+      professores,
+      admins,
+      comFavorito,
+      comAprendida,
+      comAnotacao,
+      contribuintes,
+      pagantes,
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { createdAt: { gte: desde(30) } } }),
+      this.prisma.user.count({
+        where: { createdAt: { gte: desde(60), lt: desde(30) } },
+      }),
+      this.prisma.user.count({ where: { lastSeen: { gte: desde(7) } } }),
+      this.prisma.user.count({ where: { lastSeen: { gte: desde(30) } } }),
+      this.prisma.user.count({ where: { lastSeen: null } }),
+      this.prisma.user.count({ where: { emailVerified: { not: null } } }),
+      this.prisma.user.count({ where: { onboardingCompleted: true } }),
+      this.prisma.user.count({ where: { profilePublic: true } }),
+      this.prisma.user.groupBy({
+        by: ['experienceLevel'],
+        _count: { _all: true },
+      }),
+      this.prisma.user.groupBy({ by: ['userType'], _count: { _all: true } }),
+      this.prisma.user.count({ where: { isTeacher: true } }),
+      this.prisma.user.count({ where: { role: 2 } }),
+      this.distinctUsers('favoriteWork'),
+      this.distinctUsers('learned'),
+      this.distinctUsers('workAnnotation'),
+      this.distinctUsers('uploadHistory'),
+      this.prisma.subscription.groupBy({
+        by: ['planType'],
+        where: {
+          planType: { not: PlanType.FREE },
+          OR: [
+            { status: { in: ['ACTIVE', 'TRIAL', 'PAST_DUE'] } },
+            { status: 'CANCELLED', endDate: { gt: new Date(agora) } },
+          ],
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    return {
+      total,
+      novos30,
+      novosAnteriores,
+      ativos7,
+      ativos30,
+      nuncaEntraram: nunca,
+      emailVerificado: verificados,
+      cadastroConcluido: onboarding,
+      perfilPublico: publicos,
+      professores,
+      administradores: admins,
+      usam: {
+        favoritam: comFavorito,
+        aprenderam: comAprendida,
+        anotam: comAnotacao,
+        contribuem: contribuintes,
+      },
+      porNivel: Object.fromEntries(
+        porNivel.map((r) => [r.experienceLevel ?? 'UNSET', r._count._all]),
+      ),
+      porPerfil: Object.fromEntries(
+        porTipo.map((r) => [r.userType ?? 'UNSET', r._count._all]),
+      ),
+      pagantesPorPlano: Object.fromEntries(
+        pagantes.map((r) => [r.planType, r._count._all]),
+      ),
+    };
+  }
+
+  /** Quantas contas distintas têm ao menos um registro na coleção. */
+  private async distinctUsers(
+    modelo: 'favoriteWork' | 'learned' | 'workAnnotation' | 'uploadHistory',
+  ): Promise<number> {
+    const rows = await (
+      this.prisma[modelo] as unknown as {
+        groupBy: (a: object) => Promise<unknown[]>;
+      }
+    ).groupBy({ by: ['userId'] });
+    return rows.length;
   }
 
   /**
@@ -165,28 +549,39 @@ export class AdminUsersService {
       return users.map((user) => ({ ...user, counts: { ...EMPTY_COUNTS } }));
     }
 
-    const [annotations, favorites, learned, uploads] = await Promise.all([
-      this.prisma.workAnnotation.groupBy({
-        by: ['userId'],
-        where: { userId: { in: ids } },
-        _count: { _all: true },
-      }),
-      this.prisma.favoriteWork.groupBy({
-        by: ['userId'],
-        where: { userId: { in: ids } },
-        _count: { _all: true },
-      }),
-      this.prisma.learned.groupBy({
-        by: ['userId'],
-        where: { userId: { in: ids } },
-        _count: { _all: true },
-      }),
-      this.prisma.storedAsset.groupBy({
-        by: ['ownerId'],
-        where: { ownerId: { in: ids } },
-        _count: { _all: true },
-      }),
-    ]);
+    const [annotations, favorites, learned, uploads, wantToLearn, contribs] =
+      await Promise.all([
+        this.prisma.workAnnotation.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }),
+        this.prisma.favoriteWork.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }),
+        this.prisma.learned.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }),
+        this.prisma.storedAsset.groupBy({
+          by: ['ownerId'],
+          where: { ownerId: { in: ids }, deletedAt: null },
+          _count: { _all: true },
+        }),
+        this.prisma.wantToLearn.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }),
+        this.prisma.uploadHistory.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids } },
+          _count: { _all: true },
+        }),
+      ]);
 
     const byUser = (
       rows: Array<{ userId: string; _count: { _all: number } }>,
@@ -196,6 +591,8 @@ export class AdminUsersService {
     const annotationsMap = byUser(annotations);
     const favoritesMap = byUser(favorites);
     const learnedMap = byUser(learned);
+    const wantMap = byUser(wantToLearn);
+    const contribMap = byUser(contribs);
     const uploadsMap = new Map(
       uploads
         .filter((row): row is typeof row & { ownerId: string } =>
@@ -211,6 +608,8 @@ export class AdminUsersService {
         favorites: favoritesMap.get(user.id) ?? 0,
         learned: learnedMap.get(user.id) ?? 0,
         uploads: uploadsMap.get(user.id) ?? 0,
+        wantToLearn: wantMap.get(user.id) ?? 0,
+        contributions: contribMap.get(user.id) ?? 0,
       },
     }));
   }
@@ -283,7 +682,7 @@ export class AdminUsersService {
    * de usuários é o administrador, ou seja, a conta de maior privilégio.
    */
   async export(query: ExportAdminUsersQueryDto) {
-    const where = this.buildWhere(query);
+    const where = await this.buildWhere(query);
 
     const users = await this.prisma.user.findMany({
       where,
@@ -390,6 +789,17 @@ export class AdminUsersService {
       await this.assertRoleChangeAllowed(actingUserId, target, dto.role);
     }
 
+    const grant = dto.teacherPlanGrant;
+    if (grant && dto.isTeacher !== true) {
+      throw new BadRequestException(
+        'O plano concedido acompanha o convite de professor (isTeacher: true)',
+      );
+    }
+    const grantExpiresAt = grant?.expiresAt ? new Date(grant.expiresAt) : null;
+    if (grantExpiresAt && grantExpiresAt <= new Date()) {
+      throw new BadRequestException('O vencimento do plano precisa ser futuro');
+    }
+
     // Ser professor é `isTeacher`, nunca o papel. O legado usava `role: 1`
     // para "fazer professor" — e 1 é o nível de administrador em toda checagem
     // de permissão (`@Roles('ADMIN')` aceita `role >= 1`). Acoplados, promover
@@ -423,6 +833,14 @@ export class AdminUsersService {
             isVerified: false,
           },
         });
+      } else if (becomingTeacher && target.teacherProfile) {
+        // Já foi professor (perfil desativado): volta a pendente, e o convite
+        // sai de novo. Antes, a conta virava professor sem convite nenhum e
+        // com o perfil ainda inativo.
+        await tx.teacher.update({
+          where: { userId: targetUserId },
+          data: { status: TeacherStatus.PENDING },
+        });
       }
 
       if (leavingTeacher && target.teacherProfile) {
@@ -438,9 +856,16 @@ export class AdminUsersService {
     // Virar ou deixar de ser professor muda o diretório público.
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
 
-    // Promovido agora: o convite sai por e-mail (o perfil nasceu pendente).
-    if (becomingTeacher && !target.teacherProfile) {
-      await this.invitations.send(targetUserId, actingUserId);
+    // Promovido agora: o convite sai por e-mail (o perfil está pendente), com
+    // o plano que a equipe decidiu conceder, se houver.
+    if (becomingTeacher) {
+      await this.invitations.send(
+        targetUserId,
+        actingUserId,
+        grant
+          ? { planType: grant.planType, expiresAt: grantExpiresAt }
+          : undefined,
+      );
     }
 
     return this.findOne(targetUserId);
@@ -472,8 +897,74 @@ export class AdminUsersService {
 
   // -------------------------------------------------------------------
 
-  private buildWhere(query: ListAdminUsersQueryDto): Prisma.UserWhereInput {
+  private async buildWhere(
+    query: ListAdminUsersQueryDto,
+  ): Promise<Prisma.UserWhereInput> {
     const search = query.search?.trim();
+    const agora = Date.now();
+    const and: Prisma.UserWhereInput[] = [];
+
+    if (query.emailVerified !== undefined) {
+      and.push({
+        emailVerified: query.emailVerified ? { not: null } : null,
+      });
+    }
+
+    if (query.activity === '7d' || query.activity === '30d') {
+      const dias = query.activity === '7d' ? 7 : 30;
+      and.push({ lastSeen: { gte: new Date(agora - dias * DAY_MS) } });
+    } else if (query.activity === 'inactive90') {
+      and.push({ lastSeen: { lt: new Date(agora - 90 * DAY_MS) } });
+    } else if (query.activity === 'never') {
+      and.push({ lastSeen: null });
+    }
+
+    if (query.createdFrom || query.createdTo) {
+      and.push({
+        createdAt: {
+          ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+          ...(query.createdTo ? { lte: new Date(query.createdTo) } : {}),
+        },
+      });
+    }
+
+    // O plano vem da assinatura viva, não do `currentPlan` do usuário: esse
+    // campo é um cache que o legado nem sempre atualizava.
+    if (query.plan) {
+      const vivas = await this.prisma.subscription.findMany({
+        where: {
+          planType: { not: PlanType.FREE },
+          OR: [
+            { status: { in: ['ACTIVE', 'TRIAL', 'PAST_DUE'] } },
+            { status: 'CANCELLED', endDate: { gt: new Date(agora) } },
+          ],
+          ...(query.plan !== PlanType.FREE ? { planType: query.plan } : {}),
+        },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+      const ids = vivas.map((v) => v.userId);
+      and.push(
+        query.plan === PlanType.FREE
+          ? { id: { notIn: ids } }
+          : { id: { in: ids } },
+      );
+    }
+
+    if (search) {
+      const contem = {
+        contains: escapeRegex(search),
+        mode: 'insensitive' as const,
+      };
+      and.push({
+        OR: [
+          { email: contem },
+          { firstName: contem },
+          { lastName: contem },
+          { username: contem },
+        ],
+      });
+    }
 
     return {
       ...(query.userType ? { userType: query.userType } : {}),
@@ -482,36 +973,13 @@ export class AdminUsersService {
         : {}),
       ...(query.role !== undefined ? { role: query.role } : {}),
       ...(query.isTeacher !== undefined ? { isTeacher: query.isTeacher } : {}),
-      ...(search
-        ? {
-            OR: [
-              {
-                email: {
-                  contains: escapeRegex(search),
-                  mode: 'insensitive' as const,
-                },
-              },
-              {
-                firstName: {
-                  contains: escapeRegex(search),
-                  mode: 'insensitive' as const,
-                },
-              },
-              {
-                lastName: {
-                  contains: escapeRegex(search),
-                  mode: 'insensitive' as const,
-                },
-              },
-              {
-                username: {
-                  contains: escapeRegex(search),
-                  mode: 'insensitive' as const,
-                },
-              },
-            ],
-          }
+      ...(query.onboardingCompleted !== undefined
+        ? { onboardingCompleted: query.onboardingCompleted }
         : {}),
+      ...(query.profilePublic !== undefined
+        ? { profilePublic: query.profilePublic }
+        : {}),
+      ...(and.length ? { AND: and } : {}),
     };
   }
 
@@ -524,7 +992,11 @@ export interface UserCounts {
   annotations: number;
   favorites: number;
   learned: number;
+  /** Arquivos enviados (foto, partitura, áudio) ainda guardados. */
   uploads: number;
+  wantToLearn: number;
+  /** Envios ao catálogo: cadastros, edições e remoções (`upload_history`). */
+  contributions: number;
 }
 
 const EMPTY_COUNTS: UserCounts = {
@@ -532,4 +1004,67 @@ const EMPTY_COUNTS: UserCounts = {
   favorites: 0,
   learned: 0,
   uploads: 0,
+  wantToLearn: 0,
+  contributions: 0,
 };
+
+const ACAO_ENVIO: Record<string, string> = {
+  create: 'cadastrou',
+  update: 'editou',
+  delete: 'apagou',
+};
+
+const TIPO_ENVIO: Record<string, string> = {
+  composer: 'compositor',
+  work: 'obra',
+  score: 'partitura',
+  workScore: 'partitura',
+  user: 'perfil',
+};
+
+const TIPO_ARQUIVO: Record<string, string> = {
+  PROFILE_IMAGE: 'Foto de perfil',
+  COMPOSER_IMAGE: 'Retrato de compositor',
+  SCORE_FILE: 'Partitura',
+  SCORE_THUMBNAIL: 'Capa de partitura',
+  WORK_AUDIO: 'Áudio de obra',
+  WORK_VIDEO_LESSON: 'Videoaula',
+  PERFORMANCE_VIDEO: 'Vídeo de execução',
+  ASSIGNMENT_VIDEO: 'Vídeo de tarefa',
+  BLOG_MEDIA: 'Mídia do blog',
+  BLOG_AUDIO: 'Áudio do blog',
+  BLOG_TTS_AUDIO: 'Narração do blog',
+  AD_MEDIA: 'Mídia de anúncio',
+};
+
+/** O nome do registro gravado no histórico de envio, quando há. */
+function nomeNoHistorico(changes: Prisma.JsonValue | null): string | null {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+    return null;
+  }
+  const c = changes as Record<string, unknown>;
+  const fonte =
+    (c.after as Record<string, unknown> | undefined) ??
+    (c.before as Record<string, unknown> | undefined) ??
+    c;
+  const nome = fonte?.title ?? fonte?.name ?? fonte?.fullName;
+  return typeof nome === 'string' && nome ? nome : null;
+}
+
+/** "3 campos: título, ano, catálogo" a partir do `changes` do envio. */
+function camposDoEnvio(changes: Prisma.JsonValue | null): string | null {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+    return null;
+  }
+  const c = changes as Record<string, unknown>;
+  const fonte =
+    c.after && typeof c.after === 'object'
+      ? (c.after as Record<string, unknown>)
+      : c;
+  const nomes = Object.keys(fonte).filter(
+    (k) => !['id', 'createdAt', 'updatedAt'].includes(k),
+  );
+  if (!nomes.length) return null;
+  const lista = nomes.slice(0, 4).join(', ');
+  return `${nomes.length} ${nomes.length === 1 ? 'campo' : 'campos'}: ${lista}${nomes.length > 4 ? '…' : ''}`;
+}

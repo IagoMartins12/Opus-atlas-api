@@ -17,6 +17,7 @@
     "prisma:push:hml": "npm run build && APP_ENV=hml node --env-file=.env.hml dist/scripts/db-push.js",
     "hml:export": "APP_ENV=local node --env-file=.env.local dist/scripts/export-hml.js",
     "db:restore": "APP_ENV=local node --env-file=.env.local dist/scripts/restore.js",
+    "seed:blog:local": "npm run build && node --env-file=.env.local dist/scripts/seed-blog.js",
     "seed:pricing:hml": "npm run build && APP_ENV=hml node --env-file=.env.hml dist/scripts/seed-plan-pricing.js",
     "seed:pricing:prd": "npm run build && APP_ENV=prd node --env-file=.env.prd dist/scripts/seed-plan-pricing.js",
     "admin:promote:hml": "npm run build && APP_ENV=hml node --env-file=.env.hml dist/scripts/promote-admin.js",

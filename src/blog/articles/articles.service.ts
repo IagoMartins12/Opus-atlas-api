@@ -8,6 +8,7 @@ import { ArticleStatus, Prisma } from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace, CacheTtl } from '../../common/cache/cache-keys';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAdmin as isAdminRole } from '../../common/auth/roles';
 import { AUTHOR_SELECT, AUTHOR_SELECT_WITH_BIO } from '../dto/author-ref.dto';
 import { CATEGORY_REF_SELECT } from '../dto/category-ref.dto';
 import { TAG_REF_SELECT } from '../dto/tag-ref.dto';
@@ -16,6 +17,13 @@ import { ListArticlesQueryDto } from './dto/list-articles-query.dto';
 
 /** Id do Mongo; o que não for id é tratado como slug no detalhe. */
 const OBJECT_ID = /^[0-9a-f]{24}$/i;
+
+/**
+ * **A lista não leva o texto.** Ela devolvia o `content` de cada artigo — o
+ * JSON inteiro do editor, dezenas de KB cada — para telas que mostram título,
+ * capa e resumo. O texto mora só no detalhe.
+ */
+const ARTICLE_LIST_OMIT = { content: true } as const;
 
 const ARTICLE_LIST_INCLUDE = {
   author: { select: AUTHOR_SELECT },
@@ -48,7 +56,9 @@ export class ArticlesService {
   ) {}
 
   async findAll(query: ListArticlesQueryDto, user?: CurrentUserContext) {
-    const isAdmin = !!user && user.role >= 1;
+    // `role >= 1` incluía o professor (nível 1): ele via a lista de
+    // administrador, com rascunhos de todo mundo. Ver `common/auth/roles`.
+    const isAdmin = !!user && isAdminRole(user.role);
 
     if (isAdmin) {
       return this.loadList(query, true);
@@ -99,7 +109,8 @@ export class ArticlesService {
 
     if (detail.article.status !== ArticleStatus.PUBLISHED) {
       const canSeeUnpublished =
-        !!user && (user.role >= 1 || user.sub === detail.article.authorId);
+        !!user &&
+        (isAdminRole(user.role) || user.sub === detail.article.authorId);
 
       if (!canSeeUnpublished) {
         throw new ForbiddenException('Acesso negado');
@@ -189,6 +200,7 @@ export class ArticlesService {
       this.prisma.blogArticle.findMany({
         where,
         include: ARTICLE_LIST_INCLUDE,
+        omit: ARTICLE_LIST_OMIT,
         orderBy,
         skip: (page - 1) * limit,
         take: limit,
@@ -378,10 +390,14 @@ export class ArticlesService {
   private formatSummary(
     article: Prisma.BlogArticleGetPayload<{
       include: typeof ARTICLE_LIST_INCLUDE;
+      omit: typeof ARTICLE_LIST_OMIT;
     }>,
   ) {
     return {
       ...article,
+      // A lista mostra título e resumo no outro idioma; o texto traduzido
+      // fica de fora pelo mesmo motivo que o original (`ARTICLE_LIST_OMIT`).
+      translation: withoutContent(article.translation),
       categories: article.categories.map((c) => c.category),
       tags: article.tags.map((t) => t.tag),
       stats: {
@@ -391,4 +407,17 @@ export class ArticlesService {
       },
     };
   }
+}
+
+function withoutContent(translation: Prisma.JsonValue | null) {
+  if (
+    !translation ||
+    typeof translation !== 'object' ||
+    Array.isArray(translation)
+  ) {
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { content, ...rest } = translation;
+  return rest;
 }

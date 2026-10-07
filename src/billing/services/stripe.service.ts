@@ -14,8 +14,9 @@ import Stripe = require('stripe');
  * Cliente Stripe compartilhado. Diferente do legado (`stripeClient.ts`), que
  * criava um `Product`/`Price` novo no Stripe a cada checkout — poluindo o
  * dashboard com dezenas de produtos "Opus Atlas - Plus" duplicados — este
- * serviço só usa Price IDs pré-criados no dashboard, configurados via env
- * (`STRIPE_PRICE_<PLANO>_<PERIODO>`).
+ * serviço só usa Price IDs que já existem: os da versão vigente do preço
+ * (`StripeCatalogService`, que cria um Price só quando o valor muda) e, sem
+ * ela, os do ambiente (`STRIPE_PRICE_<PLANO>_<PERIODO>`).
  */
 @Injectable()
 export class StripeService {
@@ -61,14 +62,22 @@ export class StripeService {
     billingPeriod: BillingPeriod;
     successUrl: string;
     cancelUrl: string;
+    /** O Price vigente (`StripeCatalogService.priceIdFor`); sem ele, o do ambiente. */
+    priceId?: string;
+    /** O espelho do cupom no Stripe: é o que faz o desconto ser cobrado. */
+    stripeCouponId?: string | null;
   }): Promise<Stripe.Checkout.Session> {
-    const priceId = this.getPriceId(data.planType, data.billingPeriod);
+    const priceId =
+      data.priceId ?? this.getPriceId(data.planType, data.billingPeriod);
 
     return this.getClient().checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
       customer_email: data.userEmail,
       line_items: [{ price: priceId, quantity: 1 }],
+      ...(data.stripeCouponId
+        ? { discounts: [{ coupon: data.stripeCouponId }] }
+        : {}),
       success_url: data.successUrl,
       cancel_url: data.cancelUrl,
       locale: 'pt',

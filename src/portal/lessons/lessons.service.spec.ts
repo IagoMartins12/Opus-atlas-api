@@ -9,6 +9,7 @@ import { NotificationType, LessonStatus, RecurrenceType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LessonSchedulingService } from './lesson-scheduling.service';
+import { ScheduleRulesService } from './schedule-rules.service';
 import { SchoolActivitiesService } from '../school-activities/school-activities.service';
 import { LessonsService } from './lessons.service';
 
@@ -36,9 +37,42 @@ describe('LessonsService', () => {
     $transaction: jest.Mock;
   };
   let scheduling: {
-    findConflicts: jest.Mock;
     calculateOccurrences: jest.Mock;
-    suggestAlternatives: jest.Mock;
+  };
+  let rules: { check: jest.Mock };
+
+  /** O resultado do motor de agenda para uma lista de ocorrências. */
+  const checkResult = (
+    dates: Date[],
+    severities: Array<'ok' | 'warning' | 'conflict' | 'blocking'> = [],
+  ) => {
+    const occurrences = dates.map((scheduledAt, i) => {
+      const severity = severities[i] ?? 'ok';
+      return {
+        scheduledAt,
+        severity,
+        findings:
+          severity === 'ok'
+            ? []
+            : [
+                {
+                  code: 'TEACHER_CLASH',
+                  severity,
+                  message: 'Choca com a aula de Ana.',
+                },
+              ],
+        suggestions: severity === 'conflict' ? [new Date(future(3))] : [],
+      };
+    });
+    return {
+      severity: severities.includes('conflict') ? 'conflict' : 'ok',
+      occurrences,
+      summary: {
+        blocking: occurrences.filter((o) => o.severity === 'blocking').length,
+        conflicts: occurrences.filter((o) => o.severity === 'conflict').length,
+        warnings: occurrences.filter((o) => o.severity === 'warning').length,
+      },
+    };
   };
   let notifications: { notify: jest.Mock };
   let tx: {
@@ -112,9 +146,12 @@ describe('LessonsService', () => {
     };
 
     scheduling = {
-      findConflicts: jest.fn().mockResolvedValue([]),
       calculateOccurrences: jest.fn((start: Date) => [start]),
-      suggestAlternatives: jest.fn().mockResolvedValue([]),
+    };
+    rules = {
+      check: jest.fn((params: { occurrences: Date[] }) =>
+        Promise.resolve(checkResult(params.occurrences)),
+      ),
     };
 
     notifications = { notify: jest.fn().mockResolvedValue(undefined) };
@@ -124,6 +161,7 @@ describe('LessonsService', () => {
         LessonsService,
         { provide: PrismaService, useValue: prisma },
         { provide: LessonSchedulingService, useValue: scheduling },
+        { provide: ScheduleRulesService, useValue: rules },
         { provide: NotificationsService, useValue: notifications },
         // A trilha escolar é efeito colateral: o dublê só registra a chamada.
         { provide: SchoolActivitiesService, useValue: { record: jest.fn() } },
@@ -172,20 +210,37 @@ describe('LessonsService', () => {
     });
 
     it('recusa quando há conflito, com sugestões', async () => {
-      scheduling.findConflicts.mockResolvedValue([
-        { lessonId: 'outra', clashesWith: 'teacher' },
-      ]);
-      scheduling.suggestAlternatives.mockResolvedValue([new Date()]);
-
-      await expect(service.create('teacher-user', dto)).rejects.toThrow(
-        ConflictException,
+      rules.check.mockImplementation((p: { occurrences: Date[] }) =>
+        Promise.resolve(checkResult(p.occurrences, ['conflict'])),
       );
+
+      const error = await service
+        .create('teacher-user', dto)
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as {
+        suggestions: Date[];
+      };
+      expect(body.suggestions).toHaveLength(1);
+    });
+
+    // Aviso (folga curta, fora do atendimento) informa e não impede: a regra
+    // do portal é que a agenda informa.
+    it('marca com aviso e devolve os avisos', async () => {
+      rules.check.mockImplementation((p: { occurrences: Date[] }) =>
+        Promise.resolve(checkResult(p.occurrences, ['warning'])),
+      );
+
+      const result = await service.create('teacher-user', dto);
+
+      expect(result.created).toBe(1);
+      expect(result.warnings).toHaveLength(1);
     });
 
     it('cria mesmo com conflito quando forçado, e devolve os choques aceitos', async () => {
-      scheduling.findConflicts.mockResolvedValue([
-        { lessonId: 'outra', clashesWith: 'teacher' },
-      ]);
+      rules.check.mockImplementation((p: { occurrences: Date[] }) =>
+        Promise.resolve(checkResult(p.occurrences, ['conflict'])),
+      );
 
       const result = await service.create('teacher-user', {
         ...dto,
@@ -227,26 +282,60 @@ describe('LessonsService', () => {
 
       // No legado a série era criada depois de validar só a data inicial, então
       // as ocorrências seguintes podiam sobrepor em silêncio.
-      it('verifica conflito em todas as ocorrências, não só na primeira', async () => {
+      // Uma conferência só, com todas as ocorrências: a verificação antiga
+      // fazia uma consulta por data.
+      it('confere todas as ocorrências de uma vez', async () => {
         const dates = [1, 8, 15, 22].map((day) => new Date(future(day)));
         scheduling.calculateOccurrences.mockReturnValue(dates);
 
         await service.create('teacher-user', recurringDto);
 
-        expect(scheduling.findConflicts).toHaveBeenCalledTimes(dates.length);
+        expect(rules.check).toHaveBeenCalledTimes(1);
+        expect(rules.check.mock.calls[0][0].occurrences).toEqual(dates);
       });
 
       it('recusa quando uma ocorrência intermediária conflita', async () => {
         const dates = [1, 8, 15].map((day) => new Date(future(day)));
         scheduling.calculateOccurrences.mockReturnValue(dates);
-        scheduling.findConflicts
-          .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([{ lessonId: 'x', clashesWith: 'teacher' }])
-          .mockResolvedValueOnce([]);
+        rules.check.mockImplementation((p: { occurrences: Date[] }) =>
+          Promise.resolve(checkResult(p.occurrences, ['ok', 'conflict', 'ok'])),
+        );
 
         await expect(
           service.create('teacher-user', recurringDto),
         ).rejects.toThrow(ConflictException);
+      });
+
+      it('pula as datas escolhidas e move as que chocavam', async () => {
+        const dates = [1, 8, 15].map((day) => new Date(future(day)));
+        const moved = new Date(future(9));
+        scheduling.calculateOccurrences.mockReturnValue(dates);
+
+        const result = await service.create('teacher-user', {
+          ...recurringDto,
+          skipOccurrences: [dates[2].toISOString()],
+          moveOccurrences: [
+            { from: dates[1].toISOString(), to: moved.toISOString() },
+          ],
+        });
+
+        expect(rules.check.mock.calls[0][0].occurrences).toEqual([
+          dates[0],
+          moved,
+        ]);
+        expect(result.created).toBe(2);
+      });
+
+      it('recusa quando todas as datas foram puladas', async () => {
+        const dates = [1, 8].map((day) => new Date(future(day)));
+        scheduling.calculateOccurrences.mockReturnValue(dates);
+
+        await expect(
+          service.create('teacher-user', {
+            ...recurringDto,
+            skipOccurrences: dates.map((d) => d.toISOString()),
+          }),
+        ).rejects.toThrow(BadRequestException);
       });
 
       it('cria todas as ocorrências numa transação', async () => {
@@ -409,15 +498,15 @@ describe('LessonsService', () => {
         scheduledAt: future(14),
       });
 
-      expect(scheduling.findConflicts).toHaveBeenCalledWith(
+      expect(rules.check).toHaveBeenCalledWith(
         expect.objectContaining({ excludeLessonId: 'lesson-1' }),
       );
     });
 
     it('recusa quando o novo horário conflita', async () => {
-      scheduling.findConflicts.mockResolvedValue([
-        { lessonId: 'outra', clashesWith: 'student' },
-      ]);
+      rules.check.mockImplementation((p: { occurrences: Date[] }) =>
+        Promise.resolve(checkResult(p.occurrences, ['conflict'])),
+      );
 
       await expect(
         service.reschedule('teacher-user', 'lesson-1', {
@@ -666,6 +755,30 @@ describe('LessonsService', () => {
       expect(prisma.lesson.findMany.mock.calls[0][0].where.studentId).toBe(
         'student-1',
       );
+    });
+
+    it('o aluno filtra por professor; o professor não troca o próprio recorte', async () => {
+      prisma.teacher.findUnique.mockResolvedValueOnce(null);
+      await service.list('student-user', { teacherId: 'teacher-2' });
+      expect(prisma.lesson.findMany.mock.calls[0][0].where.teacherId).toBe(
+        'teacher-2',
+      );
+
+      await service.list('teacher-user', { teacherId: 'teacher-2' });
+      expect(prisma.lesson.findMany.mock.calls[1][0].where.teacherId).not.toBe(
+        'teacher-2',
+      );
+    });
+
+    // A busca procura o nome do outro lado da aula, com o texto escapado.
+    it('a busca do aluno procura o professor, escapando o texto', async () => {
+      prisma.teacher.findUnique.mockResolvedValue(null);
+
+      await service.list('student-user', { q: 'Bach (1)' });
+
+      const or = prisma.lesson.findMany.mock.calls[0][0].where.OR;
+      expect(or[1]).toHaveProperty('teacher');
+      expect(or[0].title.contains).toBe('Bach \\(1\\)');
     });
   });
 });

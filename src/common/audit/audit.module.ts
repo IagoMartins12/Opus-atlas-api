@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { AuditInterceptor } from './audit.interceptor';
 import { AuditService } from './audit.service';
+import { AuditSnapshotService } from './audit-snapshot.service';
 
 /**
  * Auditoria de ações administrativas. Global porque `@Audited()` precisa
@@ -9,7 +10,7 @@ import { AuditService } from './audit.service';
  */
 @Global()
 @Module({
-  providers: [AuditService, AuditInterceptor],
-  exports: [AuditService, AuditInterceptor],
+  providers: [AuditService, AuditSnapshotService, AuditInterceptor],
+  exports: [AuditService, AuditSnapshotService, AuditInterceptor],
 })
 export class AuditModule {}

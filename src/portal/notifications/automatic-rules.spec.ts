@@ -174,3 +174,34 @@ describe('invitePending', () => {
     expect(avisos[0].message).toContain('João Silva');
   });
 });
+
+// Os links apontavam para `/portal/aulas/...`, rota que não existe no site.
+describe('links dos avisos automáticos', () => {
+  it('cada lado da aula vai para o próprio portal', () => {
+    for (const rule of [lessonStartingSoon, lessonTomorrow]) {
+      const [teacher, student] = rule(lesson());
+      expect(teacher.actionUrl).toBe('/teacher/lessons/aula-1');
+      expect(student.actionUrl).toBe('/student/lessons/aula-1');
+    }
+    expect(lessonNeedsStatus(lesson())[0].actionUrl).toBe(
+      '/teacher/lessons/aula-1',
+    );
+  });
+
+  it('tarefa e convite levam às telas do portal', () => {
+    expect(assignmentDueSoon(assignment())[0].actionUrl).toBe(
+      '/student/assignments/tarefa-1',
+    );
+    expect(assignmentOverdue(assignment())[0].actionUrl).toBe(
+      '/student/assignments/tarefa-1',
+    );
+    expect(
+      invitePending({
+        id: 'rel-1',
+        teacherUserId: 'u',
+        studentName: 'Ana',
+        createdAt: new Date(),
+      })[0].actionUrl,
+    ).toBe('/teacher/students?tab=invites');
+  });
+});

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 type StripeInvoiceWithSubscription = Stripe.Invoice & {
@@ -56,6 +57,7 @@ export class WebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly stripeCatalog: StripeCatalogService,
   ) {}
 
   /**
@@ -161,6 +163,9 @@ export class WebhookService {
       }
 
       default:
+        // Preço, produto e cupom mexidos no painel do Stripe: o catálogo
+        // decide se é dele.
+        if (await this.stripeCatalog.handleEvent(event)) break;
         this.logger.debug(`Evento Stripe ignorado: ${event.type}`);
     }
   }

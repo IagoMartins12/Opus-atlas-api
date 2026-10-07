@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { WorkType } from '@prisma/client';
+import { IMSLPScoreType, ScoreSource, WorkType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { queryBoolean } from '../../../common/utils/query-boolean';
 import {
@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsISO8601,
   IsMongoId,
   IsOptional,
   IsString,
@@ -80,6 +81,70 @@ export class ListComposersQueryDto extends PaginationQuery {
   epochId?: string;
 
   @ApiPropertyOptional({ enum: COMPOSER_SORT_FIELDS, default: 'createdAt' })
+  @ApiPropertyOptional({ description: 'No mínimo N obras no catálogo.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  minWorks?: number;
+
+  @ApiPropertyOptional({
+    description: 'No máximo N obras. `maxWorks=0`: compositores sem obra.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maxWorks?: number;
+
+  @ApiPropertyOptional({ description: 'Tem biografia em português.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasBio?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem biografia em inglês.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasBioEn?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem retrato.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasPortrait?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem datas de nascimento e morte.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasDates?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Cadastrado pela comunidade (true) ou importado (false).',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  isCustom?: boolean;
+
+  @ApiPropertyOptional({ description: 'Nacionalidade (contém).' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  nationality?: string;
+
+  @ApiPropertyOptional({ description: 'Entrou no catálogo a partir de (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdFrom?: string;
+
+  @ApiPropertyOptional({ description: 'Entrou no catálogo até (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdTo?: string;
+
   @IsOptional()
   @IsIn(COMPOSER_SORT_FIELDS)
   sortBy?: (typeof COMPOSER_SORT_FIELDS)[number];
@@ -158,6 +223,61 @@ export class ListWorksQueryDto extends PaginationQuery {
   minScores?: number;
 
   @ApiPropertyOptional({ enum: WORK_SORT_FIELDS, default: 'createdAt' })
+  @ApiPropertyOptional({ description: 'No máximo N favoritos (0: nenhum).' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maxFavorites?: number;
+
+  @ApiPropertyOptional({
+    description: 'No máximo N pessoas querendo aprender.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maxWantToLearn?: number;
+
+  @ApiPropertyOptional({ description: 'No máximo N pessoas que aprenderam.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maxLearned?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tem partitura (true) ou nenhuma (false).',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasScore?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem vídeo.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasVideo?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Cadastrada pela comunidade (true) ou importada (false).',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  isCustom?: boolean;
+
+  @ApiPropertyOptional({ description: 'Entrou no catálogo a partir de (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdFrom?: string;
+
+  @ApiPropertyOptional({ description: 'Entrou no catálogo até (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdTo?: string;
+
   @IsOptional()
   @IsIn(WORK_SORT_FIELDS)
   sortBy?: (typeof WORK_SORT_FIELDS)[number];
@@ -180,6 +300,39 @@ export class ListScoresQueryDto extends PaginationQuery {
   @Transform(toBoolean)
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Partituras das obras deste compositor.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  composerId?: string;
+
+  @ApiPropertyOptional({ enum: IMSLPScoreType })
+  @IsOptional()
+  @IsEnum(IMSLPScoreType)
+  type?: IMSLPScoreType;
+
+  @ApiPropertyOptional({ enum: ScoreSource })
+  @IsOptional()
+  @IsEnum(ScoreSource)
+  source?: ScoreSource;
+
+  @ApiPropertyOptional({ description: 'Tem arquivo para baixar.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasFile?: boolean;
+
+  @ApiPropertyOptional({ description: 'Entrou a partir de (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdFrom?: string;
+
+  @ApiPropertyOptional({ description: 'Entrou até (ISO).' })
+  @IsOptional()
+  @IsISO8601()
+  createdTo?: string;
 }
 
 /** Verificação e qualidade — a única escrita administrativa em compositor. */
@@ -257,4 +410,16 @@ export class UpdateScoreDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+export class WorkPeopleQueryDto {
+  @ApiPropertyOptional({ enum: ['favoritos', 'quero-aprender', 'aprendidas'] })
+  @IsIn(['favoritos', 'quero-aprender', 'aprendidas'])
+  kind!: 'favoritos' | 'quero-aprender' | 'aprendidas';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
 }

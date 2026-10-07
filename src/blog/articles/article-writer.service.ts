@@ -29,6 +29,7 @@ import {
 import { collectMediaUrls } from './content/media-urls';
 import { urlField } from '../shared/url-field';
 import {
+  ArticleTranslationDto,
   BackgroundMusicDto,
   CreateArticleDto,
   UpdateArticleDto,
@@ -595,6 +596,11 @@ export class ArticleWriterService {
       data.estimatedReadTime = estimateReadTime(words);
     }
 
+    set('language', dto.language);
+    if (dto.translation !== undefined) {
+      data.translation = translationData(dto.translation);
+    }
+
     return data;
   }
 
@@ -788,6 +794,33 @@ export class ArticleWriterService {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * A tradução como vai para o banco: textos aparados, o texto pela política
+ * de conteúdo, campos vazios fora. Sem nada preenchido, `null` (o artigo
+ * fica só no idioma original).
+ */
+function translationData(
+  dto: ArticleTranslationDto | null,
+): Prisma.InputJsonValue | null {
+  if (!dto) return null;
+  const out: Record<string, unknown> = {};
+  for (const key of [
+    'title',
+    'description',
+    'metaTitle',
+    'metaDescription',
+    'coverImageAlt',
+  ] as const) {
+    const value = dto[key]?.trim();
+    if (value) out[key] = value;
+  }
+  if (dto.content) {
+    const { doc, words } = contentOf(dto.content, 'tradução: ');
+    if (words > 0) out.content = doc;
+  }
+  return Object.keys(out).length ? (out as Prisma.InputJsonValue) : null;
+}
 
 function contentOf(raw: unknown, prefix = '') {
   try {

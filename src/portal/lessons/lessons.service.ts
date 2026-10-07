@@ -14,10 +14,15 @@ import {
   SchoolActivityAction,
   StudentInviteStatus,
 } from '@prisma/client';
+import { escapeRegex } from '../../common/utils/regex.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SchoolActivitiesService } from '../school-activities/school-activities.service';
-import { CreateLessonDto } from './dto/create-lesson.dto';
+import { CheckLessonDto, CreateLessonDto } from './dto/create-lesson.dto';
+import {
+  ScheduleRulesService,
+  type ScheduleCheck,
+} from './schedule-rules.service';
 import {
   CancelLessonDto,
   CompleteLessonDto,
@@ -27,10 +32,7 @@ import {
 } from './dto/lesson-actions.dto';
 import { ListLessonsQueryDto } from './dto/list-lessons-query.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
-import {
-  LessonConflict,
-  LessonSchedulingService,
-} from './lesson-scheduling.service';
+import { LessonSchedulingService } from './lesson-scheduling.service';
 
 const LESSON_SELECT = {
   id: true,
@@ -43,6 +45,7 @@ const LESSON_SELECT = {
   location: true,
   objectives: true,
   worksIds: true,
+  composerIds: true,
   workScoreIds: true,
   topics: true,
   techniques: true,
@@ -51,6 +54,9 @@ const LESSON_SELECT = {
   practiceGoals: true,
   publicNotes: true,
   lessonSummary: true,
+  nextLessonPrep: true,
+  skillsWorked: true,
+  punctuality: true,
   studentFeedback: true,
   studentPresent: true,
   isRecurring: true,
@@ -97,6 +103,7 @@ export class LessonsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scheduling: LessonSchedulingService,
+    private readonly rules: ScheduleRulesService,
     private readonly notifications: NotificationsService,
     private readonly activities: SchoolActivitiesService,
   ) {}
@@ -129,27 +136,23 @@ export class LessonsService {
       );
     }
 
-    const occurrences = this.resolveOccurrences(dto, scheduledAt);
-
-    const conflictsByDate = await this.collectConflicts(
-      teacher.id,
-      dto.studentId,
-      occurrences,
-      duration,
+    const occurrences = this.applyOccurrenceChoices(
+      this.resolveOccurrences(dto, scheduledAt),
+      dto,
     );
 
-    if (conflictsByDate.length > 0 && !dto.force) {
-      throw new ConflictException({
-        message: 'Conflito de horário',
-        conflicts: conflictsByDate,
-        suggestions: await this.scheduling.suggestAlternatives({
-          teacherId: teacher.id,
-          studentId: dto.studentId,
-          scheduledAt,
-          duration,
-        }),
-      });
-    }
+    // Uma conferência para a série inteira: choques (do professor e do aluno
+    // em qualquer turma), bloqueios, atendimento, folga, deslocamento e
+    // limites. Conflito pede `force`; aviso só informa.
+    const check = await this.rules.check({
+      teacherId: teacher.id,
+      studentId: dto.studentId,
+      occurrences,
+      duration,
+      location: dto.location ?? null,
+    });
+    this.assertSchedulable(check, dto.force);
+    const conflictsByDate = this.conflictsOf(check);
 
     const lessons = await this.createOccurrences(
       teacher.id,
@@ -192,7 +195,96 @@ export class LessonsService {
       lessons,
       created: lessons.length,
       acceptedConflicts: dto.force ? conflictsByDate : [],
+      warnings: check.occurrences
+        .filter((o) => o.severity === 'warning')
+        .map((o) => ({ scheduledAt: o.scheduledAt, findings: o.findings })),
     };
+  }
+
+  /**
+   * Simula a marcação: o que a agenda diz sobre cada ocorrência, sem gravar.
+   * Mesmo motor da criação — o que a tela mostra é o que a criação vai cobrar.
+   */
+  async check(
+    teacherUserId: string,
+    dto: CheckLessonDto,
+  ): Promise<ScheduleCheck> {
+    const teacher = await this.requireTeacher(teacherUserId);
+    const relationship = await this.requireActiveRelationship(
+      teacher.id,
+      dto.studentId,
+    );
+    const scheduledAt = new Date(dto.scheduledAt);
+    const occurrences = this.resolveOccurrences(
+      dto as CreateLessonDto,
+      scheduledAt,
+    );
+
+    return this.rules.check({
+      teacherId: teacher.id,
+      studentId: dto.studentId,
+      occurrences,
+      duration: dto.duration ?? relationship.lessonDuration ?? 60,
+      location: dto.location ?? null,
+      excludeLessonId: dto.excludeLessonId,
+    });
+  }
+
+  /** O que impede (400) e o que pede confirmação (409). */
+  private assertSchedulable(check: ScheduleCheck, force?: boolean) {
+    if (check.summary.blocking > 0) {
+      throw new BadRequestException({
+        message: 'Não é possível agendar uma aula no passado',
+        check,
+      });
+    }
+    if (check.summary.conflicts > 0 && !force) {
+      throw new ConflictException({
+        message: 'Conflito de horário',
+        check,
+        conflicts: this.conflictsOf(check),
+        suggestions: check.occurrences
+          .flatMap((o) => o.suggestions)
+          .slice(0, 5),
+      });
+    }
+  }
+
+  private conflictsOf(check: ScheduleCheck) {
+    return check.occurrences
+      .filter((o) => o.severity === 'conflict')
+      .map((o) => ({
+        scheduledAt: o.scheduledAt,
+        conflicts: o.findings.filter((f) => f.severity === 'conflict'),
+      }));
+  }
+
+  /**
+   * Pular e mover ocorrências da série — o que a tela de criação decide para
+   * cada data que chocava. Uma data movida é conferida de novo junto com o
+   * resto (entra em `occurrences` já no horário novo).
+   */
+  private applyOccurrenceChoices(
+    occurrences: Date[],
+    dto: CreateLessonDto,
+  ): Date[] {
+    const skip = new Set(
+      (dto.skipOccurrences ?? []).map((d) => new Date(d).getTime()),
+    );
+    const moves = new Map(
+      (dto.moveOccurrences ?? []).map((m) => [
+        new Date(m.from).getTime(),
+        new Date(m.to),
+      ]),
+    );
+    const result = occurrences
+      .filter((d) => !skip.has(d.getTime()))
+      .map((d) => moves.get(d.getTime()) ?? d)
+      .sort((a, b) => a.getTime() - b.getTime());
+    if (result.length === 0) {
+      throw new BadRequestException('Todas as datas da série foram puladas');
+    }
+    return result;
   }
 
   /** Datas da série, já validando a coerência dos campos de recorrência. */
@@ -218,30 +310,6 @@ export class LessonsService {
     }
 
     return this.scheduling.calculateOccurrences(scheduledAt, recurrence, end);
-  }
-
-  /** Verifica conflito em cada ocorrência da série. */
-  private async collectConflicts(
-    teacherId: string,
-    studentId: string,
-    occurrences: Date[],
-    duration: number,
-    excludeLessonId?: string,
-  ): Promise<Array<{ scheduledAt: Date; conflicts: LessonConflict[] }>> {
-    const results = await Promise.all(
-      occurrences.map(async (scheduledAt) => ({
-        scheduledAt,
-        conflicts: await this.scheduling.findConflicts({
-          teacherId,
-          studentId,
-          scheduledAt,
-          duration,
-          excludeLessonId,
-        }),
-      })),
-    );
-
-    return results.filter((entry) => entry.conflicts.length > 0);
   }
 
   /**
@@ -280,6 +348,7 @@ export class LessonsService {
               location: dto.location,
               objectives: dto.objectives ?? [],
               worksIds: dto.worksIds ?? [],
+              composerIds: dto.composerIds ?? [],
               workScoreIds: dto.workScoreIds ?? [],
               topics: dto.topics ?? [],
               techniques: dto.techniques ?? [],
@@ -333,11 +402,18 @@ export class LessonsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
+    // Busca por título ou pelo nome do outro lado da aula (o aluno, para o
+    // professor; o professor, para o aluno). O texto entra escapado.
+    const term = query.q?.trim() || null;
+    const other = scope.role === 'teacher' ? 'student' : 'teacher';
     const where: Prisma.LessonWhereInput = {
       ...scope.where,
       ...(query.status ? { status: query.status } : {}),
       ...(query.studentId && scope.role === 'teacher'
         ? { studentId: query.studentId }
+        : {}),
+      ...(query.teacherId && scope.role === 'student'
+        ? { teacherId: query.teacherId }
         : {}),
       ...(query.from || query.to
         ? {
@@ -345,6 +421,47 @@ export class LessonsService {
               ...(query.from ? { gte: new Date(query.from) } : {}),
               ...(query.to ? { lte: new Date(query.to) } : {}),
             },
+          }
+        : {}),
+      // Sem desfecho: passou e continua agendada (o fim exato é conferido
+      // na tela; aqui basta ter começado).
+      ...(query.pendingOutcome
+        ? { status: LessonStatus.SCHEDULED, scheduledAt: { lt: new Date() } }
+        : {}),
+      ...(term
+        ? {
+            OR: [
+              {
+                title: {
+                  contains: escapeRegex(term),
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                [other]: {
+                  is: {
+                    user: {
+                      is: {
+                        OR: [
+                          {
+                            firstName: {
+                              contains: escapeRegex(term),
+                              mode: 'insensitive' as const,
+                            },
+                          },
+                          {
+                            lastName: {
+                              contains: escapeRegex(term),
+                              mode: 'insensitive' as const,
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            ],
           }
         : {}),
     };
@@ -364,9 +481,59 @@ export class LessonsService {
       this.prisma.lesson.count({ where }),
     ]);
 
+    // Obras e compositores da página resolvidos numa consulta cada — a lista
+    // mostra o repertório de cada aula sem uma ida ao banco por linha.
+    const catalog = await this.resolveCatalog(lessons);
+
     return {
-      lessons,
+      lessons: lessons.map((lesson) => ({
+        ...lesson,
+        works: lesson.worksIds
+          .map((id) => catalog.works.get(id))
+          .filter(Boolean),
+        composers: (lesson.composerIds ?? [])
+          .map((id) => catalog.composers.get(id))
+          .filter(Boolean),
+      })),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private async resolveCatalog(
+    lessons: Array<{ worksIds: string[]; composerIds: string[] }>,
+  ) {
+    const workIds = [...new Set(lessons.flatMap((l) => l.worksIds))];
+    // Aula anterior a 04/10 pode não ter o campo no documento.
+    const composerIds = [
+      ...new Set(lessons.flatMap((l) => l.composerIds ?? [])),
+    ];
+    const [works, composers] = await Promise.all([
+      workIds.length
+        ? this.prisma.work.findMany({
+            where: { id: { in: workIds } },
+            select: {
+              id: true,
+              title: true,
+              composer: { select: { id: true, name: true } },
+            },
+          })
+        : [],
+      composerIds.length
+        ? this.prisma.composer.findMany({
+            where: { id: { in: composerIds } },
+            select: {
+              id: true,
+              name: true,
+              birthDate: true,
+              deathDate: true,
+              epochName: true,
+            },
+          })
+        : [],
+    ]);
+    return {
+      works: new Map(works.map((w) => [w.id, w])),
+      composers: new Map(composers.map((c) => [c.id, c])),
     };
   }
 
@@ -391,7 +558,8 @@ export class LessonsService {
       return detail;
     }
 
-    const [workScores, works] = await Promise.all([
+    const composerIds = detail.composerIds ?? [];
+    const [workScores, works, composers] = await Promise.all([
       detail.workScoreIds.length > 0
         ? this.prisma.workScore.findMany({
             where: { id: { in: detail.workScoreIds } },
@@ -423,9 +591,21 @@ export class LessonsService {
             },
           })
         : [],
+      composerIds.length > 0
+        ? this.prisma.composer.findMany({
+            where: { id: { in: composerIds } },
+            select: {
+              id: true,
+              name: true,
+              birthDate: true,
+              deathDate: true,
+              epochName: true,
+            },
+          })
+        : [],
     ]);
 
-    return { ...detail, workScores, works };
+    return { ...detail, workScores, works, composers };
   }
 
   // -------------------------------------------------------------------
@@ -455,6 +635,7 @@ export class LessonsService {
         objectives: dto.objectives,
         worksIds: dto.worksIds,
         workScoreIds: dto.workScoreIds,
+        composerIds: dto.composerIds,
         topics: dto.topics,
         techniques: dto.techniques,
         repertoire: dto.repertoire,
@@ -511,27 +692,15 @@ export class LessonsService {
     const scheduledAt = new Date(dto.scheduledAt);
     const duration = dto.duration ?? lesson.duration;
 
-    const conflicts = await this.scheduling.findConflicts({
+    const check = await this.rules.check({
       teacherId: lesson.teacherId,
       studentId: lesson.studentId,
-      scheduledAt,
+      occurrences: [scheduledAt],
       duration,
+      location: lesson.location ?? null,
       excludeLessonId: lessonId,
     });
-
-    if (conflicts.length > 0 && !dto.force) {
-      throw new ConflictException({
-        message: 'Conflito de horário',
-        conflicts,
-        suggestions: await this.scheduling.suggestAlternatives({
-          teacherId: lesson.teacherId,
-          studentId: lesson.studentId,
-          scheduledAt,
-          duration,
-          excludeLessonId: lessonId,
-        }),
-      });
-    }
+    this.assertSchedulable(check, dto.force);
 
     const updated = await this.prisma.lesson.update({
       where: { id: lessonId },
@@ -555,6 +724,23 @@ export class LessonsService {
       actionUrl: `/student/lessons/${lessonId}`,
       relatedEntityType: 'lesson',
       relatedEntityId: lessonId,
+    });
+
+    // Remarcação entra no histórico (05/10): antes só a criação, o
+    // cancelamento e a conclusão apareciam.
+    await this.activities.record({
+      userId: teacherUserId,
+      userType: 'teacher',
+      action: SchoolActivityAction.LESSON_UPDATED,
+      entityType: 'lesson',
+      entityId: lessonId,
+      entityName: lesson.title,
+      title: 'Remarcou uma aula',
+      description: dto.reason,
+      changes: {
+        from: lesson.scheduledAt.toISOString(),
+        to: scheduledAt.toISOString(),
+      },
     });
 
     return updated;
@@ -654,6 +840,9 @@ export class LessonsService {
           studentPresent: present,
           actualEndTime: new Date(),
           lessonSummary: dto.lessonSummary,
+          punctuality: present ? dto.punctuality : null,
+          skillsWorked: dto.skillsWorked,
+          nextLessonPrep: dto.nextLessonPrep,
           engagement: dto.engagement,
           preparation: dto.preparation,
           homework: dto.homework,
@@ -746,6 +935,16 @@ export class LessonsService {
       relatedEntityId: lessonId,
     });
 
+    await this.activities.record({
+      userId: studentUserId,
+      userType: 'student',
+      action: SchoolActivityAction.LESSON_FEEDBACK_GIVEN,
+      entityType: 'lesson',
+      entityId: lessonId,
+      entityName: lesson.title,
+      title: 'Contou como foi a aula',
+    });
+
     return updated;
   }
 
@@ -800,6 +999,19 @@ export class LessonsService {
       actionUrl: `/teacher/lessons/${lessonId}`,
       relatedEntityType: 'lesson',
       relatedEntityId: lessonId,
+    });
+
+    await this.activities.record({
+      userId: studentUserId,
+      userType: 'student',
+      action: ausencia
+        ? SchoolActivityAction.LESSON_ABSENCE_INFORMED
+        : SchoolActivityAction.LESSON_RESCHEDULE_REQUESTED,
+      entityType: 'lesson',
+      entityId: lessonId,
+      entityName: lesson.title,
+      title: ausencia ? 'Avisou que vai faltar' : 'Pediu outro horário',
+      description: recado,
     });
 
     return { success: true };
@@ -889,6 +1101,7 @@ export class LessonsService {
         title: true,
         status: true,
         duration: true,
+        location: true,
         scheduledAt: true,
         teacherId: true,
         studentId: true,

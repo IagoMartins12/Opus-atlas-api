@@ -78,6 +78,55 @@ export class BackgroundMusicDto {
   autoplay?: boolean;
 }
 
+/**
+ * O artigo no outro idioma (o blog tem dois: português e inglês). Escrita à
+ * mão na aba do idioma, ou preenchida pela tradução automática e revisada.
+ * Campo vazio cai no original na hora de mostrar.
+ */
+export class ArticleTranslationDto {
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string | null;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string | null;
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
+    description: 'JSON do editor, com a mesma política de conteúdo do original',
+  })
+  @IsOptional()
+  @IsObject()
+  content?: Record<string, unknown> | null;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  metaTitle?: string | null;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  metaDescription?: string | null;
+
+  @ApiPropertyOptional({ maxLength: 300 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  coverImageAlt?: string | null;
+}
+
+export const ARTICLE_LANGUAGES = ['pt', 'en'] as const;
+export type ArticleLanguage = (typeof ARTICLE_LANGUAGES)[number];
+
 export class CreateArticleDto {
   @ApiProperty({ maxLength: 200 })
   @IsString()
@@ -252,6 +301,24 @@ export class CreateArticleDto {
   @IsString({ each: true })
   @MaxLength(60, { each: true })
   keywords?: string[];
+
+  @ApiPropertyOptional({
+    enum: ARTICLE_LANGUAGES,
+    default: 'pt',
+    description: 'Idioma em que o artigo foi escrito',
+  })
+  @IsOptional()
+  @IsIn(ARTICLE_LANGUAGES)
+  language?: ArticleLanguage;
+
+  @ApiPropertyOptional({
+    type: ArticleTranslationDto,
+    description: 'O artigo no outro idioma. `null` apaga a tradução.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ArticleTranslationDto)
+  translation?: ArticleTranslationDto | null;
 }
 
 export class UpdateArticleDto extends PartialType(CreateArticleDto) {

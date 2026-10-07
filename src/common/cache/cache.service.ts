@@ -27,6 +27,11 @@ interface RedisBackedStore {
       COUNT: number;
     }) => AsyncIterable<string | string[]>;
     del?: (keys: string | string[]) => Promise<number>;
+    set?: (
+      key: string,
+      value: string,
+      options: { NX: true; PX: number },
+    ) => Promise<string | null>;
   };
 }
 
@@ -66,6 +71,45 @@ export class AppCacheService {
 
   /** Cálculos em andamento, por chave — a base do single-flight. */
   private readonly inFlight = new Map<string, Promise<unknown>>();
+
+  /** Reservas em andamento nesta réplica (o caminho sem Redis). */
+  private readonly claiming = new Set<string>();
+
+  /**
+   * Reserva a chave por `ttlMs` **só se ela ainda não existir**, e diz se
+   * conseguiu — de forma atômica.
+   *
+   * É o "uma vez por janela" (visita e leitura de artigo). Com `get` e depois
+   * `set`, duas chamadas ao mesmo tempo — o React montando o efeito duas
+   * vezes, um clique duplo, duas abas — liam as duas "não existe" e contavam
+   * as duas. Com Redis, é o `SET NX PX` (um comando só, atômico entre
+   * réplicas); sem Redis (memória, testes), uma trava nesta réplica.
+   */
+  async claimOnce(key: string, ttlMs: number): Promise<boolean> {
+    const client = (this.cache as unknown as { store?: RedisBackedStore }).store
+      ?.client;
+
+    if (client?.set) {
+      try {
+        const result = await client.set(key, '1', { NX: true, PX: ttlMs });
+        return result === 'OK';
+      } catch (error: unknown) {
+        this.logger.warn(
+          `Falha ao reservar "${key}" no Redis: ${errorMessage(error)}`,
+        );
+      }
+    }
+
+    if (this.claiming.has(key)) return false;
+    this.claiming.add(key);
+    try {
+      if ((await this.get(key)) !== undefined) return false;
+      await this.set(key, 1, ttlMs);
+      return true;
+    } finally {
+      this.claiming.delete(key);
+    }
+  }
 
   /**
    * Lê do cache; no miss, calcula uma vez só e grava.

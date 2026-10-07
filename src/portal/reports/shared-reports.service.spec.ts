@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SchoolActivitiesService } from '../school-activities/school-activities.service';
 import { ProgressReportService } from './progress-report.service';
 import { SharedReportsService } from './shared-reports.service';
 
@@ -38,6 +39,7 @@ describe('SharedReportsService', () => {
     id: 'report-1',
     title: 'Primeiro semestre',
     isActive: true,
+    visibility: 'SHARED',
     expiresAt: null,
     allowComments: true,
     teacher: {
@@ -98,6 +100,10 @@ describe('SharedReportsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ProgressReportService, useValue: reports },
         { provide: NotificationsService, useValue: notifications },
+        {
+          provide: SchoolActivitiesService,
+          useValue: { record: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -161,6 +167,43 @@ describe('SharedReportsService', () => {
       );
     });
 
+    // Relatório "só professor" é acompanhamento: o aluno não é avisado.
+    it('só do professor não avisa o aluno e não marca o compartilhamento', async () => {
+      await service.share('teacher-user', {
+        ...shareDto,
+        visibility: 'TEACHER_ONLY',
+      });
+
+      const { data } = prisma.sharedProgressReport.create.mock.calls[0][0];
+      expect(data.visibility).toBe('TEACHER_ONLY');
+      expect(data.sharedAt).toBeNull();
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('compartilhar depois avisa o aluno', async () => {
+      prisma.sharedProgressReport.findUnique.mockResolvedValue(
+        shared({ visibility: 'TEACHER_ONLY' }),
+      );
+
+      await service.publish('teacher-user', 'report-1');
+
+      expect(
+        prisma.sharedProgressReport.update.mock.calls[0][0].data.visibility,
+      ).toBe('SHARED');
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'student-user' }),
+      );
+    });
+
+    it('só o autor compartilha depois', async () => {
+      prisma.sharedProgressReport.findUnique.mockResolvedValue(
+        shared({ visibility: 'TEACHER_ONLY' }),
+      );
+      await expect(service.publish('estranho', 'report-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
     it('comentários vêm desligados por padrão', async () => {
       await service.share('teacher-user', shareDto);
 
@@ -188,6 +231,16 @@ describe('SharedReportsService', () => {
       expect(
         prisma.sharedProgressReport.update.mock.calls[0][0].data.viewCount,
       ).toEqual({ increment: 1 });
+    });
+
+    // Nem a existência vaza: para o aluno, é como se não existisse.
+    it('o aluno não abre o que é só do professor', async () => {
+      prisma.sharedProgressReport.findUnique.mockResolvedValue(
+        shared({ visibility: 'TEACHER_ONLY' }),
+      );
+      await expect(service.findOne('student-user', 'report-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('terceiro não abre', async () => {

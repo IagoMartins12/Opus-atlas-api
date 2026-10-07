@@ -33,6 +33,8 @@ import { OptionalJwtAuthGuard } from '../../auth/guards/optional-jwt-auth.guard'
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { Audited } from '../../common/audit/audit.decorator';
 import { Public } from '../../common/decorators/api-key.decorator';
+import { Curator } from '../../common/auth/curator.guard';
+import { isAdmin } from '../../common/auth/roles';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { policyFor } from '../../common/storage/asset-policies';
@@ -66,7 +68,9 @@ export class BlogMediaController {
 
   @Post('upload')
   @HttpCode(HttpStatus.OK)
-  @Roles('ADMIN')
+  // Administrador, ou professor aprovado escrevendo o próprio artigo.
+  @Roles('USER')
+  @Curator()
   @ApiBearerAuth('access-token')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @UseInterceptors(
@@ -120,11 +124,14 @@ export class BlogMediaController {
       articleId: dto.articleId,
       sessionId: dto.sessionId,
       userId: user.sub,
+      soDoAutor: !isAdmin(user.role),
     });
   }
 
   @Delete('upload')
-  @Roles('ADMIN')
+  // Só apaga arquivo que nenhum artigo usa (ver `removeUpload`).
+  @Roles('USER')
+  @Curator()
   @ApiBearerAuth('access-token')
   @Audited({ action: 'blog.media.upload.remove', entityType: 'blog-media' })
   @ApiOperation({

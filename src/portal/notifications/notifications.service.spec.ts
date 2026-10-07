@@ -1,7 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationStatus, NotificationType } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../../mail/mail.service';
 import { NotificationsService } from './notifications.service';
 
 describe('NotificationsService', () => {
@@ -12,9 +14,15 @@ describe('NotificationsService', () => {
       findFirst: jest.Mock;
       count: jest.Mock;
       create: jest.Mock;
+      update: jest.Mock;
       updateMany: jest.Mock;
     };
+    user: { findUnique: jest.Mock; update: jest.Mock };
+    teacher: { findUnique: jest.Mock };
+    teacherStudent: { findMany: jest.Mock };
+    schoolActivity: { create: jest.Mock };
   };
+  let mail: { sendPortalNotice: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -23,14 +31,36 @@ describe('NotificationsService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(0),
         create: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      // Sem preferências guardadas: valem os padrões de cada tema.
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          email: 'ana@exemplo.test',
+          notificationChannels: null,
+          quietHoursStart: null,
+          quietHoursEnd: null,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      teacher: { findUnique: jest.fn() },
+      teacherStudent: { findMany: jest.fn().mockResolvedValue([]) },
+      schoolActivity: { create: jest.fn().mockResolvedValue({}) },
+    };
+    mail = {
+      sendPortalNotice: jest.fn().mockResolvedValue({ delivered: true }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         NotificationsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: MailService, useValue: mail },
+        {
+          provide: ConfigService,
+          useValue: { get: () => 'https://opusatlas.test' },
+        },
       ],
     }).compile();
 
@@ -244,6 +274,225 @@ describe('NotificationsService', () => {
         userId: 'user-1',
         status: NotificationStatus.UNREAD,
       });
+    });
+  });
+});
+
+describe('NotificationsService — fora do portal', () => {
+  let service: NotificationsService;
+  let prisma: Record<string, Record<string, jest.Mock>>;
+  let mail: { sendPortalNotice: jest.Mock };
+
+  const user = (over: Record<string, unknown> = {}) => ({
+    email: 'ana@exemplo.test',
+    firstName: 'Ana',
+    phone: null,
+    isTeacher: false,
+    isStudent: true,
+    notificationChannels: null,
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    prisma = {
+      notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue(user()),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      teacher: { findUnique: jest.fn() },
+      teacherStudent: { findMany: jest.fn().mockResolvedValue([]) },
+      schoolActivity: { create: jest.fn().mockResolvedValue({}) },
+    };
+    mail = {
+      sendPortalNotice: jest.fn().mockResolvedValue({ delivered: true }),
+    };
+    const module = await Test.createTestingModule({
+      providers: [
+        NotificationsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: MailService, useValue: mail },
+        {
+          provide: ConfigService,
+          useValue: { get: () => 'https://opusatlas.test' },
+        },
+      ],
+    }).compile();
+    service = module.get(NotificationsService);
+  });
+
+  const created = () => prisma.notification.create.mock.calls[0][0].data;
+
+  // Criar o aviso não envia e-mail: marca a caixa de saída. A requisição que
+  // marcou a aula não espera o SMTP.
+  it('tema com e-mail ligado por padrão entra na caixa de saída, sem enviar na hora', async () => {
+    await service.notify({
+      userId: 'u',
+      type: NotificationType.LESSON_RESCHEDULED_BY_TEACHER,
+      title: 't',
+      message: 'm',
+    });
+    expect(created().emailStatus).toBe('pending');
+    expect(created().emailAfter).toBeInstanceOf(Date);
+    expect(mail.sendPortalNotice).not.toHaveBeenCalled();
+  });
+
+  it('respeita quem desligou o e-mail do tema', async () => {
+    prisma.user.findUnique.mockResolvedValue(
+      user({ notificationChannels: { 'lesson-change': { email: false } } }),
+    );
+    await service.notify({
+      userId: 'u',
+      type: NotificationType.LESSON_RESCHEDULED_BY_TEACHER,
+      title: 't',
+      message: 'm',
+    });
+    expect(created().emailStatus).toBe('skipped');
+  });
+
+  it('aviso de tipo sem tema não passa pela caixa de saída', async () => {
+    await service.notify({
+      userId: 'u',
+      type: NotificationType.SYSTEM_MAINTENANCE,
+      title: 't',
+      message: 'm',
+    });
+    expect(created().emailStatus).toBeUndefined();
+  });
+
+  it('SMS escolhido fica registrado como ainda não suportado', async () => {
+    prisma.user.findUnique.mockResolvedValue(
+      user({ notificationChannels: { 'lesson-reminder': { sms: true } } }),
+    );
+    await service.notify({
+      userId: 'u',
+      type: NotificationType.LESSON_TOMORROW,
+      title: 't',
+      message: 'm',
+    });
+    expect(created().smsStatus).toBe('unsupported');
+  });
+
+  it('no horário de silêncio o e-mail espera o fim dele', async () => {
+    // 23h em São Paulo, silêncio das 22h às 7h → sai às 7h.
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-05T02:00:00Z'));
+    prisma.user.findUnique.mockResolvedValue(
+      user({ quietHoursStart: '22:00', quietHoursEnd: '07:00' }),
+    );
+    await service.notify({
+      userId: 'u',
+      type: NotificationType.LESSON_REQUESTED,
+      title: 't',
+      message: 'm',
+    });
+    expect((created().emailAfter as Date).toISOString()).toBe(
+      '2026-10-05T10:00:00.000Z',
+    );
+    jest.useRealTimers();
+  });
+
+  it('envia os pendentes com o endereço completo da tela', async () => {
+    prisma.notification.findMany.mockResolvedValue([
+      {
+        id: 'n1',
+        title: 'Aula remarcada',
+        message: 'm',
+        actionText: 'Ver',
+        actionUrl: '/student/lessons/1',
+        metadata: null,
+        user: { email: 'ana@exemplo.test', firstName: 'Ana' },
+      },
+    ]);
+    const result = await service.flushEmails(new Date());
+    expect(result).toEqual({ sent: 1, failed: 0 });
+    expect(mail.sendPortalNotice.mock.calls[0][1].actionUrl).toBe(
+      'https://opusatlas.test/student/lessons/1',
+    );
+    expect(prisma.notification.update).toHaveBeenCalledWith({
+      where: { id: 'n1' },
+      data: { emailStatus: 'sent' },
+    });
+  });
+
+  it('falha passageira tenta de novo mais tarde, e desiste depois de cinco', async () => {
+    mail.sendPortalNotice.mockResolvedValue({
+      delivered: false,
+      error: 'smtp',
+    });
+    const row = (attempts: number) => ({
+      id: 'n1',
+      title: 't',
+      message: 'm',
+      actionText: null,
+      actionUrl: null,
+      metadata: { emailAttempts: attempts },
+      user: { email: 'a@b.test', firstName: 'A' },
+    });
+
+    prisma.notification.findMany.mockResolvedValue([row(0)]);
+    await service.flushEmails(new Date());
+    expect(
+      prisma.notification.update.mock.calls[0][0].data.emailAfter,
+    ).toBeInstanceOf(Date);
+
+    prisma.notification.findMany.mockResolvedValue([row(4)]);
+    await service.flushEmails(new Date());
+    expect(prisma.notification.update.mock.calls[1][0].data.emailStatus).toBe(
+      'failed',
+    );
+  });
+
+  it('preferências mostram só os temas dos papéis da pessoa', async () => {
+    const prefs = await service.getPreferences('u');
+    const keys = prefs.topics.map((t) => t.key);
+    expect(keys).toContain('announcement');
+    expect(keys).not.toContain('absence'); // tema só de professor
+    expect(prefs.smsAvailable).toBe(false);
+  });
+
+  it('guardar preferências ignora tema desconhecido e exige os dois horários de silêncio', async () => {
+    await service.updatePreferences('u', {
+      channels: {
+        'lesson-reminder': { email: false },
+        inventado: { email: true },
+      },
+      quietHoursStart: '22:00',
+    });
+    const data = prisma.user.update.mock.calls[0][0].data;
+    expect(data.notificationChannels).toEqual({
+      'lesson-reminder': { email: false },
+    });
+    expect(data.quietHoursStart).toBeNull();
+  });
+
+  it('aviso avulso só chega a alunos do professor', async () => {
+    prisma.teacher.findUnique.mockResolvedValue({
+      id: 't1',
+      user: { firstName: 'Helena', lastName: 'Duarte' },
+    });
+    prisma.teacherStudent.findMany.mockResolvedValue([
+      { student: { id: 's1', userId: 'u1' } },
+    ]);
+    const result = await service.announce('teacher-user', {
+      studentIds: ['s1', 's9'],
+      title: 'Recital',
+      message: 'Sábado',
+    });
+    expect(result).toMatchObject({ delivered: 1, skipped: 1 });
+    expect(created().message).toBe('Helena Duarte: Sábado');
+    // O aviso entra no histórico do professor.
+    expect(prisma.schoolActivity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'teacher-user',
+        action: 'ANNOUNCEMENT_SENT',
+      }),
     });
   });
 });

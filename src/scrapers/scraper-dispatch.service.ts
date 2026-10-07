@@ -6,6 +6,7 @@ import {
 } from '../common/queue/queue.constants';
 import { buildIdempotencyKey } from '../common/queue/job-contract';
 import { SCRAPER_IDS, ScraperId, ScraperRegistry } from './scraper-registry';
+import type { ModoDaRodada } from './scraper-run.service';
 
 /** Fuso dos agendamentos, o mesmo da manutenção. */
 export const SCRAPER_TIMEZONE = 'America/Sao_Paulo';
@@ -14,7 +15,16 @@ const CRON_FIELDS = 5;
 
 export interface ScraperJobPayload {
   scraperId: ScraperId;
+  /** Manual: `previa` (nada entra sem escolha). Agendada: `importar`. */
+  modo?: ModoDaRodada;
 }
+
+/**
+ * Uma tentativa só. Site fora do ar (o Teatro Amazonas responde ENOTFOUND)
+ * não volta em cinco segundos; três tentativas só repetiam a mesma falha e
+ * multiplicavam as requisições ao site da casa.
+ */
+const UMA_TENTATIVA = { attempts: 1 };
 
 @Injectable()
 export class ScraperDispatchService {
@@ -31,16 +41,23 @@ export class ScraperDispatchService {
    * que permite tentar de novo depois de uma falha sem esperar o dia seguinte.
    */
   async enqueue(scraperId: ScraperId, requestedBy: string | null) {
-    this.registry.requireId(scraperId);
+    this.registry.requireAtivo(scraperId);
 
     const minute = new Date().toISOString().slice(0, 16);
 
     return this.queue.enqueue<ScraperJobPayload>({
       queue: QUEUE_SCRAPER,
       job: JOB_SCRAPER_RUN,
-      idempotencyKey: buildIdempotencyKey('scraper', scraperId, minute),
-      payload: { scraperId },
+      idempotencyKey: buildIdempotencyKey(
+        'scraper',
+        scraperId,
+        'previa',
+        minute,
+      ),
+      // Rodada pedida à mão é prévia: o que entra na agenda é escolhido depois.
+      payload: { scraperId, modo: 'previa' },
       requestedBy,
+      options: UMA_TENTATIVA,
     });
   }
 
@@ -56,7 +73,9 @@ export class ScraperDispatchService {
   async enqueueAll(requestedBy: string | null) {
     const jobs = [];
 
+    // Casa desativada fica de fora, em vez de falhar na fila.
     for (const scraperId of SCRAPER_IDS) {
+      if (this.registry.motivoDesativado(scraperId)) continue;
       jobs.push(await this.enqueue(scraperId, requestedBy));
     }
 
@@ -88,7 +107,7 @@ export class ScraperDispatchService {
     cron: string;
     requestedBy: string | null;
   }) {
-    this.registry.requireId(input.scraperId);
+    this.registry.requireAtivo(input.scraperId);
     this.assertCron(input.cron);
 
     await this.queue.upsertSchedule<ScraperJobPayload>({
@@ -97,8 +116,10 @@ export class ScraperDispatchService {
       cron: input.cron,
       timezone: SCRAPER_TIMEZONE,
       job: JOB_SCRAPER_RUN,
-      payload: { scraperId: input.scraperId },
+      // Agendada importa sozinha; a tela mostra o que entrou.
+      payload: { scraperId: input.scraperId, modo: 'importar' },
       requestedBy: input.requestedBy,
+      options: UMA_TENTATIVA,
     });
 
     const saved = (await this.queue.listSchedules(QUEUE_SCRAPER)).find(

@@ -7,6 +7,8 @@ import {
   HttpStatus,
   Param,
   Patch,
+  Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -24,6 +26,8 @@ import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface'
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import { MarkShownDto } from './dto/mark-shown.dto';
+import { AnnouncementDto, UpdatePreferencesDto } from './dto/preferences.dto';
+import { Throttle } from '@nestjs/throttler';
 import { NotificationListResponseDto } from './dto/notification.dto';
 import { NotificationsService } from './notifications.service';
 
@@ -54,6 +58,40 @@ export class NotificationsController {
     @Query() query: ListNotificationsQueryDto,
   ) {
     return this.service.list(user.sub, query);
+  }
+
+  @Get('preferences')
+  @ApiOperation({
+    summary: 'Por onde quero ser avisado',
+    description:
+      'Temas de aviso dos meus papéis, com e-mail/SMS e o horário de silêncio. O portal recebe sempre.',
+  })
+  getPreferences(@CurrentUser() user: AccessTokenPayload) {
+    return this.service.getPreferences(user.sub);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Ajusta por onde quero ser avisado' })
+  updatePreferences(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    return this.service.updatePreferences(user.sub, dto);
+  }
+
+  @Post('announcements')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Professor envia um aviso a alunos dele',
+    description:
+      'Chega no portal; por e-mail/SMS só para quem aceita. `sendAt` agenda.',
+  })
+  announce(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: AnnouncementDto,
+  ) {
+    return this.service.announce(user.sub, dto);
   }
 
   @Get('unread-count')

@@ -11,6 +11,8 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsArray,
+  ArrayMaxSize,
 } from 'class-validator';
 
 export class RescheduleLessonDto {
@@ -68,6 +70,32 @@ export class CompleteLessonDto {
   @IsString()
   @MaxLength(5000)
   lessonSummary?: string;
+
+  @ApiPropertyOptional({
+    enum: ['on_time', 'late', 'early'],
+    description: 'Chegou no horário, atrasado ou adiantado.',
+  })
+  @IsOptional()
+  @IsIn(['on_time', 'late', 'early'])
+  punctuality?: 'on_time' | 'late' | 'early';
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'O que foi trabalhado (objetivos, obras, técnicas).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(30)
+  skillsWorked?: string[];
+
+  @ApiPropertyOptional({
+    description: 'O que o aluno deve trazer na próxima aula.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  nextLessonPrep?: string;
 
   @ApiPropertyOptional({ example: 4, description: 'Engajamento, de 1 a 5.' })
   @IsOptional()

@@ -92,7 +92,7 @@ describe('CouponsService', () => {
     [
       'já usado',
       () => prisma.couponUsage.findUnique.mockResolvedValue({ id: 'u' }),
-      'Você já utilizou este cupom',
+      'Cupom inválido ou expirado',
     ],
     [
       'esgotado',
@@ -102,7 +102,7 @@ describe('CouponsService', () => {
           maxUses: 3,
           usedCount: 3,
         }),
-      'Cupom esgotado',
+      'Cupom inválido ou expirado',
     ],
     [
       'de outro plano',
@@ -111,7 +111,7 @@ describe('CouponsService', () => {
           ...coupon,
           applicablePlans: ['MAESTRO'],
         }),
-      'Cupom não aplicável a este plano',
+      'Cupom inválido ou expirado',
     ],
   ])('recusa cupom %s, sem lançar', async (_label, arrange, error) => {
     arrange();

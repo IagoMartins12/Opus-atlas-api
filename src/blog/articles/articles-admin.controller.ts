@@ -85,6 +85,19 @@ export class ArticlesAdminController {
     return this.writer.create(dto, user.sub);
   }
 
+  @Get('admin/overview')
+  @ApiOperation({
+    summary: 'Números do painel de artigos',
+    description:
+      'Quantos em cada estado, visualizações somadas dos publicados e autores ' +
+      'com a contagem de artigos. Dois segmentos de propósito: `blog/articles/:id` ' +
+      'é a leitura pública e engoliria `overview` como id.',
+  })
+  @ApiOkResponse({ description: 'Contagens, visualizações e autores' })
+  overview() {
+    return this.publishing.overview();
+  }
+
   @Post('featured/reorder')
   @HttpCode(HttpStatus.OK)
   @Audited({ action: 'blog.featured.reorder', entityType: 'blog-article' })

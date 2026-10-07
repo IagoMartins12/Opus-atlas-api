@@ -54,8 +54,22 @@ const CAMPAIGN_SELECT = {
   emailsOpened: true,
   emailsClicked: true,
   emailsBounced: true,
+  emailsComplained: true,
+  emailsUnsubscribed: true,
   createdAt: true,
 } as const;
+
+/**
+ * A lista não leva o conteúdo: o HTML de cada e-mail ia inteiro para a tela
+ * que só mostra nome, estado e taxas. O detalhe (`GET campaigns/:id`) e as
+ * escritas continuam devolvendo tudo.
+ */
+const {
+  customHtmlContent: _html,
+  customTextContent: _text,
+  targetSubscriberIds: _ids,
+  ...CAMPAIGN_LIST_SELECT
+} = CAMPAIGN_SELECT;
 
 const SUBSCRIBER_SELECT = {
   id: true,
@@ -110,7 +124,7 @@ export class AdminNewsletterService {
     const [campaigns, total] = await Promise.all([
       this.prisma.newsletterCampaign.findMany({
         where,
-        select: CAMPAIGN_SELECT,
+        select: CAMPAIGN_LIST_SELECT,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,

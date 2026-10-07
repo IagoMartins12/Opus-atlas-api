@@ -15,6 +15,8 @@ describe('SchoolActivitiesService', () => {
     lesson: { findMany: jest.Mock };
     assignment: { findMany: jest.Mock };
     student: { findMany: jest.Mock };
+    practiceLog: { findMany: jest.Mock };
+    sharedProgressReport: { findMany: jest.Mock };
   };
 
   const activity = (over: Record<string, unknown> = {}) => ({
@@ -44,6 +46,8 @@ describe('SchoolActivitiesService', () => {
       lesson: { findMany: jest.fn().mockResolvedValue([]) },
       assignment: { findMany: jest.fn().mockResolvedValue([]) },
       student: { findMany: jest.fn().mockResolvedValue([]) },
+      practiceLog: { findMany: jest.fn().mockResolvedValue([]) },
+      sharedProgressReport: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -165,6 +169,36 @@ describe('SchoolActivitiesService', () => {
       expect(result.activities[0].entityExists).toBe(false);
       // O nome guardado no registro sobrevive à remoção da entidade.
       expect(result.activities[0].entityName).toBe('Sonata');
+    });
+
+    // Antes, todo tipo fora de aula, tarefa e aluno saía "removido" — a
+    // prática recém-registrada inclusive (05/10/2026).
+    it('prática existente não sai como removida', async () => {
+      prisma.schoolActivity.findMany.mockResolvedValue([
+        activity({
+          action: SchoolActivityAction.PRACTICE_LOGGED,
+          entityType: 'practice',
+          entityId: 'p1',
+        }),
+      ]);
+      prisma.practiceLog.findMany.mockResolvedValue([
+        { id: 'p1', minutes: 60, practicedAt: new Date() },
+      ]);
+
+      const result = await service.list('user-1', {});
+
+      expect(result.activities[0].entityExists).toBe(true);
+    });
+
+    it('tipo que a trilha não confere nunca sai como removido', async () => {
+      prisma.schoolActivity.findMany.mockResolvedValue([
+        activity({ entityType: 'work', entityId: 'w1' }),
+        activity({ id: 'a2', entityType: 'teacher', entityId: 'rel-1' }),
+      ]);
+
+      const result = await service.list('user-1', {});
+
+      expect(result.activities.every((a) => a.entityExists)).toBe(true);
     });
 
     // O legado buscava o `User` do aluno e caía para o e-mail como texto de

@@ -155,8 +155,10 @@ export class UploadsService {
 
     const access = await this.subscriptions.checkFeatureAccess(userId, feature);
 
-    if (access.limit === undefined) {
-      // Sem limite numérico definido para o plano — ilimitado.
+    // `-1` é ilimitado (a matriz de planos usa -1), e sem número também.
+    // Antes só `undefined` passava: o -1 dos planos pagos caía em
+    // `used >= -1`, sempre verdadeiro, e barrava justamente quem paga.
+    if (access.limit === undefined || access.limit < 0) {
       return;
     }
 

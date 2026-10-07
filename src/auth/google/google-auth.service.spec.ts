@@ -196,6 +196,9 @@ describe('GoogleAuthService', () => {
     );
     expect(service.frontUrl('/x?y=1')).toBe('http://front.test/x?y=1');
     expect(service.frontUrl('https://fora')).toBe('http://front.test/');
+    expect(service.frontUrl('/x?y=1', undefined, true)).toBe(
+      'http://front.test/x?y=1&new-user=true',
+    );
   });
 
   it('caminho seguro: só relativo do próprio front', () => {

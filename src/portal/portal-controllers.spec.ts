@@ -259,7 +259,10 @@ describe('agenda, atividades, perfil, calendário e painel', () => {
     const calendar = echoMock('getCalendar');
     const dashboard = echoMock('getDashboard');
 
-    await new CalendarController(as(calendar)).getCalendar(user, {} as never);
+    await new CalendarController(as(calendar), as({})).getCalendar(
+      user,
+      {} as never,
+    );
     await new DashboardController(as(dashboard)).getDashboard(
       user,
       {} as never,

@@ -256,11 +256,21 @@ export class MailService {
       invitedByName: string;
       acceptUrl: string;
       declineUrl: string;
+      /** Plano que vem com o convite (concedido no aceite). */
+      planGrant?: { planName: string; until: string | null };
     },
   ): Promise<void> {
+    const plano = data.planGrant
+      ? `<p style="text-align:center;">Ao aceitar, você recebe o plano <strong>${escapeHtml(data.planGrant.planName)}</strong>${
+          data.planGrant.until
+            ? ` até <strong>${escapeHtml(data.planGrant.until)}</strong>`
+            : ', sem vencimento'
+        }, sem custo.</p>`
+      : '';
     const html = this.wrap(`
       <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Convite para professor</h2>
       <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, ${escapeHtml(data.invitedByName)} convidou você para dar aulas no Opus Atlas.</p>
+      ${plano}
       <div style="text-align:center; margin:32px 0;">
         <a href="${escapeHtml(data.acceptUrl)}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
           Aceitar convite
@@ -275,6 +285,37 @@ export class MailService {
       subject: '🎓 Convite para ser professor - Opus Atlas',
       html,
     });
+  }
+
+  /**
+   * Aviso do portal por e-mail (04/10/2026) — a mesma frase do aviso que a
+   * pessoa vê no portal, com o botão para a tela. Devolve o resultado: a
+   * caixa de saída marca "sent" ou "failed" e tenta de novo depois.
+   */
+  async sendPortalNotice(
+    to: string,
+    data: {
+      firstName: string;
+      title: string;
+      message: string;
+      actionText?: string | null;
+      actionUrl?: string | null;
+    },
+  ): Promise<SendMailResult> {
+    const button = data.actionUrl
+      ? `<div style="text-align:center; margin:28px 0;">
+          <a href="${escapeHtml(data.actionUrl)}" style="background:${GOLD}; color:#000; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:bold; display:inline-block;">
+            ${escapeHtml(data.actionText || 'Abrir no portal')}
+          </a>
+        </div>`
+      : '';
+    const html = this.wrap(`
+      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">${escapeHtml(data.title)}</h2>
+      <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, ${escapeHtml(data.message)}</p>
+      ${button}
+      <p style="text-align:center; color:#888; font-size:12px;">Você recebe este e-mail porque escolheu ser avisado por aqui. Mude em Perfil do portal › Avisos.</p>
+    `);
+    return this.trySend({ to, subject: `${data.title} — Opus Atlas`, html });
   }
 
   async sendPasswordResetEmail(

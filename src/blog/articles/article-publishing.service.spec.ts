@@ -224,7 +224,7 @@ describe('ArticlePublishingService', () => {
           scheduledFor: null,
         },
       });
-      expect(result).toEqual({ due: 1, published: 1 });
+      expect(result).toMatchObject({ due: 1, published: 1 });
       expect(cache.invalidateMany).toHaveBeenCalled();
     });
 
@@ -235,14 +235,47 @@ describe('ArticlePublishingService', () => {
       ]);
       prisma.blogArticle.updateMany.mockResolvedValue({ count: 0 });
 
-      expect(await service.publishDue(now)).toEqual({ due: 1, published: 0 });
+      expect(await service.publishDue(now)).toMatchObject({ due: 1, published: 0 });
       expect(cache.invalidateMany).not.toHaveBeenCalled();
     });
 
     it('sem agendados vencidos, não faz nada', async () => {
-      expect(await service.publishDue(now)).toEqual({ due: 0, published: 0 });
+      expect(await service.publishDue(now)).toMatchObject({ due: 0, published: 0 });
       expect(prisma.blogArticle.updateMany).not.toHaveBeenCalled();
       expect(cache.invalidateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('overview', () => {
+    it('conta por estado, soma visualizações e nomeia autores sem varrer os artigos', async () => {
+      const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+      p.blogArticle.groupBy = jest
+        .fn()
+        .mockResolvedValueOnce([
+          { status: 'PUBLISHED', _count: { _all: 3 } },
+          { status: 'REVIEW', _count: { _all: 1 } },
+        ])
+        .mockResolvedValueOnce([{ authorId: 'u1', _count: { _all: 4 } }]);
+      p.blogArticle.aggregate = jest
+        .fn()
+        .mockResolvedValue({ _sum: { viewCount: 612 } });
+      p.user = {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'u1', firstName: 'Marina', lastName: null, image: null },
+          ]),
+      };
+
+      const r = await service.overview();
+
+      expect(r).toEqual({
+        total: 4,
+        porEstado: { PUBLISHED: 3, REVIEW: 1 },
+        visualizacoes: 612,
+        autores: [{ id: 'u1', nome: 'Marina', imagem: null, artigos: 4 }],
+      });
+      expect(prisma.blogArticle.findMany).not.toHaveBeenCalled();
     });
   });
 });

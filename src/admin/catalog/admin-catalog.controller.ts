@@ -38,10 +38,12 @@ import {
   UpdateComposerDto,
   UpdateScoreDto,
   UpdateWorkDto,
+  WorkPeopleQueryDto,
 } from './dto/admin-catalog.dto';
 import {
   MAX_BULK_VERIFY,
   VerifyComposersBulkDto,
+  VerifyWorksBulkDto,
 } from './dto/verify-composers-bulk.dto';
 
 /**
@@ -93,6 +95,31 @@ export class AdminCatalogController {
     return this.service.listComposers(query);
   }
 
+  @Get('composers/overview')
+  @ApiOperation({
+    summary: 'Retrato do cadastro: verificação, biografias, retratos, obras',
+  })
+  @ApiOkResponse({ description: 'Contagens do cadastro de compositores' })
+  async composersOverview() {
+    return this.service.composersOverview();
+  }
+
+  @Get('composers/:id')
+  @ApiOperation({ summary: 'Um compositor, no formato da lista' })
+  @ApiOkResponse({ description: 'Compositor' })
+  async getComposer(@Param('id') id: string) {
+    return this.service.getComposer(id);
+  }
+
+  @Get('composers/:id/summary')
+  @ApiOperation({
+    summary: 'Obra do compositor no catálogo, uso e origem do cadastro',
+  })
+  @ApiOkResponse({ description: 'Resumo do compositor' })
+  async composerSummary(@Param('id') id: string) {
+    return this.service.composerSummary(id);
+  }
+
   @Roles('USER')
   @Curator()
   @Patch('composers/:id')
@@ -120,6 +147,30 @@ export class AdminCatalogController {
     this.recusarSeloDeQuemNaoEAdmin(user, dto);
 
     return this.service.updateComposer(user.sub, id, dto);
+  }
+
+  @Post('works/verify-bulk')
+  @Audited({ action: 'work.verifyBulk', entityType: 'work' })
+  @ApiOperation({
+    summary: 'Verifica ou desverifica obras em lote',
+    description: `Auditada; a resposta diz quais foram tocadas e quais ids não existiam. Máximo de ${MAX_BULK_VERIFY} por chamada.`,
+  })
+  @ApiOkResponse({
+    description: 'Quantas foram atualizadas, quais, e os ids inexistentes',
+  })
+  @ApiNotFoundResponse({
+    description: 'Nenhum dos ids informados existe',
+    type: ErrorResponseDto,
+  })
+  async verifyWorksBulk(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: VerifyWorksBulkDto,
+  ) {
+    return this.service.verifyWorksInBulk(
+      user.sub,
+      dto.workIds,
+      dto.isVerified,
+    );
   }
 
   @Post('composers/verify-bulk')
@@ -178,6 +229,39 @@ export class AdminCatalogController {
   }
 
   // --- Obras ---
+
+  @Get('works/overview')
+  @ApiOperation({ summary: 'Retrato do catálogo de obras' })
+  @ApiOkResponse({ description: 'Contagens e as obras mais usadas' })
+  async worksOverview() {
+    return this.service.worksOverview();
+  }
+
+  @Get('works/:id')
+  @ApiOperation({ summary: 'Uma obra, no formato da lista' })
+  @ApiOkResponse({ description: 'Obra' })
+  async getWork(@Param('id') id: string) {
+    return this.service.getWork(id);
+  }
+
+  @Get('works/:id/people')
+  @ApiOperation({
+    summary: 'Quem favoritou, quer aprender ou aprendeu a obra',
+  })
+  @ApiOkResponse({ description: 'Pessoas paginadas' })
+  async workPeople(
+    @Param('id') id: string,
+    @Query() query: WorkPeopleQueryDto,
+  ) {
+    return this.service.workPeople(id, query.kind, query.page ?? 1);
+  }
+
+  @Get('works/:id/summary')
+  @ApiOperation({ summary: 'Uso, partituras e origem da obra' })
+  @ApiOkResponse({ description: 'Resumo da obra' })
+  async workSummary(@Param('id') id: string) {
+    return this.service.workSummary(id);
+  }
 
   @Get('works')
   @ApiOperation({
@@ -240,11 +324,24 @@ export class AdminCatalogController {
 
   // --- Partituras ---
 
+  @Get('scores/overview')
+  @ApiOperation({ summary: 'Retrato das partituras' })
+  @ApiOkResponse({ description: 'Contagens por estado, tipo e origem' })
+  async scoresOverview() {
+    return this.service.scoresOverview();
+  }
+
   @Get('scores')
   @ApiOperation({ summary: 'Lista partituras' })
   @ApiOkResponse({ description: 'Partituras paginadas' })
   async listScores(@Query() query: ListScoresQueryDto) {
     return this.service.listScores(query);
+  }
+  @Get('scores/:id')
+  @ApiOperation({ summary: 'Uma partitura, no formato da lista' })
+  @ApiOkResponse({ description: 'Partitura' })
+  async getScore(@Param('id') id: string) {
+    return this.service.getScore(id);
   }
 
   @Roles('USER')

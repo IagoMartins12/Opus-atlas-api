@@ -27,6 +27,7 @@ import {
 import { Request } from 'express';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
+import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { UploadHistoryService } from '../shared/upload-history.service';
 import { ComposerUploadsService } from './composer-uploads.service';
@@ -132,6 +133,12 @@ export class ComposerUploadsController {
   }
 
   @Patch(':id')
+  @Audited({
+    action: 'upload.composer.update',
+    entityType: 'composer',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @ApiOperation({
     summary: 'Edita um compositor que o próprio usuário cadastrou',
     description:
@@ -164,6 +171,12 @@ export class ComposerUploadsController {
   }
 
   @Delete(':id')
+  @Audited({
+    action: 'upload.composer.delete',
+    entityType: 'composer',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Remove um compositor cadastrado pelo próprio usuário',

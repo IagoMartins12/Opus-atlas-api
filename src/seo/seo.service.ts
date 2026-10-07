@@ -19,6 +19,12 @@ export interface SitemapEntries {
   composers: Array<{ id: string; name: string; lastModified: Date }>;
   works: Array<{ id: string; title: string; lastModified: Date }>;
   articles: Array<{ slug: string; lastModified: Date }>;
+  /** Categorias ativas com artigo publicado. */
+  blogCategories: Array<{ slug: string; lastModified: Date }>;
+  /** Tags com artigo publicado. */
+  blogTags: Array<{ slug: string; lastModified: Date }>;
+  /** Quem tem artigo publicado: o nome de usuário, ou o id quando não há. */
+  blogAuthors: Array<{ id: string; lastModified: Date }>;
   teachers: Array<{ id: string; lastModified: Date }>;
 }
 
@@ -65,7 +71,15 @@ export class SeoService {
           status: ArticleStatus.PUBLISHED,
           publishedAt: { lte: new Date() },
         },
-        select: { slug: true, updatedAt: true },
+        select: {
+          slug: true,
+          updatedAt: true,
+          authorId: true,
+          categories: {
+            select: { category: { select: { slug: true, isActive: true } } },
+          },
+          tags: { select: { tag: { select: { slug: true } } } },
+        },
         orderBy: { publishedAt: 'desc' },
         take: MAX_ARTICLES,
       }),
@@ -75,6 +89,8 @@ export class SeoService {
         take: MAX_TEACHERS,
       }),
     ]);
+
+    const blog = await this.blogPages(articles);
 
     return {
       generatedAt: new Date().toISOString(),
@@ -92,10 +108,66 @@ export class SeoService {
         slug: article.slug,
         lastModified: article.updatedAt,
       })),
+      ...blog,
       // O id público do professor é o do usuário (é o slug de `/teachers/:id`).
       teachers: teachers.map((teacher) => ({
         id: teacher.userId,
         lastModified: teacher.updatedAt,
+      })),
+    };
+  }
+
+  /**
+   * As páginas do blog que existem por causa dos artigos: cada categoria,
+   * cada tag e cada autor com artigo publicado. Saem dos próprios artigos já
+   * lidos, com a data do artigo mais recente de cada uma — uma página de
+   * categoria muda quando entra artigo nela.
+   */
+  private async blogPages(
+    articles: Array<{
+      updatedAt: Date;
+      authorId: string;
+      categories: Array<{ category: { slug: string; isActive: boolean } }>;
+      tags: Array<{ tag: { slug: string } }>;
+    }>,
+  ) {
+    const recente = (mapa: Map<string, Date>, chave: string, data: Date) => {
+      const atual = mapa.get(chave);
+      if (!atual || atual < data) mapa.set(chave, data);
+    };
+
+    const categorias = new Map<string, Date>();
+    const tags = new Map<string, Date>();
+    const autores = new Map<string, Date>();
+
+    for (const article of articles) {
+      for (const { category } of article.categories) {
+        if (category.isActive)
+          recente(categorias, category.slug, article.updatedAt);
+      }
+      for (const { tag } of article.tags) {
+        recente(tags, tag.slug, article.updatedAt);
+      }
+      recente(autores, article.authorId, article.updatedAt);
+    }
+
+    const usuarios = autores.size
+      ? await this.prisma.user.findMany({
+          where: { id: { in: [...autores.keys()] } },
+          select: { id: true, username: true },
+        })
+      : [];
+    const endereco = new Map(usuarios.map((u) => [u.id, u.username || u.id]));
+
+    const lista = (mapa: Map<string, Date>) =>
+      [...mapa].map(([slug, lastModified]) => ({ slug, lastModified }));
+
+    return {
+      blogCategories: lista(categorias),
+      blogTags: lista(tags),
+      blogAuthors: [...autores].map(([id, lastModified]) => ({
+        id: endereco.get(id) ?? id,
+        lastModified,
       })),
     };
   }

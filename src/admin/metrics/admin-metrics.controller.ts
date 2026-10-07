@@ -8,7 +8,8 @@ import {
 } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AdminMetricsService } from './admin-metrics.service';
-import { InsightsQueryDto } from './dto/metrics-query.dto';
+import { AttentionService } from './attention.service';
+import { ActivityQueryDto, InsightsQueryDto } from './dto/metrics-query.dto';
 
 /**
  * Métricas e insights da plataforma.
@@ -27,7 +28,24 @@ import { InsightsQueryDto } from './dto/metrics-query.dto';
 @Roles('ADMIN')
 @Controller('admin/metrics')
 export class AdminMetricsController {
-  constructor(private readonly service: AdminMetricsService) {}
+  constructor(
+    private readonly service: AdminMetricsService,
+    private readonly attentionService: AttentionService,
+  ) {}
+
+  @Get('attention')
+  @ApiOperation({
+    summary: 'O que pede alguém hoje',
+    description:
+      'Denúncias abertas e atrasadas, comentários e artigos esperando, falhas ' +
+      'de fila nas últimas 24 h e filas sem worker, backup, cobrança em atraso ' +
+      'e a próxima campanha. Cada bloco falha sozinho (`{ erro }`) sem derrubar ' +
+      'os outros.',
+  })
+  @ApiOkResponse({ description: 'Contagens e datas por área' })
+  async attention() {
+    return this.attentionService.attention();
+  }
 
   @Get('overview')
   @ApiOperation({
@@ -39,6 +57,18 @@ export class AdminMetricsController {
   @ApiOkResponse({ description: 'Usuários, catálogo, portal e biblioteca' })
   async overview() {
     return this.service.overview();
+  }
+
+  @Get('activity')
+  @ApiOperation({
+    summary: 'Cadastros, anotações e envios por dia',
+    description:
+      'Série diária no fuso de São Paulo, com zero nos dias sem registro. ' +
+      '`days` de 7 a 90.',
+  })
+  @ApiOkResponse({ description: 'Série diária e totais' })
+  async activity(@Query() query: ActivityQueryDto) {
+    return this.service.activity(query.days ?? 30);
   }
 
   @Get('insights')
