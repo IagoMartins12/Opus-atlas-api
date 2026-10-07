@@ -865,6 +865,16 @@ model Composer {
   birthDate String? // Ex: "31 de janeiro de 1797", "1797", "January 31, 1797"
   deathDate String? // Ex: "28 de novembro de 1828", "1828", "November 28, 1828"
 
+  /// Numeric parts of birthDate/deathDate (`common/dates/loose-date.ts`), kept
+  /// in sync on every write. They power "lived at the same time", sorting by
+  /// era and "born on this day"; the text fields stay the source of truth.
+  birthYear  Int?
+  birthMonth Int?
+  birthDay   Int?
+  deathYear  Int?
+  deathMonth Int?
+  deathDay   Int?
+
   portraitUrl    String?
   epochId        String    @db.ObjectId
   epochName      String?
@@ -962,6 +972,9 @@ model Composer {
   @@index([epochId, createdAt]) // Ordenação por época + data
   @@index([isVerified, createdAt]) // Ordenação por verificação + data
   @@index([createdBy, createdAt]) // Para auditoria ordenada
+  @@index([birthYear])
+  @@index([birthMonth, birthDay])
+  @@index([deathMonth, deathDay])
 }
 
 model Epoch {

@@ -56,8 +56,6 @@ import type { PrismaService } from '../prisma/prisma.service';
  *       APP_ENV=prd   node dist/scripts/db-push.js
  */
 
-const COLLECTION = 'newsletter_subscribers';
-
 /**
  * Tira da frente os índices que vão conflitar.
  *
@@ -74,7 +72,7 @@ async function derrubarConflitantes(prisma: PrismaClient): Promise<string[]> {
   for (const spec of PARTIAL_UNIQUE_INDEXES) {
     try {
       await prisma.$runCommandRaw({
-        dropIndexes: COLLECTION,
+        dropIndexes: spec.collection,
         index: spec.name,
       });
       derrubados.push(spec.name);

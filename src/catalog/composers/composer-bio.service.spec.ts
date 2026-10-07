@@ -1,3 +1,4 @@
+import { composerDetailCacheKey } from './composer-cache-keys';
 import {
   HttpException,
   NotFoundException,
@@ -103,7 +104,7 @@ describe('ComposerBioService', () => {
         bioGeneratedAt: expect.any(Date),
       }),
     });
-    expect(cache.del).toHaveBeenCalledWith(`composers:detail:${ID}`);
+    expect(cache.del).toHaveBeenCalledWith(composerDetailCacheKey(ID));
     // O prompt leva o que o catálogo sabe.
     const [{ prompt }] = ai.complete.mock.calls[0] as [{ prompt: string }];
     expect(prompt).toContain('- Período: Romântico');

@@ -47,7 +47,8 @@
     "catalog:sync-annotation-counts": "node dist/scripts/sync-annotation-counts.js",
     "catalog:sync-annotation-counts:apply": "node dist/scripts/sync-annotation-counts.js --apply",
     "prebuild": "rimraf dist tsconfig.build.tsbuildinfo",
-    "prisma:push:raw": "node --env-file=.env.local node_modules/prisma/build/index.js db push"
+    "prisma:push:raw": "node --env-file=.env.local node_modules/prisma/build/index.js db push",
+    "backfill:composer-dates": "npm run build && APP_ENV=local node --env-file=.env.local dist/scripts/backfill-composer-date-parts.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

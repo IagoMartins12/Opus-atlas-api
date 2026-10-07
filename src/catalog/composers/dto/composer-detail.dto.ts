@@ -5,6 +5,12 @@ class ComposerDetailEpochDto {
   name: string;
 }
 
+export class DatePartsDto {
+  @ApiProperty({ nullable: true, type: Number }) year: number | null;
+  @ApiProperty({ nullable: true, type: Number }) month: number | null;
+  @ApiProperty({ nullable: true, type: Number }) day: number | null;
+}
+
 export class ComposerDetailDto {
   @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
   id: string;
@@ -26,6 +32,16 @@ export class ComposerDetailDto {
 
   @ApiPropertyOptional({ nullable: true })
   deathDate?: string;
+
+  @ApiProperty({
+    type: () => DatePartsDto,
+    description:
+      'Numeric parts read from birthDate (null where the text is vague)',
+  })
+  birth: DatePartsDto;
+
+  @ApiProperty({ type: () => DatePartsDto })
+  death: DatePartsDto;
 
   @ApiPropertyOptional({ nullable: true })
   portraitUrl?: string;

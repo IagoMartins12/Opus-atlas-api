@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { composerDateParts } from '../../common/dates/loose-date';
 import {
   BadRequestException,
   ForbiddenException,
@@ -86,6 +87,10 @@ export class ComposerUploadsService {
         alternativeNames: dto.alternativeNames ?? null,
         birthDate: dto.birthDate ?? null,
         deathDate: dto.deathDate ?? null,
+        ...composerDateParts({
+          birthDate: dto.birthDate ?? null,
+          deathDate: dto.deathDate ?? null,
+        }),
         portraitUrl: dto.portraitUrl ?? null,
         epochId: dto.epochId,
         epochName: dto.epochName ?? null,
@@ -218,6 +223,11 @@ export class ComposerUploadsService {
       data.bioGeneratedBy = null;
       data.bioGeneratedAt = null;
     }
+
+    Object.assign(
+      data,
+      composerDateParts({ birthDate: dto.birthDate, deathDate: dto.deathDate }),
+    );
 
     data.dataCompleteness = this.calculateCompleteness({
       ...existing,

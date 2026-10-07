@@ -1,4 +1,5 @@
 import { BadRequestException, HttpStatus } from '@nestjs/common';
+import { ComposerOverviewService } from './composers/composer-overview.service';
 import type { Response } from 'express';
 import { AccessTokenPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ComposerBioService } from './composers/composer-bio.service';
@@ -103,10 +104,17 @@ describe('ComposersController', () => {
     'findOne',
   );
   const bio = { biography: jest.fn() };
+  const overview = { getOverview: jest.fn().mockResolvedValue('overview') };
   const controller = new ComposersController(
     composers as unknown as ComposersService,
     bio as unknown as ComposerBioService,
+    overview as unknown as ComposerOverviewService,
   );
+
+  it('overview repassa ao serviço', async () => {
+    await expect(controller.getOverview('c1')).resolves.toBe('overview');
+    expect(overview.getOverview).toHaveBeenCalledWith('c1');
+  });
 
   it('leituras repassam ao serviço', async () => {
     await expect(controller.findAll({})).resolves.toBe('findAll');

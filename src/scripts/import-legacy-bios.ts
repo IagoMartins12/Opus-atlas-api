@@ -1,8 +1,8 @@
 import { NestFactory } from '@nestjs/core';
+import { composerDetailCacheKey } from '../catalog/composers/composer-cache-keys';
 import { Logger } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { AppModule } from '../app.module';
-import { CacheNamespace } from '../common/cache/cache-keys';
 import { AppCacheService } from '../common/cache/cache.service';
 import { errorMessage } from '../common/utils/error.util';
 import { hasBio } from '../catalog/composers/composer-bio.prompt';
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
 
       if (apply && (data.bio || data.bioEn)) {
         await prisma.composer.update({ where: { id }, data });
-        await cache.del(`${CacheNamespace.COMPOSERS}:detail:${id}`);
+        await cache.del(composerDetailCacheKey(id));
       }
     }
 

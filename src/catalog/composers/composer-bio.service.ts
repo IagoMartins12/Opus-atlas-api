@@ -1,3 +1,4 @@
+import { composerDetailCacheKey } from './composer-cache-keys';
 import {
   HttpException,
   HttpStatus,
@@ -9,7 +10,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { isMongoId } from 'class-validator';
 import { AiTextService, AiUnavailableError } from '../../ai/ai-text.service';
-import { CacheNamespace } from '../../common/cache/cache-keys';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { localDate } from '../../common/utils/time-zone';
@@ -386,6 +386,6 @@ export class ComposerBioService {
   }
 
   private async forgetDetail(composerId: string): Promise<void> {
-    await this.cache.del(`${CacheNamespace.COMPOSERS}:detail:${composerId}`);
+    await this.cache.del(composerDetailCacheKey(composerId));
   }
 }

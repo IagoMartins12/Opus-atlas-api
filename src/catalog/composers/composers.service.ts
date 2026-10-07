@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { composerDetailCacheKey } from './composer-cache-keys';
 import { IS_COMPOSER } from './composer-role';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
@@ -210,6 +211,12 @@ const COMPOSER_DETAIL_SELECT = {
   videoUrl: true,
   birthDate: true,
   deathDate: true,
+  birthYear: true,
+  birthMonth: true,
+  birthDay: true,
+  deathYear: true,
+  deathMonth: true,
+  deathDay: true,
   portraitUrl: true,
   bio: true,
   bioEn: true,
@@ -440,7 +447,7 @@ export class ComposersService {
   }
 
   async findOne(id: string): Promise<ComposerDetailDto> {
-    const cacheKey = `${CacheNamespace.COMPOSERS}:detail:${id}`;
+    const cacheKey = composerDetailCacheKey(id);
     const cached = await this.cacheManager.get<ComposerDetailDto>(cacheKey);
 
     if (cached) {
@@ -701,6 +708,16 @@ export class ComposersService {
       alternativeNames: this.normalizeOptionalString(composer.alternativeNames),
       birthDate: this.normalizeOptionalString(composer.birthDate),
       deathDate: this.normalizeOptionalString(composer.deathDate),
+      birth: {
+        year: composer.birthYear,
+        month: composer.birthMonth,
+        day: composer.birthDay,
+      },
+      death: {
+        year: composer.deathYear,
+        month: composer.deathMonth,
+        day: composer.deathDay,
+      },
       portraitUrl: this.normalizeOptionalString(composer.portraitUrl),
       bio: this.normalizeOptionalString(composer.bio),
       bioEn: this.normalizeOptionalString(composer.bioEn),
