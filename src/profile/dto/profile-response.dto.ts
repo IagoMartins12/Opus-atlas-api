@@ -5,6 +5,7 @@ import {
   StudentInviteStatus,
   UserType,
 } from '@prisma/client';
+import { LIST_VIEWS, type ListView } from './list-view';
 import { UserInstrumentDto } from './user-instrument.dto';
 import {
   StudentSectionDto,
@@ -51,6 +52,8 @@ export class ProfileAccountDto {
   @ApiPropertyOptional({ nullable: true }) practiceTimePerWeek: number | null;
   @ApiProperty() profilePublic: boolean;
   @ApiProperty() showLocation: boolean;
+  @ApiPropertyOptional({ nullable: true, enum: LIST_VIEWS })
+  listView: ListView | null;
   @ApiProperty({ enum: PlanType }) currentPlan: PlanType;
   @ApiPropertyOptional({ nullable: true }) planExpiresAt: Date | null;
   @ApiProperty() isTrialActive: boolean;

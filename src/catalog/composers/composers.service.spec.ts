@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AppCacheService } from '../../common/cache/cache.service';
 import { ComposersService } from './composers.service';
 
 const ID = '685d7a5ba35690a68f9df8ed';
@@ -55,7 +56,12 @@ describe('ComposersService', () => {
       findUnique: jest.Mock;
       count: jest.Mock;
     };
-    work: { findMany: jest.Mock; count: jest.Mock; groupBy: jest.Mock };
+    work: {
+      findMany: jest.Mock;
+      count: jest.Mock;
+      groupBy: jest.Mock;
+      aggregateRaw: jest.Mock;
+    };
     role: { findMany: jest.Mock };
   };
   let cache: { get: jest.Mock; set: jest.Mock };
@@ -73,6 +79,12 @@ describe('ComposersService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         groupBy: jest.fn().mockResolvedValue([]),
+        aggregateRaw: jest
+          .fn()
+          .mockResolvedValue([
+            { _id: { $oid: 'c1' } },
+            { _id: { $oid: 'c2' } },
+          ]),
       },
       role: {
         findMany: jest
@@ -84,6 +96,11 @@ describe('ComposersService', () => {
     service = new ComposersService(
       prisma as unknown as PrismaService,
       cache as unknown as Cache,
+      {
+        remember: jest.fn((_key: string, _opts: unknown, load: () => unknown) =>
+          load(),
+        ),
+      } as unknown as AppCacheService,
     );
   });
 
@@ -129,6 +146,50 @@ describe('ComposersService', () => {
       cache.get.mockResolvedValue([{ id: 'x' }]);
       await expect(service.findAll({})).resolves.toEqual([{ id: 'x' }]);
       expect(prisma.composer.count).not.toHaveBeenCalled();
+    });
+
+    it('a busca também olha os nomes alternativos', async () => {
+      await service.findAll({ search: 'szopen' });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND[1].OR[2].AND[0]).toEqual({
+        alternativeNames: { contains: 'szopen', mode: 'insensitive' },
+      });
+    });
+
+    it('país, retrato, nascimento e instrumento viram filtros', async () => {
+      await service.findAll({
+        nationality: 'German, Alemão',
+        withPortrait: true,
+        bornFrom: 1700,
+        bornTo: 1800,
+        instrumentId: '685d591c1e3db0c5aaa893e4',
+      });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { nationality: { in: ['Alemão', 'German'] } },
+          { hasValidImage: true },
+          { birthYear: { not: null, gte: 1700, lte: 1800 } },
+          { id: { in: ['c1', 'c2'] } },
+        ]),
+      );
+    });
+
+    it('ordenar por nascimento lista só quem tem o ano', async () => {
+      await service.findAll({ sort: 'born-desc' });
+
+      const [{ where, orderBy }] = prisma.composer.findMany.mock.calls[0];
+      expect(orderBy).toEqual([{ birthYear: 'desc' }, { name: 'asc' }]);
+      expect(where.AND).toContainEqual({ birthYear: { not: null } });
+    });
+
+    it('em destaque: retrato e ficha completa primeiro', async () => {
+      await service.findAll({ sort: 'featured' });
+
+      const [{ orderBy }] = prisma.composer.findMany.mock.calls[0];
+      expect(orderBy[0]).toEqual({ hasValidImage: 'desc' });
     });
 
     it('sem filtro, só o papel de compositor', async () => {

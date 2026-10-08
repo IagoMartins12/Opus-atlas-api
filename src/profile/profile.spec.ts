@@ -403,7 +403,10 @@ describe('ProfileService', () => {
         },
       });
       // O diretório público de professores mostra estes dados e tem cache.
-      expect(cache.invalidateMany).toHaveBeenCalledWith(['teachers']);
+      expect(cache.invalidateMany).toHaveBeenCalledWith([
+        'teachers',
+        'blog:articles',
+      ]);
     });
 
     it('telefone vazio apaga os três campos; os demais campos da conta também passam', async () => {
@@ -809,7 +812,10 @@ describe('ProfileService', () => {
       where: { id: USER },
       data: { image: null },
     });
-    expect(cache.invalidateMany).toHaveBeenCalledWith(['teachers']);
+    expect(cache.invalidateMany).toHaveBeenCalledWith([
+      'teachers',
+      'blog:articles',
+    ]);
   });
 
   it('foto de perfil vai para o armazenamento e atualiza o diretório', async () => {

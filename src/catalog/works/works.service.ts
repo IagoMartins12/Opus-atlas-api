@@ -13,7 +13,10 @@ import { CacheNamespace } from '../../common/cache/cache-keys';
 import { ImslpScoresService } from './imslp-scores.service';
 import { workDetailCacheKey } from './work-cache-keys';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GetWorksCatalogQueryDto } from './dto/get-works-catalog-query.dto';
+import {
+  GetWorksCatalogQueryDto,
+  type WorkCatalogSort,
+} from './dto/get-works-catalog-query.dto';
 import {
   DifficultyLevelDto,
   PopularComposerFilterDto,
@@ -86,6 +89,22 @@ const WORK_SUMMARY_SELECT = {
  * ordenação só alimenta listas com teto (as N mais anotadas), nunca uma
  * paginação, então a instabilidade entre empates não tem onde aparecer.
  */
+const CATALOG_ORDER: Record<
+  WorkCatalogSort,
+  Prisma.WorkOrderByWithRelationInput[]
+> = {
+  recent: [{ createdAt: 'desc' }, { id: 'desc' }],
+  title: [{ title: 'asc' }, { id: 'asc' }],
+  'title-desc': [{ title: 'desc' }, { id: 'desc' }],
+};
+
+/** The same orders for the text-search pipeline (`_id` follows creation). */
+const CATALOG_RAW_ORDER: Record<WorkCatalogSort, Record<string, 1 | -1>> = {
+  recent: { _id: -1 },
+  title: { title: 1, _id: 1 },
+  'title-desc': { title: -1, _id: -1 },
+};
+
 const WORK_DEFAULT_ORDER_BY = [
   { annotationsCount: 'desc' as const },
   { title: 'asc' as const },
@@ -149,6 +168,10 @@ const WORK_CATALOG_BASE_SELECT = {
   mediaDuration: true,
   workType: true,
   isVerified: true,
+  spotifyTrackId: true,
+  youtubeVideoId: true,
+  customAudioUrl: true,
+  difficultyLevel: true,
   composerId: true,
   instrumentId: true,
   epochId: true,
@@ -164,12 +187,17 @@ const WORK_CATALOG_FALLBACK_SELECT = {
   mediaDuration: true,
   workType: true,
   isVerified: true,
+  spotifyTrackId: true,
+  youtubeVideoId: true,
+  customAudioUrl: true,
+  difficultyLevel: true,
   composer: {
     select: {
       id: true,
       name: true,
       fullName: true,
       epochName: true,
+      portraitUrl: true,
     },
   },
   instrument: {
@@ -590,6 +618,7 @@ export class WorksService {
           ? this.getCatalogWithoutFilters(
               normalizedQuery.page!,
               normalizedQuery.limit!,
+              normalizedQuery.sort ?? 'recent',
             )
           : this.getCatalogWithFilters(
               normalizedQuery.page!,
@@ -814,6 +843,7 @@ export class WorksService {
     return `${CacheNamespace.WORKS}:catalog:v1:${JSON.stringify({
       page: query.page,
       limit: query.limit,
+      sort: query.sort ?? null,
       composerId: query.composerId ?? null,
       instrumentId: query.instrumentId ?? null,
       epochId: query.epochId ?? null,
@@ -828,13 +858,14 @@ export class WorksService {
   private async getCatalogWithoutFilters(
     page: number,
     limit: number,
+    sort: WorkCatalogSort,
   ): Promise<WorksCatalogResponseDto> {
     const skip = (page - 1) * limit;
 
     const [works, totalCount] = await Promise.all([
       this.prisma.work.findMany({
         select: WORK_CATALOG_BASE_SELECT,
-        orderBy: [{ createdAt: 'desc' }],
+        orderBy: CATALOG_ORDER[sort],
         skip,
         take: limit,
       }),
@@ -846,7 +877,13 @@ export class WorksService {
         where: {
           id: { in: [...new Set(works.map((work) => work.composerId))] },
         },
-        select: { id: true, name: true, fullName: true, epochName: true },
+        select: {
+          id: true,
+          name: true,
+          fullName: true,
+          epochName: true,
+          portraitUrl: true,
+        },
       }),
       this.prisma.instrument.findMany({
         where: {
@@ -875,30 +912,25 @@ export class WorksService {
     const epochMap = new Map(epochs.map((epoch) => [epoch.id, epoch]));
 
     return {
-      works: works.map((work) => ({
-        id: work.id,
-        title: work.title,
-        subtitle: this.normalizeOptionalString(work.subtitle),
-        opOrCatalog: this.normalizeOptionalString(work.opOrCatalog),
-        compositionYear: this.normalizeOptionalString(work.compositionYear),
-        tone: this.normalizeOptionalString(work.tone),
-        mediaDuration: this.normalizeOptionalString(work.mediaDuration),
-        workType: work.workType,
-        isVerified: work.isVerified,
-        composer: composerMap.get(work.composerId) ?? {
-          id: '',
-          name: 'Desconhecido',
-          fullName: null,
-          epochName: null,
-        },
-        instrument: work.instrumentId
-          ? {
-              name:
-                instrumentMap.get(work.instrumentId)?.name ?? 'Desconhecido',
-            }
-          : null,
-        epoch: epochMap.get(work.epochId) ?? { id: '', name: 'Desconhecida' },
-      })),
+      works: works.map((work) =>
+        this.toCatalogItemDto({
+          ...work,
+          composer: composerMap.get(work.composerId) ?? {
+            id: '',
+            name: 'Desconhecido',
+            fullName: null,
+            epochName: null,
+            portraitUrl: null,
+          },
+          instrument: work.instrumentId
+            ? {
+                name:
+                  instrumentMap.get(work.instrumentId)?.name ?? 'Desconhecido',
+              }
+            : null,
+          epoch: epochMap.get(work.epochId) ?? null,
+        }),
+      ),
       totalCount,
       hasMore: skip + works.length < totalCount,
     };
@@ -924,9 +956,9 @@ export class WorksService {
       this.prisma.work.findMany({
         where: whereClause,
         select: WORK_CATALOG_FALLBACK_SELECT,
-        // O desempate por `id` torna a paginação estável: só com `title` duas
-        // obras homônimas trocam de lugar entre páginas e uma delas some.
-        orderBy: [{ title: 'asc' }, { id: 'asc' }],
+        // Every order ends on `id`: with `title` alone two works sharing a
+        // title swap places between pages and one of them disappears.
+        orderBy: CATALOG_ORDER[query.sort ?? 'title'],
         skip,
         take: limit,
       }),
@@ -1009,7 +1041,7 @@ export class WorksService {
           {
             $facet: {
               rows: [
-                { $sort: { title: 1, _id: 1 } },
+                { $sort: CATALOG_RAW_ORDER[query.sort ?? 'title'] },
                 { $skip: skip },
                 { $limit: limit },
                 { $project: { _id: 1 } },
@@ -1212,11 +1244,16 @@ export class WorksService {
     mediaDuration: string | null;
     workType: string;
     isVerified: boolean;
+    spotifyTrackId: string | null;
+    youtubeVideoId: string | null;
+    customAudioUrl: string | null;
+    difficultyLevel: string | null;
     composer: {
       id: string;
       name: string;
       fullName: string | null;
       epochName: string | null;
+      portraitUrl: string | null;
     };
     instrument: { name: string } | null;
     epoch: { id: string; name: string } | null;
@@ -1231,11 +1268,18 @@ export class WorksService {
       mediaDuration: this.normalizeOptionalString(work.mediaDuration),
       workType: work.workType,
       isVerified: work.isVerified,
+      hasRecording: !!(
+        work.spotifyTrackId ||
+        work.youtubeVideoId ||
+        work.customAudioUrl
+      ),
+      difficultyLevel: this.normalizeOptionalString(work.difficultyLevel),
       composer: {
         id: work.composer.id,
         name: work.composer.name,
         fullName: work.composer.fullName,
         epochName: work.composer.epochName,
+        portraitUrl: this.normalizeOptionalString(work.composer.portraitUrl),
       },
       instrument: work.instrument,
       epoch: work.epoch ?? { id: '', name: 'Desconhecida' },

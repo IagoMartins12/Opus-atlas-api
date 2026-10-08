@@ -5,13 +5,17 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { CacheNamespace } from '../../common/cache/cache-keys';
+import { AppCacheService } from '../../common/cache/cache.service';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ComposerCountQueryDto } from './dto/composer-count-query.dto';
 import { ComposerDetailDto } from './dto/composer-detail.dto';
 import { ComposerFilterOptionsResponseDto } from './dto/composer-filter-options-response.dto';
 import { ComposerListItemDto } from './dto/composer-list-item.dto';
-import { ComposerListQueryDto } from './dto/composer-list-query.dto';
+import {
+  ComposerListQueryDto,
+  type ComposerSort,
+} from './dto/composer-list-query.dto';
 import { ComposerWorkItemDto } from './dto/composer-work-item.dto';
 import { ComposerWorksQueryDto } from './dto/composer-works-query.dto';
 import { ComposerWorksResponseDto } from './dto/composer-works-response.dto';
@@ -21,6 +25,31 @@ import { DifficultyLevelDto } from '../works/dto/work-filter-option-item.dto';
 
 const COMPOSERS_LIST_TTL_MS = 5 * 60 * 1000;
 const COMPOSERS_COUNT_TTL_MS = 15 * 60 * 1000;
+
+interface ComposerFilters {
+  search: string;
+  epochId: string;
+  nationality: string[];
+  instrumentId: string;
+  withPortrait: boolean;
+  bornFrom: number;
+  bornTo: number;
+}
+
+const COMPOSER_ORDER: Record<
+  ComposerSort,
+  Prisma.ComposerOrderByWithRelationInput[]
+> = {
+  featured: [
+    { hasValidImage: 'desc' },
+    { dataCompleteness: 'desc' },
+    { name: 'asc' },
+  ],
+  name: [{ name: 'asc' }],
+  'name-desc': [{ name: 'desc' }],
+  born: [{ birthYear: 'asc' }, { name: 'asc' }],
+  'born-desc': [{ birthYear: 'desc' }, { name: 'asc' }],
+};
 const COMPOSERS_CURATED_TTL_MS = 6 * 60 * 60 * 1000;
 const COMPOSER_DETAIL_TTL_MS = 5 * 60 * 1000;
 const COMPOSER_WORKS_TTL_MS = 5 * 60 * 1000;
@@ -196,6 +225,7 @@ const COMPOSER_LIST_SELECT = {
   wikipediaLink: true,
   imslpId: true,
   isVerified: true,
+  nationality: true,
   epoch: {
     select: {
       name: true,
@@ -308,28 +338,25 @@ export class ComposersService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly cache: AppCacheService,
   ) {}
 
   async findAll(query: ComposerListQueryDto): Promise<ComposerListItemDto[]> {
-    const normalized = this.normalizeListQuery(query);
-    const cacheKey = this.buildListCacheKey(normalized);
+    const filters = this.normalizeFilters(query);
+    const page = Math.max(query.page ?? 1, 1);
+    const limit = Math.min(Math.max(query.limit ?? 30, 1), 100);
+    const sort = query.sort ?? 'name';
+    const cacheKey = `${CacheNamespace.COMPOSERS}:list:v2:${JSON.stringify({ ...filters, page, limit, sort })}`;
     const cached = await this.cacheManager.get<ComposerListItemDto[]>(cacheKey);
+    if (cached) return cached;
 
-    if (cached) {
-      return cached;
-    }
-
-    const skip = (normalized.page - 1) * normalized.limit;
     const composers = await this.prisma.composer.findMany({
-      where: this.buildWhereClause(normalized.search, normalized.epochId),
+      where: await this.buildWhereClause(filters, sort),
       select: COMPOSER_LIST_SELECT,
-      orderBy: {
-        name: 'asc',
-      },
-      skip,
-      take: normalized.limit,
+      orderBy: COMPOSER_ORDER[sort],
+      skip: (page - 1) * limit,
+      take: limit,
     });
-
     const response = composers.map((composer) =>
       this.toComposerListItem(composer),
     );
@@ -339,16 +366,15 @@ export class ComposersService {
   }
 
   async count(query: ComposerCountQueryDto): Promise<number> {
-    const normalized = this.normalizeCountQuery(query);
-    const cacheKey = this.buildCountCacheKey(normalized);
+    const filters = this.normalizeFilters(query);
+    // Birth sorts only list known years, so the count follows them.
+    const sort = query.sort ?? 'name';
+    const cacheKey = `${CacheNamespace.COMPOSERS}:count:v2:${JSON.stringify({ ...filters, born: sort.startsWith('born') })}`;
     const cached = await this.cacheManager.get<number>(cacheKey);
-
-    if (cached !== undefined && cached !== null) {
-      return cached;
-    }
+    if (cached !== undefined && cached !== null) return cached;
 
     const count = await this.prisma.composer.count({
-      where: this.buildWhereClause(normalized.search, normalized.epochId),
+      where: await this.buildWhereClause(filters, sort),
     });
 
     await this.cacheManager.set(cacheKey, count, COMPOSERS_COUNT_TTL_MS);
@@ -691,6 +717,7 @@ export class ComposersService {
         this.normalizeOptionalString(composer.wikipediaLink) ?? null,
       imslpId: this.normalizeOptionalString(composer.imslpId) ?? null,
       isVerified: composer.isVerified,
+      nationality: this.normalizeOptionalString(composer.nationality) ?? null,
       epoch: composer.epoch?.name ? { name: composer.epoch.name } : null,
     };
   }
@@ -862,71 +889,79 @@ export class ComposersService {
     return where;
   }
 
-  private buildWhereClause(
-    search?: string,
-    epochId?: string,
-  ): Prisma.ComposerWhereInput {
-    const roleFilter = IS_COMPOSER;
+  private async buildWhereClause(
+    filters: ComposerFilters,
+    sort: ComposerSort,
+  ): Promise<Prisma.ComposerWhereInput> {
+    const and: Prisma.ComposerWhereInput[] = [IS_COMPOSER];
 
-    const hasSearch = Boolean(search?.trim());
-    const hasEpochId = Boolean(epochId?.trim());
-
-    if (!hasSearch && !hasEpochId) {
-      return roleFilter;
+    if (filters.search) {
+      const terms = filters.search.split(/\s+/).map(escapeRegex);
+      const allIn = (field: 'name' | 'fullName' | 'alternativeNames') => ({
+        AND: terms.map((term) => ({
+          [field]: { contains: term, mode: 'insensitive' as const },
+        })),
+      });
+      and.push({
+        OR: [allIn('name'), allIn('fullName'), allIn('alternativeNames')],
+      });
     }
-
-    const andConditions: Prisma.ComposerWhereInput[] = [roleFilter];
-
-    if (hasSearch) {
-      const terms = search!.trim().split(/\s+/);
-      andConditions.push({
-        OR: [
-          {
-            AND: terms.map((term) => ({
-              name: {
-                contains: escapeRegex(term),
-                mode: 'insensitive',
-              },
-            })),
-          },
-          {
-            AND: terms.map((term) => ({
-              fullName: {
-                contains: escapeRegex(term),
-                mode: 'insensitive',
-              },
-            })),
-          },
-        ],
+    if (filters.epochId) and.push({ epochId: filters.epochId });
+    if (filters.nationality.length) {
+      and.push({ nationality: { in: filters.nationality } });
+    }
+    if (filters.withPortrait) and.push({ hasValidImage: true });
+    if (filters.bornFrom || filters.bornTo || sort.startsWith('born')) {
+      and.push({
+        birthYear: {
+          not: null,
+          ...(filters.bornFrom && { gte: filters.bornFrom }),
+          ...(filters.bornTo && { lte: filters.bornTo }),
+        },
+      });
+    }
+    if (filters.instrumentId) {
+      and.push({
+        id: { in: await this.composerIdsForInstrument(filters.instrumentId) },
       });
     }
 
-    if (hasEpochId) {
-      andConditions.push({
-        epochId: epochId!.trim(),
-      });
-    }
-
-    return { AND: andConditions };
+    return and.length === 1 ? and[0] : { AND: and };
   }
 
-  private normalizeListQuery(
-    query: ComposerListQueryDto,
-  ): Required<ComposerListQueryDto> {
-    return {
-      page: Math.max(query.page ?? 1, 1),
-      limit: Math.min(Math.max(query.limit ?? 30, 1), 100),
-      search: query.search?.trim() ?? '',
-      epochId: query.epochId?.trim() ?? '',
-    };
+  /**
+   * Composers with at least one work for the instrument, cached for an hour:
+   * a distinct over the works collection, too slow to run per page.
+   */
+  private composerIdsForInstrument(instrumentId: string): Promise<string[]> {
+    return this.cache.remember(
+      `${CacheNamespace.COMPOSERS}:by-instrument:${instrumentId}`,
+      { ttlMs: 60 * 60 * 1000, metricRoute: 'composers.by-instrument' },
+      async () => {
+        const rows = (await this.prisma.work.aggregateRaw({
+          pipeline: [
+            { $match: { instrumentId: { $oid: instrumentId } } },
+            { $group: { _id: '$composerId' } },
+          ],
+        })) as unknown as { _id: { $oid: string } }[];
+        return rows.map((row) => row._id.$oid);
+      },
+    );
   }
 
-  private normalizeCountQuery(
-    query: ComposerCountQueryDto,
-  ): Required<ComposerCountQueryDto> {
+  private normalizeFilters(query: ComposerCountQueryDto): ComposerFilters {
     return {
       search: query.search?.trim() ?? '',
       epochId: query.epochId?.trim() ?? '',
+      nationality: (query.nationality ?? '')
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean)
+        .sort(),
+      instrumentId: query.instrumentId ?? '',
+      withPortrait: query.withPortrait === true,
+      bornFrom: query.bornFrom ?? 0,
+      bornTo: query.bornTo ?? 0,
     };
   }
 
@@ -943,24 +978,6 @@ export class ComposersService {
       workType: query.workType?.trim() ?? '',
       difficultyLevel: query.difficultyLevel?.trim() ?? '',
     };
-  }
-
-  private buildListCacheKey(query: Required<ComposerListQueryDto>): string {
-    return [
-      `${CacheNamespace.COMPOSERS}:list`,
-      query.page,
-      query.limit,
-      query.search || 'all',
-      query.epochId || 'all',
-    ].join(':');
-  }
-
-  private buildCountCacheKey(query: Required<ComposerCountQueryDto>): string {
-    return [
-      `${CacheNamespace.COMPOSERS}:count`,
-      query.search || 'all',
-      query.epochId || 'all',
-    ].join(':');
   }
 
   private buildWorksCacheKey(

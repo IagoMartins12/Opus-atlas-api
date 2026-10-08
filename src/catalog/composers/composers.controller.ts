@@ -35,7 +35,9 @@ import { ComposerWorksResponseDto } from './dto/composer-works-response.dto';
 import { ComposerWorkTypeCountsResponseDto } from './dto/composer-work-type-counts-response.dto';
 import { FeaturedComposerResponseDto } from './dto/featured-composer-response.dto';
 import { ComposersService } from './composers.service';
+import { ComposerOnThisDayService } from './composer-on-this-day.service';
 import { ComposerOverviewService } from './composer-overview.service';
+import { OnThisDayDto, OnThisDayQueryDto } from './dto/on-this-day.dto';
 import { ComposerOverviewDto } from './dto/composer-overview.dto';
 import { BiographyResult, ComposerBioService } from './composer-bio.service';
 import { BiographyRequestDto } from './dto/biography-request.dto';
@@ -53,6 +55,7 @@ export class ComposersController {
     private readonly composersService: ComposersService,
     private readonly bioService: ComposerBioService,
     private readonly overview: ComposerOverviewService,
+    private readonly onThisDay: ComposerOnThisDayService,
   ) {}
 
   @Public()
@@ -143,6 +146,20 @@ export class ComposersController {
   })
   async findFeatured(): Promise<FeaturedComposerResponseDto> {
     return this.composersService.findFeatured();
+  }
+
+  @Public()
+  @PublicCache({ maxAgeSeconds: 3600, staleWhileRevalidateSeconds: 86400 })
+  @Get('on-this-day')
+  @ApiOperation({
+    summary: 'Composers born and who died on a calendar day',
+    description:
+      'For "born on a day like today": up to 48 each, best known first. ' +
+      'Only records whose date has month and day.',
+  })
+  @ApiOkResponse({ type: OnThisDayDto })
+  getOnThisDay(@Query() query: OnThisDayQueryDto): Promise<OnThisDayDto> {
+    return this.onThisDay.get(query.month, query.day);
   }
 
   @Public()

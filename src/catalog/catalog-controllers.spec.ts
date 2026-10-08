@@ -1,4 +1,5 @@
 import { BadRequestException, HttpStatus } from '@nestjs/common';
+import { ComposerOnThisDayService } from './composers/composer-on-this-day.service';
 import { ComposerOverviewService } from './composers/composer-overview.service';
 import type { Response } from 'express';
 import { AccessTokenPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -105,11 +106,20 @@ describe('ComposersController', () => {
   );
   const bio = { biography: jest.fn() };
   const overview = { getOverview: jest.fn().mockResolvedValue('overview') };
+  const onThisDay = { get: jest.fn().mockResolvedValue('day') };
   const controller = new ComposersController(
     composers as unknown as ComposersService,
     bio as unknown as ComposerBioService,
     overview as unknown as ComposerOverviewService,
+    onThisDay as unknown as ComposerOnThisDayService,
   );
+
+  it('dia como hoje repassa mês e dia', async () => {
+    await expect(controller.getOnThisDay({ month: 10, day: 8 })).resolves.toBe(
+      'day',
+    );
+    expect(onThisDay.get).toHaveBeenCalledWith(10, 8);
+  });
 
   it('overview repassa ao serviço', async () => {
     await expect(controller.getOverview('c1')).resolves.toBe('overview');

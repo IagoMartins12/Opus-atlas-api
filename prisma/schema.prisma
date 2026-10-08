@@ -609,6 +609,8 @@ model User {
 
   profilePublic Boolean @default(true)
   showLocation  Boolean @default(false)
+  /// Lists on the site: "cards" or "list". Visitors keep it in the browser.
+  listView      String?
 
   // Anotações relacionadas
   workAnnotations   WorkAnnotation[]

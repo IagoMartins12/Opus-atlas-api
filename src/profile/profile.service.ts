@@ -100,6 +100,7 @@ const ACCOUNT_SELECT = {
   practiceTimePerWeek: true,
   profilePublic: true,
   showLocation: true,
+  listView: true,
   currentPlan: true,
   planExpiresAt: true,
   isTrialActive: true,
@@ -490,6 +491,7 @@ export class ProfileService {
     }
     if (dto.profilePublic !== undefined) data.profilePublic = dto.profilePublic;
     if (dto.showLocation !== undefined) data.showLocation = dto.showLocation;
+    if (dto.listView !== undefined) data.listView = dto.listView;
 
     return data;
   }

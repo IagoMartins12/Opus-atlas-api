@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -8,6 +9,9 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+
+export const WORK_CATALOG_SORTS = ['recent', 'title', 'title-desc'] as const;
+export type WorkCatalogSort = (typeof WORK_CATALOG_SORTS)[number];
 
 export class GetWorksCatalogQueryDto {
   @ApiPropertyOptional({
@@ -100,4 +104,13 @@ export class GetWorksCatalogQueryDto {
   @IsOptional()
   @IsString()
   difficultyLevel?: string;
+
+  @ApiPropertyOptional({
+    enum: WORK_CATALOG_SORTS,
+    description:
+      'Ordem. Sem ela: as recém-chegadas sem filtro, A–Z com filtro (como antes).',
+  })
+  @IsOptional()
+  @IsIn(WORK_CATALOG_SORTS)
+  sort?: WorkCatalogSort;
 }

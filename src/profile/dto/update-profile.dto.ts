@@ -6,6 +6,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsMongoId,
   IsOptional,
@@ -19,6 +20,7 @@ import {
   UpdateStudentProfileDto,
   UpdateTeacherProfileDto,
 } from '../../portal/profile/dto/role-profile.dto';
+import { LIST_VIEWS, type ListView } from './list-view';
 import { UserInstrumentInputDto } from './user-instrument.dto';
 
 /**
@@ -119,6 +121,11 @@ export class UpdateAccountDto {
   @IsOptional()
   @IsBoolean()
   showLocation?: boolean;
+
+  @ApiPropertyOptional({ enum: LIST_VIEWS })
+  @IsOptional()
+  @IsIn(LIST_VIEWS)
+  listView?: ListView;
 }
 
 /**

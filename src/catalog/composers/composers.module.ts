@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AiModule } from '../../ai/ai.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { ComposerBioService } from './composer-bio.service';
+import { ComposerOnThisDayService } from './composer-on-this-day.service';
 import { ComposerOverviewService } from './composer-overview.service';
 import { ComposersController } from './composers.controller';
 import { ComposersService } from './composers.service';
@@ -9,7 +10,12 @@ import { ComposersService } from './composers.service';
 @Module({
   imports: [PrismaModule, AiModule],
   controllers: [ComposersController],
-  providers: [ComposersService, ComposerBioService, ComposerOverviewService],
+  providers: [
+    ComposersService,
+    ComposerBioService,
+    ComposerOverviewService,
+    ComposerOnThisDayService,
+  ],
   exports: [ComposersService],
 })
 export class ComposersModule {}
