@@ -89,6 +89,9 @@ const WORK_SUMMARY_SELECT = {
  * ordenação só alimenta listas com teto (as N mais anotadas), nunca uma
  * paginação, então a instabilidade entre empates não tem onde aparecer.
  */
+/** Genres offered as list filters, most used first. */
+const FILTER_GENRES = 40;
+
 const CATALOG_ORDER: Record<
   WorkCatalogSort,
   Prisma.WorkOrderByWithRelationInput[]
@@ -742,23 +745,66 @@ export class WorksService {
     );
   }
 
+  /**
+   * Every instrument, most used first. Cutting the alphabetical list at 50
+   * dropped Violino, Viola, Violoncelo, Trompete and Órgão. Counted with a
+   * group over the works (a relation count needs a `$lookup` that exceeds
+   * MongoDB's 100 MB limit on 200k works). Runs inside the cached options.
+   */
+  private async instrumentsByUse(): Promise<{ id: string; name: string }[]> {
+    const [instruments, counts] = await Promise.all([
+      this.prisma.instrument.findMany({
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.work.groupBy({
+        by: ['instrumentId'],
+        _count: { _all: true },
+      }),
+    ]);
+    const uses = new Map(
+      counts.map((row) => [row.instrumentId, row._count._all] as const),
+    );
+    return instruments.sort(
+      (a, b) => (uses.get(b.id) ?? 0) - (uses.get(a.id) ?? 0),
+    );
+  }
+
+  /**
+   * The genres works use most (`Work.workGenresArr`), as `WorkGenre` rows.
+   * The first 30 alphabetically were "Animes", "aberturas", "adagiettos"…
+   * and left out nocturnes and sonatas. Runs inside the cached filter options.
+   */
+  private async mostUsedGenres(): Promise<{ id: string; name: string }[]> {
+    const rows = (await this.prisma.work.aggregateRaw({
+      pipeline: [
+        { $unwind: '$workGenresArr' },
+        // "não definido" is an import placeholder, not a genre.
+        { $match: { workGenresArr: { $nin: ['não definido', ''] } } },
+        { $group: { _id: '$workGenresArr', n: { $sum: 1 } } },
+        { $sort: { n: -1 } },
+        { $limit: FILTER_GENRES },
+      ],
+      options: { allowDiskUse: true },
+    })) as unknown as { _id: string }[];
+    const names = rows.map((row) => row._id).filter(Boolean);
+    const genres = await this.prisma.workGenre.findMany({
+      where: { name: { in: names } },
+      select: { id: true, name: true },
+    });
+    const byName = new Map(genres.map((genre) => [genre.name, genre]));
+    return names.flatMap((name) => byName.get(name) ?? []);
+  }
+
   private async loadFilterOptions(): Promise<WorkFilterOptionsResponseDto> {
     const [instruments, epochs, workGenres, popularComposers] =
       await Promise.all([
-        this.prisma.instrument.findMany({
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-          take: 50,
-        }),
+        this.instrumentsByUse(),
         this.prisma.epoch.findMany({
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
-        this.prisma.workGenre.findMany({
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-          take: 30,
-        }),
+        this.mostUsedGenres(),
         // Nome exato, não `contains`: a lista é fixa e conhecida, e vinte
         // regex insensíveis a maiúsculas varriam os 19 mil compositores a cada
         // carga dos filtros — 197 ms, contra 29 ms pelos índices de `name` e

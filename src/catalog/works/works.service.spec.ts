@@ -108,6 +108,7 @@ describe('WorksService', () => {
       count: jest.Mock;
       update: jest.Mock;
       aggregateRaw: jest.Mock;
+      groupBy: jest.Mock;
     };
     workScore: {
       findFirst: jest.Mock;
@@ -143,6 +144,7 @@ describe('WorksService', () => {
           }),
         ),
         aggregateRaw: jest.fn().mockResolvedValue([]),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       workScore: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -563,6 +565,42 @@ describe('WorksService', () => {
         cached: true,
       });
     });
+  });
+
+  it('filtros trazem os gêneros mais usados, na ordem de uso', async () => {
+    prisma.work.aggregateRaw.mockResolvedValueOnce([
+      { _id: 'noturnos' },
+      { _id: 'sonatas' },
+    ]);
+    prisma.workGenre.findMany.mockResolvedValueOnce([
+      { id: 'g2', name: 'sonatas' },
+      { id: 'g1', name: 'noturnos' },
+    ]);
+
+    const options = await service.getFilterOptions();
+
+    expect(options.workGenres.map((g) => g.name)).toEqual([
+      'noturnos',
+      'sonatas',
+    ]);
+  });
+
+  it('filtros trazem todos os instrumentos, os mais usados primeiro', async () => {
+    prisma.instrument.findMany.mockResolvedValueOnce([
+      { id: 'i1', name: 'Alaúde' },
+      { id: 'i2', name: 'Piano' },
+    ]);
+    prisma.work.groupBy.mockResolvedValueOnce([
+      { instrumentId: 'i2', _count: { _all: 900 } },
+      { instrumentId: 'i1', _count: { _all: 3 } },
+    ]);
+
+    const options = await service.getFilterOptions();
+
+    expect(options.instruments.map((i) => i.name)).toEqual(['Piano', 'Alaúde']);
+    expect(prisma.instrument.findMany).toHaveBeenCalledWith(
+      expect.not.objectContaining({ take: expect.anything() }),
+    );
   });
 
   describe('gêneros e relacionadas', () => {
