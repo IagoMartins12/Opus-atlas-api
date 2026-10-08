@@ -21,6 +21,7 @@ import {
   UpdateTeacherProfileDto,
 } from '../../portal/profile/dto/role-profile.dto';
 import { LIST_VIEWS, type ListView } from './list-view';
+import { STUDY_HORIZONS, type StudyHorizon } from './study-horizon';
 import { UserInstrumentInputDto } from './user-instrument.dto';
 
 /**
@@ -104,13 +105,18 @@ export class UpdateAccountDto {
     nullable: true,
     minimum: 0,
     maximum: 9999,
-    description: 'Horas de prática por semana.',
+    description: 'Minutos de prática por semana.',
   })
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(9999)
   practiceTimePerWeek?: number | null;
+
+  @ApiPropertyOptional({ nullable: true, enum: STUDY_HORIZONS })
+  @IsOptional()
+  @IsIn([...STUDY_HORIZONS, null])
+  studyHorizon?: StudyHorizon | null;
 
   @ApiPropertyOptional()
   @IsOptional()

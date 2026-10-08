@@ -605,7 +605,10 @@ model User {
   favoriteEpochId    String? @db.ObjectId
 
   experienceLevel     DifficultyLevel @default(BEGINNER)
+  /// Minutes of practice per week.
   practiceTimePerWeek Int?
+  /// Students: how long they mean to study (`STUDY_HORIZONS`).
+  studyHorizon        String?
 
   profilePublic Boolean @default(true)
   showLocation  Boolean @default(false)

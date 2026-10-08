@@ -101,6 +101,7 @@ const ACCOUNT_SELECT = {
   profilePublic: true,
   showLocation: true,
   listView: true,
+  studyHorizon: true,
   currentPlan: true,
   planExpiresAt: true,
   isTrialActive: true,
@@ -492,6 +493,7 @@ export class ProfileService {
     if (dto.profilePublic !== undefined) data.profilePublic = dto.profilePublic;
     if (dto.showLocation !== undefined) data.showLocation = dto.showLocation;
     if (dto.listView !== undefined) data.listView = dto.listView;
+    if (dto.studyHorizon !== undefined) data.studyHorizon = dto.studyHorizon;
 
     return data;
   }

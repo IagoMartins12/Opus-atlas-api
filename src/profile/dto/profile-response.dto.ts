@@ -5,6 +5,7 @@ import {
   StudentInviteStatus,
   UserType,
 } from '@prisma/client';
+import { STUDY_HORIZONS, type StudyHorizon } from './study-horizon';
 import { LIST_VIEWS, type ListView } from './list-view';
 import { UserInstrumentDto } from './user-instrument.dto';
 import {
@@ -50,6 +51,8 @@ export class ProfileAccountDto {
   @ApiPropertyOptional({ nullable: true }) favoriteEpochId: string | null;
   @ApiProperty({ enum: DifficultyLevel }) experienceLevel: DifficultyLevel;
   @ApiPropertyOptional({ nullable: true }) practiceTimePerWeek: number | null;
+  @ApiPropertyOptional({ nullable: true, enum: STUDY_HORIZONS })
+  studyHorizon: StudyHorizon | null;
   @ApiProperty() profilePublic: boolean;
   @ApiProperty() showLocation: boolean;
   @ApiPropertyOptional({ nullable: true, enum: LIST_VIEWS })
