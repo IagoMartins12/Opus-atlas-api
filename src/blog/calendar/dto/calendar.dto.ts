@@ -249,6 +249,14 @@ export class CreateEventDto {
   isFeatured?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'Mostrar na home do site principal; no mês do evento, vem antes dos outros',
+  })
+  @IsOptional()
+  @IsBoolean()
+  showOnMainHome?: boolean;
+
+  @ApiPropertyOptional({
     minimum: 1,
     maximum: MAX_FEATURED_EVENTS,
     description:

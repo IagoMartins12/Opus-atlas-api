@@ -174,6 +174,7 @@ export class CalendarService {
         isFeatured: event.isFeatured,
         featuredOrder: event.featuredOrder ?? undefined,
         featuredSize: event.featuredSize ?? undefined,
+        showOnMainHome: event.showOnMainHome,
         ...colorsFor(event.type, event.isFree),
       };
     });

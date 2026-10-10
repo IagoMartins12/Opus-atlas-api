@@ -383,6 +383,7 @@ export class EventsService {
 
     set('isFree', dto.isFree);
     set('isVerified', dto.isVerified);
+    set('showOnMainHome', dto.showOnMainHome);
     set('duration', dto.duration);
 
     set(

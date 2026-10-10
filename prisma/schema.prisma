@@ -3600,6 +3600,8 @@ model Event {
   isFeatured    Boolean @default(false)
   featuredOrder Int? // Posição no mosaico do mês (1-3)
   featuredSize  String? // "large" | "normal"
+  /// Admin pick for the main site's home: this month's picks come first.
+  showOnMainHome Boolean @default(false)
 
   // Dados de scraping (se aplicável)
   externalId  String?

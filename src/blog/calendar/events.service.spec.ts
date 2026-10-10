@@ -228,6 +228,18 @@ describe('EventsService', () => {
         verifiedBy: USER,
       });
     });
+
+    it('marca e desmarca o evento para a home do site', async () => {
+      await service.updateEvent(EVENT, { showOnMainHome: true }, USER);
+      await service.updateEvent(EVENT, { showOnMainHome: false }, USER);
+
+      expect(prisma.event.update.mock.calls[0][0].data.showOnMainHome).toBe(
+        true,
+      );
+      expect(prisma.event.update.mock.calls[1][0].data.showOnMainHome).toBe(
+        false,
+      );
+    });
   });
 
   it('evento fora do ar é 404 para o público, visível para administrador', async () => {
