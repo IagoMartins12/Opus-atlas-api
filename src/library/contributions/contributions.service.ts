@@ -7,7 +7,10 @@ import {
 import { ContributionKind, CuriositySource, Prisma } from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
-import { NOT_HIDDEN } from '../../common/database/not-hidden';
+import {
+  NOT_HIDDEN,
+  NOT_REVERTED,
+} from '../../common/database/optional-fields';
 import { composerDateParts } from '../../common/dates/loose-date';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -192,7 +195,7 @@ export class ContributionsService {
   /** Deletes a curiosity and takes back what its contribution paid. */
   async deleteCuriosity(curiosityId: string): Promise<void> {
     const contribution = await this.prisma.contribution.findFirst({
-      where: { curiosityId, revertedAt: null },
+      where: { curiosityId, ...NOT_REVERTED },
       select: { id: true, userId: true, xp: true },
     });
     await this.prisma.composerCuriosity.delete({ where: { id: curiosityId } });
@@ -208,7 +211,7 @@ export class ContributionsService {
   /** Recent live contributions to a record, newest first: credit lines and the moderation view. */
   async listForEntity(entityType: ContributableEntity, entityId: string) {
     const rows = await this.prisma.contribution.findMany({
-      where: { entityType, entityId, revertedAt: null },
+      where: { entityType, entityId, ...NOT_REVERTED },
       orderBy: { createdAt: 'desc' },
       take: 30,
       include: { user: { select: AUTHOR_SELECT } },

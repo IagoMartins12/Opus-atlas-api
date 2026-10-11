@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { NOT_REVERTED } from '../common/database/optional-fields';
 import { PrismaService } from '../prisma/prisma.service';
 import { AchievementStats } from './achievement-catalog';
 
@@ -156,7 +157,7 @@ export class AchievementStatsService {
       this.prisma.composer.count({ where: { createdBy: userId } }),
       this.prisma.work.count({ where: { createdBy: userId } }),
       this.prisma.workScore.count({ where: { uploadedBy: userId } }),
-      this.prisma.contribution.count({ where: { userId, revertedAt: null } }),
+      this.prisma.contribution.count({ where: { userId, ...NOT_REVERTED } }),
     ]);
 
     return composers + works + scores + contributions;

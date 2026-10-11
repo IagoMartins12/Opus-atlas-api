@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NOT_HIDDEN } from '../../common/database/not-hidden';
+import { NOT_HIDDEN } from '../../common/database/optional-fields';
 import { AnnotationsService } from './annotations.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 

@@ -6,7 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
-import { NOT_HIDDEN } from '../../common/database/not-hidden';
+import { NOT_HIDDEN } from '../../common/database/optional-fields';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   canonicalYoutubeUrl,

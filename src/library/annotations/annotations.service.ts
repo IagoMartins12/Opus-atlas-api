@@ -10,7 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAnnotationDto } from './dto/create-annotation.dto';
 import { ListAnnotationsQueryDto } from './dto/list-annotations-query.dto';
 import { UpdateAnnotationDto } from './dto/update-annotation.dto';
-import { NOT_HIDDEN } from '../../common/database/not-hidden';
+import { NOT_HIDDEN } from '../../common/database/optional-fields';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 
 const AUTHOR_SELECT = {
