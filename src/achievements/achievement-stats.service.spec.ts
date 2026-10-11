@@ -29,6 +29,7 @@ describe('AchievementStatsService', () => {
       composer: { count: jest.fn().mockResolvedValue(0) },
       work: { count: jest.fn().mockResolvedValue(0) },
       workScore: { count: jest.fn().mockResolvedValue(0) },
+      contribution: { count: jest.fn().mockResolvedValue(0) },
     };
 
     const module: TestingModule = await Test.createTestingModule({

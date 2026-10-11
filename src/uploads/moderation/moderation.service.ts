@@ -14,6 +14,7 @@ import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
 import { StorageService } from '../../common/storage/storage.service';
 import { RequestContext } from '../shared/upload-history.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { ContributionsService } from '../../library/contributions/contributions.service';
 import {
   CommentStatus,
   NotificationPriority,
@@ -95,6 +96,30 @@ const ENTITY_HANDLERS = {
       createdAt: true,
     },
   },
+  curiosity: {
+    storageEntity: 'curiosity',
+    select: {
+      id: true,
+      text: true,
+      userId: true,
+      composerId: true,
+      createdAt: true,
+    },
+  },
+  contribution: {
+    // A field someone changed on a composer or work; `after` is what they wrote.
+    storageEntity: 'contribution',
+    select: {
+      id: true,
+      kind: true,
+      field: true,
+      after: true,
+      userId: true,
+      entityType: true,
+      entityId: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 /** As categorias que disparam providência imediata. */
@@ -131,6 +156,7 @@ export class ModerationService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly notifications: NotificationsService,
+    private readonly contributions: ContributionsService,
   ) {}
 
   /**
@@ -232,6 +258,14 @@ export class ModerationService {
         where: { id: entityId },
         data: { isHidden: true },
       });
+    } else if (entityType === 'curiosity') {
+      await this.prisma.composerCuriosity.update({
+        where: { id: entityId },
+        data: { isHidden: true },
+      });
+    } else if (entityType === 'contribution') {
+      // The old value comes back while the team decides; the XP waits.
+      await this.contributions.revert(entityId, false);
     } else {
       // Comentário é o próprio conteúdo, como a partitura é o próprio arquivo:
       // sai do ar na hora. A leitura pública só mostra `APPROVED`.
@@ -733,6 +767,16 @@ export class ModerationService {
           where: { id: entityId },
           select: ENTITY_HANDLERS.annotation.select,
         });
+      case 'curiosity':
+        return this.prisma.composerCuriosity.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.curiosity.select,
+        });
+      case 'contribution':
+        return this.prisma.contribution.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.contribution.select,
+        });
     }
   }
 
@@ -753,6 +797,17 @@ export class ModerationService {
           moderatedAt: new Date(),
         },
       });
+      return;
+    }
+
+    // Contributions undo themselves: the old value returns and the XP they
+    // paid goes back.
+    if (entityType === 'curiosity') {
+      await this.contributions.deleteCuriosity(entityId);
+      return;
+    }
+    if (entityType === 'contribution') {
+      await this.contributions.revert(entityId, true);
       return;
     }
 
@@ -828,6 +883,13 @@ export class ModerationService {
         where: { id: entityId, isHidden: true },
         data: { isHidden: false },
       });
+    } else if (entityType === 'curiosity') {
+      await this.prisma.composerCuriosity.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
+    } else if (entityType === 'contribution') {
+      await this.contributions.reapply(entityId);
     } else {
       await this.prisma.blogComment.updateMany({
         where: { id: entityId, status: CommentStatus.FLAGGED },
@@ -872,6 +934,26 @@ function holdNotice(entityType: ReportableEntity): {
       message:
         'Recebemos uma denúncia grave sobre um comentário seu, e ele saiu do ' +
         'ar enquanto a equipe analisa. Você será avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'curiosity') {
+    return {
+      title: 'Sua curiosidade saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma curiosidade que você ' +
+        'escreveu, e ela saiu do ar enquanto a equipe analisa. Você será ' +
+        'avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'contribution') {
+    return {
+      title: 'Sua contribuição foi desfeita para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma contribuição sua, e o texto ' +
+        'anterior voltou enquanto a equipe analisa. Você será avisado do ' +
+        'resultado.',
     };
   }
 

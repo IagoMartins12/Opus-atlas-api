@@ -628,6 +628,8 @@ model User {
   reportedUploads     UploadModeration[]    @relation("ReportedUploads")
   moderatedUploads    UploadModeration[]    @relation("ModeratedUploads")
   uploadHistory       UploadHistory[]
+  contributions       Contribution[]
+  curiosities         ComposerCuriosity[]
   generatedReports    GeneratedReport[]     @relation("GeneratedReports")
   notifications       Notification[]        @relation("UserNotifications")
   schoolActivities    SchoolActivity[]      @relation("UserSchoolActivities")
@@ -938,10 +940,11 @@ model Composer {
   updatedAt DateTime @updatedAt
 
   // 🔄 RELAÇÕES EXISTENTES - ATUALIZADAS
-  epoch           Epoch              @relation(fields: [epochId], references: [id])
+  epoch           Epoch               @relation(fields: [epochId], references: [id])
   works           Work[] // 🔄 CASCADE - deletar obras quando deletar compositor
+  curiosities     ComposerCuriosity[]
   favoritedBy     FavoriteComposer[] // 🔄 CASCADE será configurado no FavoriteComposer
-  favoriteByUsers User[]             @relation("FavoriteComposer")
+  favoriteByUsers User[]              @relation("FavoriteComposer")
 
   verifier User? @relation("VerifiedComposers", fields: [verifiedBy], references: [id], onDelete: SetNull)
 
@@ -1365,12 +1368,12 @@ model WorkAnnotation {
   tags       String[]             @default([])
 
   // Interação social
-  isPublic     Boolean @default(true)
+  isPublic     Boolean  @default(true)
   /// Held by a grave report while the team reviews it (only the author sees it).
   isHidden     Boolean?
-  isVerified   Boolean @default(false) // Verificado por moderador/expert
-  helpfulCount Int     @default(0) // Quantos acharam útil
-  viewCount    Int     @default(0) // Visualizações
+  isVerified   Boolean  @default(false) // Verificado por moderador/expert
+  helpfulCount Int      @default(0) // Quantos acharam útil
+  viewCount    Int      @default(0) // Visualizações
 
   // Moderação
   isFlagged   Boolean   @default(false)
@@ -1509,6 +1512,66 @@ model UploadHistory {
   @@index([entityType, entityId])
   @@index([action])
   @@map("upload_history")
+}
+
+/// What someone added to a composer or work they did not create: a
+/// biography, a video, a curiosity or a data correction. It goes live at
+/// once and is moderated by report, so every row keeps what was there before
+/// (to undo it) and the XP it paid (to take it back).
+model Contribution {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String           @db.ObjectId
+  kind        ContributionKind
+  entityType  String // "composer" | "work"
+  entityId    String           @db.ObjectId
+  /// The field written (`bio`, `videoUrl`, `compositionYear`…); empty for a curiosity.
+  field       String?
+  before      Json?
+  after       Json?
+  curiosityId String?          @db.ObjectId
+  xp          Int              @default(0)
+  /// Set when moderation took it back (or held it after a serious report).
+  revertedAt  DateTime?
+  createdAt   DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId, createdAt])
+  @@map("contributions")
+}
+
+enum ContributionKind {
+  BIO
+  VIDEO
+  CURIOSITY
+  CORRECTION
+}
+
+/// A short fact about a composer, in one language. Editorial ones came from
+/// the old fixed list on the front; the rest are written by people.
+model ComposerCuriosity {
+  id         String          @id @default(auto()) @map("_id") @db.ObjectId
+  composerId String          @db.ObjectId
+  text       String
+  language   String // "pt" | "en"
+  source     CuriositySource @default(USER)
+  userId     String?         @db.ObjectId
+  /// Held after a serious report: only its author still sees it.
+  isHidden   Boolean?
+  createdAt  DateTime        @default(now())
+
+  composer Composer @relation(fields: [composerId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([composerId, language, createdAt])
+  @@index([userId])
+  @@map("composer_curiosities")
+}
+
+enum CuriositySource {
+  EDITORIAL
+  USER
 }
 
 // 🔄 MODELO ATUALIZADO COM CASCADE PARA RESOLVER O ERRO
@@ -3599,9 +3662,9 @@ model Event {
   // Destaque e featured
   // Até 3 por mês (pelo mês do início), cada um numa posição (1 a 3) do
   // mosaico da agenda; `featuredSize` "large" ocupa a largura toda.
-  isFeatured    Boolean @default(false)
-  featuredOrder Int? // Posição no mosaico do mês (1-3)
-  featuredSize  String? // "large" | "normal"
+  isFeatured     Boolean @default(false)
+  featuredOrder  Int? // Posição no mosaico do mês (1-3)
+  featuredSize   String? // "large" | "normal"
   /// Admin pick for the main site's home: this month's picks come first.
   showOnMainHome Boolean @default(false)
 

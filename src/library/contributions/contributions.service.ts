@@ -1,0 +1,462 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ContributionKind, CuriositySource, Prisma } from '@prisma/client';
+import { AppCacheService } from '../../common/cache/cache.service';
+import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
+import { composerDateParts } from '../../common/dates/loose-date';
+import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  ContributableEntity,
+  DAILY_XP_CONTRIBUTIONS,
+  fieldRule,
+  XP_BY_KIND,
+} from './contribution-rules';
+import {
+  CreateContributionDto,
+  CreateCuriosityDto,
+} from './dto/create-contribution.dto';
+
+const AUTHOR_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  username: true,
+} as const;
+
+type Author = {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  username: string | null;
+};
+
+const authorName = (user: Author) =>
+  [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+  user.username ||
+  'Pessoa da comunidade';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Contributions: what people add to composers and works they did not
+ * create. They go live at once, pay a little XP and are moderated by
+ * report, so each one keeps what was there before and what it paid.
+ * Undoing one restores the old value only while the record still shows
+ * the contribution; a later edit is not silently thrown away.
+ */
+@Injectable()
+export class ContributionsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: AppCacheService,
+    private readonly activity: ActivityTracker,
+  ) {}
+
+  async contribute(userId: string, dto: CreateContributionDto) {
+    await this.assertVerified(userId);
+
+    const rule = fieldRule(dto.entityType, dto.field);
+    if (!rule) {
+      throw new BadRequestException('Este campo não aceita contribuições.');
+    }
+    const value = rule.normalize(dto.value);
+    if (value === null) {
+      throw new BadRequestException(rule.hint);
+    }
+
+    const before = await this.readField(
+      dto.entityType,
+      dto.entityId,
+      dto.field,
+    );
+    if (before === value) {
+      throw new BadRequestException('O valor enviado é igual ao atual.');
+    }
+
+    await this.writeField(dto.entityType, dto.entityId, dto.field, value);
+    const xp = await this.xpFor(userId, rule.kind);
+    const contribution = await this.prisma.contribution.create({
+      data: {
+        userId,
+        kind: rule.kind,
+        entityType: dto.entityType,
+        entityId: dto.entityId,
+        field: dto.field,
+        // An empty field stays absent: undoing writes null back.
+        ...(before !== null && { before }),
+        after: value,
+        xp,
+      },
+      include: { user: { select: AUTHOR_SELECT } },
+    });
+
+    await this.afterContribution(userId, xp, rule.kind);
+    return this.toResponse(contribution);
+  }
+
+  async addCuriosity(
+    userId: string,
+    composerId: string,
+    dto: CreateCuriosityDto,
+  ) {
+    await this.assertVerified(userId);
+
+    const text = dto.text.trim().replace(/\s+/g, ' ');
+    if (text.length < 20) {
+      throw new BadRequestException(
+        'Conte a curiosidade numa frase completa (pelo menos 20 caracteres).',
+      );
+    }
+
+    const composer = await this.prisma.composer.findUnique({
+      where: { id: composerId },
+      select: { id: true },
+    });
+    if (!composer) {
+      throw new NotFoundException('Compositor não encontrado');
+    }
+
+    const repeated = await this.prisma.composerCuriosity.findFirst({
+      where: { composerId, language: dto.language, text },
+      select: { id: true },
+    });
+    if (repeated) {
+      throw new BadRequestException('Esta curiosidade já está na página.');
+    }
+
+    const curiosity = await this.prisma.composerCuriosity.create({
+      data: {
+        composerId,
+        text,
+        language: dto.language,
+        source: CuriositySource.USER,
+        userId,
+      },
+      include: { user: { select: AUTHOR_SELECT } },
+    });
+
+    const xp = await this.xpFor(userId, ContributionKind.CURIOSITY);
+    await this.prisma.contribution.create({
+      data: {
+        userId,
+        kind: ContributionKind.CURIOSITY,
+        entityType: 'composer',
+        entityId: composerId,
+        curiosityId: curiosity.id,
+        after: text,
+        xp,
+      },
+    });
+
+    await this.afterContribution(userId, xp, ContributionKind.CURIOSITY);
+    return this.toCuriosity(curiosity, userId);
+  }
+
+  /** The composer's curiosities in one language: editorial first, then the newest. */
+  async listCuriosities(
+    composerId: string,
+    language: 'pt' | 'en',
+    currentUserId?: string,
+  ) {
+    const curiosities = await this.prisma.composerCuriosity.findMany({
+      where: {
+        composerId,
+        language,
+        OR: [
+          { isHidden: { not: true } },
+          ...(currentUserId ? [{ userId: currentUserId }] : []),
+        ],
+      },
+      orderBy: [{ source: 'asc' }, { createdAt: 'desc' }],
+      take: 40,
+      include: { user: { select: AUTHOR_SELECT } },
+    });
+    return curiosities.map((c) => this.toCuriosity(c, currentUserId));
+  }
+
+  /** Its author or the team can take a curiosity down; the XP goes with it. */
+  async removeCuriosity(userId: string, isAdmin: boolean, curiosityId: string) {
+    const curiosity = await this.prisma.composerCuriosity.findUnique({
+      where: { id: curiosityId },
+      select: { userId: true },
+    });
+    if (!curiosity || (!isAdmin && curiosity.userId !== userId)) {
+      throw new NotFoundException('Curiosidade não encontrada');
+    }
+    await this.deleteCuriosity(curiosityId);
+  }
+
+  /** Deletes a curiosity and takes back what its contribution paid. */
+  async deleteCuriosity(curiosityId: string): Promise<void> {
+    const contribution = await this.prisma.contribution.findFirst({
+      where: { curiosityId, revertedAt: null },
+      select: { id: true, userId: true, xp: true },
+    });
+    await this.prisma.composerCuriosity.delete({ where: { id: curiosityId } });
+    if (contribution) {
+      await this.prisma.contribution.update({
+        where: { id: contribution.id },
+        data: { revertedAt: new Date() },
+      });
+      await this.takeXp(contribution.userId, contribution.xp);
+    }
+  }
+
+  /** Recent live contributions to a record, newest first: credit lines and the moderation view. */
+  async listForEntity(entityType: ContributableEntity, entityId: string) {
+    const rows = await this.prisma.contribution.findMany({
+      where: { entityType, entityId, revertedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 30,
+      include: { user: { select: AUTHOR_SELECT } },
+    });
+    return rows.map((row) => this.toResponse(row));
+  }
+
+  /**
+   * Takes a contribution back. The old value returns only if the record
+   * still shows this contribution. `refund` also takes the XP back: a hold
+   * waiting for a decision keeps it, a removal does not.
+   */
+  async revert(contributionId: string, refund: boolean): Promise<void> {
+    const contribution = await this.prisma.contribution.findUnique({
+      where: { id: contributionId },
+    });
+    if (!contribution) {
+      throw new NotFoundException('Contribuição não encontrada');
+    }
+    if (contribution.curiosityId) {
+      throw new BadRequestException(
+        'Curiosidades são moderadas pela própria curiosidade.',
+      );
+    }
+
+    if (!contribution.revertedAt) {
+      await this.swapIfCurrent(
+        contribution,
+        contribution.after,
+        contribution.before,
+      );
+      await this.prisma.contribution.update({
+        where: { id: contributionId },
+        data: { revertedAt: new Date() },
+      });
+    }
+    if (refund && contribution.xp > 0) {
+      await this.prisma.contribution.update({
+        where: { id: contributionId },
+        data: { xp: 0 },
+      });
+      await this.takeXp(contribution.userId, contribution.xp);
+    }
+  }
+
+  /** Undoes a hold: the contribution returns if nothing replaced the old value meanwhile. */
+  async reapply(contributionId: string): Promise<void> {
+    const contribution = await this.prisma.contribution.findUnique({
+      where: { id: contributionId },
+    });
+    if (!contribution?.revertedAt || contribution.curiosityId) return;
+    const restored = await this.swapIfCurrent(
+      contribution,
+      contribution.before,
+      contribution.after,
+    );
+    if (restored) {
+      await this.prisma.contribution.update({
+        where: { id: contributionId },
+        data: { revertedAt: null },
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------
+
+  private async assertVerified(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailVerified: true },
+    });
+    if (!user?.emailVerified) {
+      throw new ForbiddenException(
+        'Confirme seu e-mail para contribuir com o acervo.',
+      );
+    }
+  }
+
+  /** Full XP for the day's first contributions, nothing after. */
+  private async xpFor(userId: string, kind: ContributionKind): Promise<number> {
+    const today = await this.prisma.contribution.count({
+      where: {
+        userId,
+        xp: { gt: 0 },
+        createdAt: { gte: new Date(Date.now() - DAY_MS) },
+      },
+    });
+    return today < DAILY_XP_CONTRIBUTIONS ? XP_BY_KIND[kind] : 0;
+  }
+
+  private async afterContribution(
+    userId: string,
+    xp: number,
+    kind: ContributionKind,
+  ): Promise<void> {
+    if (xp > 0) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { totalXP: { increment: xp } },
+      });
+    }
+    await this.cache.invalidateMany(CATALOG_NAMESPACES);
+    this.activity.track(
+      userId,
+      'contributions',
+      `contribution.${kind.toLowerCase()}`,
+    );
+  }
+
+  private async takeXp(userId: string, xp: number): Promise<void> {
+    if (xp <= 0) return;
+    await this.prisma.user.updateMany({
+      where: { id: userId, totalXP: { gte: xp } },
+      data: { totalXP: { decrement: xp } },
+    });
+    await this.prisma.user.updateMany({
+      where: { id: userId, totalXP: { lt: xp } },
+      data: { totalXP: 0 },
+    });
+  }
+
+  private async readField(
+    entityType: ContributableEntity,
+    entityId: string,
+    field: string,
+  ): Promise<string | null> {
+    const select = { [field]: true };
+    const row = (
+      entityType === 'composer'
+        ? await this.prisma.composer.findUnique({
+            where: { id: entityId },
+            select,
+          })
+        : await this.prisma.work.findUnique({ where: { id: entityId }, select })
+    ) as Record<string, unknown> | null;
+    if (!row) {
+      throw new NotFoundException(
+        entityType === 'composer'
+          ? 'Compositor não encontrado'
+          : 'Obra não encontrada',
+      );
+    }
+    const value = row[field];
+    return typeof value === 'string' && value.length ? value : null;
+  }
+
+  private async writeField(
+    entityType: ContributableEntity,
+    entityId: string,
+    field: string,
+    value: string | null,
+  ): Promise<void> {
+    if (entityType === 'work') {
+      await this.prisma.work.update({
+        where: { id: entityId },
+        data: { [field]: value },
+      });
+      return;
+    }
+    const data: Prisma.ComposerUpdateInput = { [field]: value };
+    // Dates keep their numeric columns in step; a biography written by a
+    // person is no longer the AI's.
+    if (field === 'birthDate' || field === 'deathDate') {
+      Object.assign(data, composerDateParts({ [field]: value }));
+    }
+    if (field === 'bio') {
+      data.bioGeneratedBy = null;
+      data.bioGeneratedAt = null;
+    }
+    await this.prisma.composer.update({ where: { id: entityId }, data });
+  }
+
+  /** Writes `to` only while the field still holds `from`. */
+  private async swapIfCurrent(
+    contribution: {
+      entityType: string;
+      entityId: string;
+      field: string | null;
+    },
+    from: Prisma.JsonValue,
+    to: Prisma.JsonValue,
+  ): Promise<boolean> {
+    const { field } = contribution;
+    const entityType = contribution.entityType as ContributableEntity;
+    if (!field) return false;
+    const current = await this.readField(
+      entityType,
+      contribution.entityId,
+      field,
+    ).catch(() => undefined);
+    if (
+      current === undefined ||
+      current !== (typeof from === 'string' ? from : null)
+    ) {
+      return false;
+    }
+    await this.writeField(
+      entityType,
+      contribution.entityId,
+      field,
+      typeof to === 'string' ? to : null,
+    );
+    await this.cache.invalidateMany(CATALOG_NAMESPACES);
+    return true;
+  }
+
+  private toResponse(row: {
+    id: string;
+    kind: ContributionKind;
+    entityType: string;
+    entityId: string;
+    field: string | null;
+    xp: number;
+    createdAt: Date;
+    user: Author;
+  }) {
+    return {
+      id: row.id,
+      kind: row.kind,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      field: row.field,
+      xp: row.xp,
+      createdAt: row.createdAt,
+      author: { id: row.user.id, name: authorName(row.user) },
+    };
+  }
+
+  private toCuriosity(
+    row: {
+      id: string;
+      text: string;
+      source: CuriositySource;
+      userId: string | null;
+      isHidden: boolean | null;
+      user: Author | null;
+    },
+    currentUserId?: string,
+  ) {
+    return {
+      id: row.id,
+      text: row.text,
+      source: row.source,
+      author: row.user ? { id: row.user.id, name: authorName(row.user) } : null,
+      mine: !!currentUserId && row.userId === currentUserId,
+      held: !!row.isHidden,
+    };
+  }
+}

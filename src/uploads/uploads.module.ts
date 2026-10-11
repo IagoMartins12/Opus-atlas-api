@@ -12,6 +12,7 @@ import { ScoreUploadsController } from './scores/score-uploads.controller';
 import { ScoreUploadsService } from './scores/score-uploads.service';
 import { ModerationController } from './moderation/moderation.controller';
 import { PortalModule } from '../portal/portal.module';
+import { ContributionsModule } from '../library/contributions/contributions.module';
 import { ModerationService } from './moderation/moderation.service';
 import { ModerationSweepService } from './moderation/moderation-sweep.service';
 import { UploadHistoryController } from './history/upload-history.controller';
@@ -27,7 +28,7 @@ import { UploadSupportService } from './support/upload-support.service';
  * `maxPerformanceVideos`) — a regra RN-1 do ROADMAP.
  */
 @Module({
-  imports: [BillingModule, PortalModule],
+  imports: [BillingModule, PortalModule, ContributionsModule],
   controllers: [
     UploadsController,
     UploadSupportController,

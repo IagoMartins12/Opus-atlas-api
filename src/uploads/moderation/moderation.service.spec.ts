@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { ContributionsService } from '../../library/contributions/contributions.service';
 import { ModerationService } from './moderation.service';
 
 describe('ModerationService', () => {
@@ -53,6 +54,11 @@ describe('ModerationService', () => {
     };
   };
   let notifications: { notify: jest.Mock; notifyMany: jest.Mock };
+  let contributions: {
+    revert: jest.Mock;
+    reapply: jest.Mock;
+    deleteCuriosity: jest.Mock;
+  };
   let storage: { deleteByEntity: jest.Mock };
   let cache: { invalidateMany: jest.Mock };
 
@@ -125,6 +131,12 @@ describe('ModerationService', () => {
     storage = { deleteByEntity: jest.fn().mockResolvedValue(0) };
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
 
+    contributions = {
+      revert: jest.fn().mockResolvedValue(undefined),
+      reapply: jest.fn().mockResolvedValue(undefined),
+      deleteCuriosity: jest.fn().mockResolvedValue(undefined),
+    };
+
     notifications = {
       notify: jest.fn().mockResolvedValue(undefined),
       notifyMany: jest.fn().mockResolvedValue(undefined),
@@ -137,6 +149,7 @@ describe('ModerationService', () => {
         { provide: StorageService, useValue: storage },
         { provide: AppCacheService, useValue: cache },
         { provide: NotificationsService, useValue: notifications },
+        { provide: ContributionsService, useValue: contributions },
       ],
     }).compile();
 

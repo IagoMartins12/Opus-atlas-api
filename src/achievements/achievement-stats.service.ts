@@ -147,15 +147,19 @@ export class AchievementStatsService {
     };
   }
 
-  /** Compositores, obras e partituras que o usuário adicionou ao catálogo. */
+  /**
+   * Compositores, obras e partituras que o usuário adicionou ao catálogo,
+   * mais as contribuições em vigor (biografia, vídeo, curiosidade, correção).
+   */
   private async countContributions(userId: string): Promise<number> {
-    const [composers, works, scores] = await Promise.all([
+    const [composers, works, scores, contributions] = await Promise.all([
       this.prisma.composer.count({ where: { createdBy: userId } }),
       this.prisma.work.count({ where: { createdBy: userId } }),
       this.prisma.workScore.count({ where: { uploadedBy: userId } }),
+      this.prisma.contribution.count({ where: { userId, revertedAt: null } }),
     ]);
 
-    return composers + works + scores;
+    return composers + works + scores + contributions;
   }
 
   /**

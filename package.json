@@ -43,6 +43,8 @@
     "catalog:fix-imslp-thumbnails:apply": "node dist/scripts/fix-imslp-thumbnails.js --apply",
     "catalog:import-legacy-bios": "node dist/scripts/import-legacy-bios.js",
     "catalog:import-legacy-bios:apply": "node dist/scripts/import-legacy-bios.js --apply",
+    "catalog:import-curiosities": "node dist/scripts/import-editorial-curiosities.js",
+    "catalog:import-curiosities:apply": "node dist/scripts/import-editorial-curiosities.js --apply",
     "users:audit-admin-roles": "node dist/scripts/audit-admin-roles.js",
     "catalog:sync-annotation-counts": "node dist/scripts/sync-annotation-counts.js",
     "catalog:sync-annotation-counts:apply": "node dist/scripts/sync-annotation-counts.js --apply",
