@@ -38,6 +38,12 @@ export class CollectionEntryDto {
   workTitle!: string | null;
   @ApiPropertyOptional({ nullable: true, type: String })
   pageCount!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    type: String,
+    description: 'Partitura: a edição',
+  })
+  edition!: string | null;
 }
 
 export class CollectionOwnerDto {

@@ -55,6 +55,8 @@ export type Entry = {
   workId: string | null;
   workTitle: string | null;
   pageCount: string | null;
+  /** Scores: the IMSLP group ("Edição Mikuli") or the editor. */
+  edition: string | null;
 };
 
 const ownerName = (o: Owner) =>
@@ -76,6 +78,7 @@ const blank = (refId: string, title: string): Entry => ({
   workId: null,
   workTitle: null,
   pageCount: null,
+  edition: null,
 });
 
 /**
@@ -424,6 +427,8 @@ export class CollectionsService {
           id: true,
           title: true,
           pageCount: true,
+          groupTitle: true,
+          editor: true,
           work: {
             select: {
               id: true,
@@ -438,6 +443,7 @@ export class CollectionsService {
         map.set(s.id, {
           ...blank(s.id, s.title),
           pageCount: s.pageCount,
+          edition: s.groupTitle || s.editor || null,
           workId: s.work?.id ?? null,
           workTitle: s.work?.title ?? null,
           opOrCatalog: s.work?.opOrCatalog ?? null,
