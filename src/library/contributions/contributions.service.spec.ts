@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { NOT_HIDDEN } from '../../common/database/not-hidden';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   canonicalYoutubeUrl,
@@ -358,7 +359,7 @@ describe('ContributionsService', () => {
       expect(prisma.composerCuriosity.findMany.mock.calls[0][0].where).toEqual({
         composerId: 'c-1',
         language: 'pt',
-        OR: [{ isHidden: { not: true } }, { userId: 'user-1' }],
+        OR: [NOT_HIDDEN, { userId: 'user-1' }],
       });
     });
   });

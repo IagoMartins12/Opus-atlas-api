@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAnnotationDto } from './dto/create-annotation.dto';
 import { ListAnnotationsQueryDto } from './dto/list-annotations-query.dto';
 import { UpdateAnnotationDto } from './dto/update-annotation.dto';
+import { NOT_HIDDEN } from '../../common/database/not-hidden';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 
 const AUTHOR_SELECT = {
@@ -102,7 +103,7 @@ export class AnnotationsService {
     // author sees all of their own.
     const visible: Prisma.WorkAnnotationWhereInput = {
       OR: [
-        { isPublic: true, isHidden: { not: true } },
+        { isPublic: true, ...NOT_HIDDEN },
         ...(currentUserId ? [{ userId: currentUserId }] : []),
       ],
     };

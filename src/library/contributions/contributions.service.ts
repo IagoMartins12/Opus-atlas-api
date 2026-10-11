@@ -7,6 +7,7 @@ import {
 import { ContributionKind, CuriositySource, Prisma } from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
+import { NOT_HIDDEN } from '../../common/database/not-hidden';
 import { composerDateParts } from '../../common/dates/loose-date';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -157,7 +158,7 @@ export class ContributionsService {
     return this.toCuriosity(curiosity, userId);
   }
 
-  /** The composer's curiosities in one language: editorial first, then the newest. */
+  /** The composer's curiosities in one language: editorial first, then people's, in the order told. */
   async listCuriosities(
     composerId: string,
     language: 'pt' | 'en',
@@ -167,12 +168,9 @@ export class ContributionsService {
       where: {
         composerId,
         language,
-        OR: [
-          { isHidden: { not: true } },
-          ...(currentUserId ? [{ userId: currentUserId }] : []),
-        ],
+        OR: [NOT_HIDDEN, ...(currentUserId ? [{ userId: currentUserId }] : [])],
       },
-      orderBy: [{ source: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ source: 'asc' }, { createdAt: 'asc' }],
       take: 40,
       include: { user: { select: AUTHOR_SELECT } },
     });
