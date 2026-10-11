@@ -104,11 +104,18 @@ export function fieldRule(
 
 /** XP per kind: the effort it takes, not how often it happens. */
 export const XP_BY_KIND: Record<ContributionKind, number> = {
-  BIO: 20,
-  VIDEO: 10,
-  CURIOSITY: 5,
-  CORRECTION: 5,
+  BIO: 120,
+  VIDEO: 40,
+  CURIOSITY: 30,
+  CORRECTION: 20,
 };
+
+/**
+ * The XP arrives this many days later, if no report against it was upheld
+ * (decided by the owner in the sketches, 06/10): it takes the race out of
+ * posting poor content for points.
+ */
+export const XP_WAIT_DAYS = 7;
 
 /**
  * Contributions beyond this count in a day still go live, but earn no XP.

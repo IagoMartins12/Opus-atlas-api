@@ -116,5 +116,12 @@ export const JOB_MODERATION_SLA_SWEEP = 'moderation.sla-sweep';
  */
 export const JOB_BLOG_PUBLISH_SCHEDULED = 'blog.publish-scheduled';
 
+/**
+ * Paga o XP das contribuições que passaram sete dias sem denúncia
+ * procedente. Na fila de notificações pelo mesmo motivo da varredura de
+ * moderação: varredura periódica de produto, que termina avisando alguém.
+ */
+export const JOB_CONTRIBUTIONS_GRANT_XP = 'contributions.grant-xp';
+
 /** Lê no IMSLP as partituras de uma obra e grava. Um job por obra (`jobId`). */
 export const JOB_IMSLP_SCORES = 'imslp.work.scores';

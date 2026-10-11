@@ -1520,7 +1520,7 @@ model UploadHistory {
 /// What someone added to a composer or work they did not create: a
 /// biography, a video, a curiosity or a data correction. It goes live at
 /// once and is moderated by report, so every row keeps what was there before
-/// (to undo it) and the XP it paid (to take it back).
+/// (to undo it). The XP waits seven days without an upheld report.
 model Contribution {
   id          String           @id @default(auto()) @map("_id") @db.ObjectId
   userId      String           @db.ObjectId
@@ -1532,7 +1532,11 @@ model Contribution {
   before      Json?
   after       Json?
   curiosityId String?          @db.ObjectId
+  /// Where it came from (a link or a book), for whoever moderates.
+  source      String?
+  /// XP this contribution earns, paid at `xpGrantedAt`.
   xp          Int              @default(0)
+  xpGrantedAt DateTime?
   /// Set when moderation took it back (or held it after a serious report).
   revertedAt  DateTime?
   createdAt   DateTime         @default(now())

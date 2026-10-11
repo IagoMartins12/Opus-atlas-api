@@ -1,6 +1,7 @@
 import { UnrecoverableError } from 'bullmq';
 import {
   JOB_BLOG_PUBLISH_SCHEDULED,
+  JOB_CONTRIBUTIONS_GRANT_XP,
   JOB_MAINTENANCE_RUN,
   JOB_MODERATION_SLA_SWEEP,
   JOB_NEWSLETTER_BATCH,
@@ -47,12 +48,14 @@ describe('NotificationsProcessor', () => {
   const sweep = { sweep: jest.fn().mockResolvedValue('notificações') };
   const moderation = { sweep: jest.fn().mockResolvedValue('moderação') };
   const publishing = { publishDue: jest.fn().mockResolvedValue('blog') };
+  const contributions = { grantDueXp: jest.fn().mockResolvedValue('xp') };
   const queue = { upsertSchedule: jest.fn().mockResolvedValue(undefined) };
   const runs = runsMock();
   const processor = new NotificationsProcessor(
     sweep as never,
     moderation as never,
     publishing as never,
+    contributions as never,
     queue as never,
     runs as never,
   );
@@ -72,7 +75,7 @@ describe('NotificationsProcessor', () => {
     expect(prazo.gravar({ notified: 2 })).toBe(true);
   });
 
-  it('reafirma os três agendamentos na subida', async () => {
+  it('reafirma os quatro agendamentos na subida', async () => {
     await processor.onApplicationBootstrap();
 
     expect(
@@ -81,6 +84,7 @@ describe('NotificationsProcessor', () => {
       ['notifications:sweep', '*/5 * * * *'],
       ['moderation:sla-sweep', '0 * * * *'],
       ['blog:publish-scheduled', '* * * * *'],
+      ['contributions:grant-xp', '20 4 * * *'],
     ]);
   });
 
@@ -94,6 +98,9 @@ describe('NotificationsProcessor', () => {
     await expect(
       processor.process(job(JOB_BLOG_PUBLISH_SCHEDULED) as never),
     ).resolves.toBe('blog');
+    await expect(
+      processor.process(job(JOB_CONTRIBUTIONS_GRANT_XP) as never),
+    ).resolves.toBe('xp');
     await expect(
       processor.process(job('velho') as never),
     ).rejects.toBeInstanceOf(UnrecoverableError);

@@ -150,14 +150,17 @@ export class AchievementStatsService {
 
   /**
    * Compositores, obras e partituras que o usuário adicionou ao catálogo,
-   * mais as contribuições em vigor (biografia, vídeo, curiosidade, correção).
+   * mais as contribuições aceitas: em vigor e já pagas (sete dias sem
+   * denúncia procedente).
    */
   private async countContributions(userId: string): Promise<number> {
     const [composers, works, scores, contributions] = await Promise.all([
       this.prisma.composer.count({ where: { createdBy: userId } }),
       this.prisma.work.count({ where: { createdBy: userId } }),
       this.prisma.workScore.count({ where: { uploadedBy: userId } }),
-      this.prisma.contribution.count({ where: { userId, ...NOT_REVERTED } }),
+      this.prisma.contribution.count({
+        where: { userId, ...NOT_REVERTED, xpGrantedAt: { not: null } },
+      }),
     ]);
 
     return composers + works + scores + contributions;

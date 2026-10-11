@@ -12,8 +12,12 @@ export class ContributionResponseDto {
   @ApiProperty() entityType!: string;
   @ApiProperty() entityId!: string;
   @ApiPropertyOptional({ nullable: true }) field!: string | null;
-  @ApiProperty({ description: 'XP pago por esta contribuição.' })
+  @ApiProperty({ description: 'XP que esta contribuição rende.' })
   xp!: number;
+  @ApiProperty({
+    description: 'Já pago (sete dias sem denúncia procedente) ou esperando.',
+  })
+  xpGranted!: boolean;
   @ApiProperty() createdAt!: Date;
   @ApiProperty({ type: ContributionAuthorDto })
   author!: ContributionAuthorDto;

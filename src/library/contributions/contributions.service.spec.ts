@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { NOT_HIDDEN } from '../../common/database/optional-fields';
+import { NotificationsService } from '../../portal/notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   canonicalYoutubeUrl,
@@ -43,8 +44,10 @@ describe('ContributionsService', () => {
       findMany: jest.Mock;
       delete: jest.Mock;
     };
+    uploadModeration: { findMany: jest.Mock };
   };
   let activity: { track: jest.Mock };
+  let notifications: { notify: jest.Mock };
   let cache: { invalidateMany: jest.Mock };
 
   beforeEach(async () => {
@@ -91,8 +94,10 @@ describe('ContributionsService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         delete: jest.fn().mockResolvedValue({}),
       },
+      uploadModeration: { findMany: jest.fn().mockResolvedValue([]) },
     };
     activity = { track: jest.fn() };
+    notifications = { notify: jest.fn().mockResolvedValue(undefined) };
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -101,6 +106,7 @@ describe('ContributionsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AppCacheService, useValue: cache },
         { provide: ActivityTracker, useValue: activity },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
     service = module.get(ContributionsService);
@@ -114,7 +120,8 @@ describe('ContributionsService', () => {
       value: longBio,
     };
 
-    it('aplica na hora, guarda o valor anterior e paga o XP', async () => {
+    // O XP espera sete dias sem denúncia: nada entra na conta agora.
+    it('aplica na hora e guarda o valor anterior e o XP devido', async () => {
       const result = await service.contribute('user-1', bio);
 
       expect(prisma.composer.update).toHaveBeenCalledWith({
@@ -129,19 +136,12 @@ describe('ContributionsService', () => {
           data: expect.objectContaining({
             kind: 'BIO',
             before: 'Antiga',
-            xp: 20,
+            xp: 120,
           }),
         }),
       );
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'user-1' },
-        data: { totalXP: { increment: 20 } },
-      });
-      expect(activity.track).toHaveBeenCalledWith(
-        'user-1',
-        'contributions',
-        'contribution.bio',
-      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(result.xpGranted).toBe(false);
       expect(result.author.name).toBe('Clara Schumann');
     });
 
@@ -213,7 +213,6 @@ describe('ContributionsService', () => {
 
       expect(prisma.composer.update).toHaveBeenCalled();
       expect(prisma.contribution.create.mock.calls[0][0].data.xp).toBe(0);
-      expect(prisma.user.update).not.toHaveBeenCalled();
     });
 
     it('registro inexistente', async () => {
@@ -236,6 +235,7 @@ describe('ContributionsService', () => {
       after: 'Nova',
       curiosityId: null,
       xp: 20,
+      xpGrantedAt: new Date(),
       revertedAt: null,
     };
 
@@ -306,7 +306,7 @@ describe('ContributionsService', () => {
       expect(prisma.contribution.create.mock.calls[0][0].data).toMatchObject({
         kind: 'CURIOSITY',
         curiosityId: 'q-1',
-        xp: 5,
+        xp: 30,
       });
       expect(result).toMatchObject({ mine: true, held: false });
     });
@@ -332,7 +332,7 @@ describe('ContributionsService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('apagar tira o XP que ela pagou', async () => {
+    it('apagar tira o XP que ela já tinha pago', async () => {
       prisma.composerCuriosity.findUnique.mockResolvedValue({
         userId: 'user-1',
       });
@@ -340,6 +340,7 @@ describe('ContributionsService', () => {
         id: 'k-1',
         userId: 'user-1',
         xp: 5,
+        xpGrantedAt: new Date(),
       });
 
       await service.removeCuriosity('user-1', false, 'q-1');
@@ -361,6 +362,97 @@ describe('ContributionsService', () => {
         language: 'pt',
         OR: [NOT_HIDDEN, { userId: 'user-1' }],
       });
+    });
+  });
+
+  describe('XP depois de sete dias', () => {
+    const due = (id: string, curiosityId: string | null = null) => ({
+      id,
+      userId: 'user-1',
+      kind: 'CORRECTION',
+      xp: 20,
+      curiosityId,
+    });
+
+    it('paga o que venceu, avisa e conta para as conquistas', async () => {
+      prisma.contribution.findMany.mockResolvedValue([due('k-1')]);
+      const now = new Date('2026-10-20T07:20:00Z');
+
+      const result = await service.grantDueXp(now);
+
+      expect(result).toEqual({ due: 1, granted: 1 });
+      expect(
+        prisma.contribution.findMany.mock.calls[0][0].where.createdAt,
+      ).toEqual({
+        lte: new Date('2026-10-13T07:20:00Z'),
+      });
+      expect(prisma.contribution.update).toHaveBeenCalledWith({
+        where: { id: 'k-1' },
+        data: { xpGrantedAt: now },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { totalXP: { increment: 20 } },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+          title: 'Sua contribuição rendeu 20 XP',
+          uniqueHash: 'contribution-xp:k-1',
+        }),
+      );
+      expect(activity.track).toHaveBeenCalled();
+    });
+
+    // Denúncia aberta: espera a decisão; se for removida, nunca é paga.
+    it('espera quando há denúncia aberta, também sobre a curiosidade', async () => {
+      prisma.contribution.findMany.mockResolvedValue([
+        due('k-1'),
+        due('k-2', 'q-2'),
+        due('k-3'),
+      ]);
+      prisma.uploadModeration.findMany.mockResolvedValue([
+        { entityId: 'k-1' },
+        { entityId: 'q-2' },
+      ]);
+
+      const result = await service.grantDueXp();
+
+      expect(result).toEqual({ due: 3, granted: 1 });
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('nada vencido, nada consultado', async () => {
+      await expect(service.grantDueXp()).resolves.toEqual({
+        due: 0,
+        granted: 0,
+      });
+      expect(prisma.uploadModeration.findMany).not.toHaveBeenCalled();
+    });
+
+    it('desfazer o que ainda não foi pago não mexe no XP da conta', async () => {
+      prisma.contribution.findUnique.mockResolvedValue({
+        id: 'k-1',
+        userId: 'user-1',
+        entityType: 'work',
+        entityId: 'w-1',
+        field: 'tone',
+        before: null,
+        after: 'Ré maior',
+        curiosityId: null,
+        xp: 20,
+        xpGrantedAt: null,
+        revertedAt: null,
+      });
+      prisma.work.findUnique.mockResolvedValue({ tone: 'Ré maior' });
+
+      await service.revert('k-1', true);
+
+      expect(prisma.work.update).toHaveBeenCalledWith({
+        where: { id: 'w-1' },
+        data: { tone: null },
+      });
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
   });
 

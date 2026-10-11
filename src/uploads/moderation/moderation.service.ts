@@ -114,6 +114,7 @@ const ENTITY_HANDLERS = {
       kind: true,
       field: true,
       after: true,
+      source: true,
       userId: true,
       entityType: true,
       entityId: true,

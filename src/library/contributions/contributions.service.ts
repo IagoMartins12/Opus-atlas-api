@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ContributionKind, CuriositySource, Prisma } from '@prisma/client';
+import {
+  ContributionKind,
+  CuriositySource,
+  NotificationPriority,
+  NotificationType,
+  Prisma,
+} from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
 import {
@@ -13,12 +19,14 @@ import {
 } from '../../common/database/optional-fields';
 import { composerDateParts } from '../../common/dates/loose-date';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { NotificationsService } from '../../portal/notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ContributableEntity,
   DAILY_XP_CONTRIBUTIONS,
   fieldRule,
   XP_BY_KIND,
+  XP_WAIT_DAYS,
 } from './contribution-rules';
 import {
   CreateContributionDto,
@@ -45,13 +53,21 @@ const authorName = (user: Author) =>
   'Pessoa da comunidade';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Contributions paid per sweep; the rest wait for the next day. */
+const GRANT_BATCH = 500;
+
+/** XP still waiting: neither paid nor taken back. */
+const NOT_GRANTED = {
+  OR: [{ xpGrantedAt: { isSet: false } }, { xpGrantedAt: null }],
+};
 
 /**
  * Contributions: what people add to composers and works they did not
- * create. They go live at once, pay a little XP and are moderated by
- * report, so each one keeps what was there before and what it paid.
- * Undoing one restores the old value only while the record still shows
- * the contribution; a later edit is not silently thrown away.
+ * create. They go live at once and are moderated by report, so each one
+ * keeps what was there before. The XP waits seven days and is paid only if
+ * no report against it was upheld or is still open. Undoing one restores
+ * the old value only while the record still shows the contribution; a
+ * later edit is not silently thrown away.
  */
 @Injectable()
 export class ContributionsService {
@@ -59,6 +75,7 @@ export class ContributionsService {
     private readonly prisma: PrismaService,
     private readonly cache: AppCacheService,
     private readonly activity: ActivityTracker,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async contribute(userId: string, dto: CreateContributionDto) {
@@ -94,12 +111,13 @@ export class ContributionsService {
         // An empty field stays absent: undoing writes null back.
         ...(before !== null && { before }),
         after: value,
+        source: dto.source?.trim() || undefined,
         xp,
       },
       include: { user: { select: AUTHOR_SELECT } },
     });
 
-    await this.afterContribution(userId, xp, rule.kind);
+    await this.cache.invalidateMany(CATALOG_NAMESPACES);
     return this.toResponse(contribution);
   }
 
@@ -153,11 +171,12 @@ export class ContributionsService {
         entityId: composerId,
         curiosityId: curiosity.id,
         after: text,
+        source: dto.source?.trim() || undefined,
         xp,
       },
     });
 
-    await this.afterContribution(userId, xp, ContributionKind.CURIOSITY);
+    await this.cache.invalidateMany(CATALOG_NAMESPACES);
     return this.toCuriosity(curiosity, userId);
   }
 
@@ -192,20 +211,96 @@ export class ContributionsService {
     await this.deleteCuriosity(curiosityId);
   }
 
-  /** Deletes a curiosity and takes back what its contribution paid. */
+  /** Deletes a curiosity; its XP is no longer due, or goes back if paid. */
   async deleteCuriosity(curiosityId: string): Promise<void> {
     const contribution = await this.prisma.contribution.findFirst({
       where: { curiosityId, ...NOT_REVERTED },
-      select: { id: true, userId: true, xp: true },
+      select: { id: true, userId: true, xp: true, xpGrantedAt: true },
     });
     await this.prisma.composerCuriosity.delete({ where: { id: curiosityId } });
     if (contribution) {
       await this.prisma.contribution.update({
         where: { id: contribution.id },
-        data: { revertedAt: new Date() },
+        data: { revertedAt: new Date(), xp: 0 },
       });
-      await this.takeXp(contribution.userId, contribution.xp);
+      if (contribution.xpGrantedAt) {
+        await this.takeXp(contribution.userId, contribution.xp);
+      }
     }
+  }
+
+  /**
+   * Pays the XP of contributions that went seven days without an upheld
+   * report. One with a report still open waits for the decision; one that
+   * was removed was already reverted and is not due. Run daily.
+   */
+  async grantDueXp(
+    now = new Date(),
+  ): Promise<{ due: number; granted: number }> {
+    const due = await this.prisma.contribution.findMany({
+      where: {
+        AND: [NOT_REVERTED, NOT_GRANTED],
+        xp: { gt: 0 },
+        createdAt: { lte: new Date(now.getTime() - XP_WAIT_DAYS * DAY_MS) },
+      },
+      select: {
+        id: true,
+        userId: true,
+        kind: true,
+        xp: true,
+        curiosityId: true,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: GRANT_BATCH,
+    });
+    if (!due.length) return { due: 0, granted: 0 };
+
+    const open = await this.prisma.uploadModeration.findMany({
+      where: {
+        status: 'pending',
+        entityType: { in: ['contribution', 'curiosity'] },
+        entityId: {
+          in: due.flatMap((c) =>
+            c.curiosityId ? [c.id, c.curiosityId] : [c.id],
+          ),
+        },
+      },
+      select: { entityId: true },
+    });
+    const waiting = new Set(open.map((r) => r.entityId));
+
+    let granted = 0;
+    for (const c of due) {
+      if (waiting.has(c.id) || (c.curiosityId && waiting.has(c.curiosityId))) {
+        continue;
+      }
+      await this.prisma.contribution.update({
+        where: { id: c.id },
+        data: { xpGrantedAt: now },
+      });
+      await this.prisma.user.update({
+        where: { id: c.userId },
+        data: { totalXP: { increment: c.xp } },
+      });
+      await this.notifications.notify({
+        userId: c.userId,
+        type: NotificationType.GENERAL_ANNOUNCEMENT,
+        priority: NotificationPriority.LOW,
+        title: `Sua contribuição rendeu ${c.xp} XP`,
+        message:
+          'Passaram sete dias sem denúncia, e o XP entrou na sua conta. Obrigado por completar o acervo.',
+        relatedEntityType: 'contribution',
+        relatedEntityId: c.id,
+        uniqueHash: `contribution-xp:${c.id}`,
+      });
+      this.activity.track(
+        c.userId,
+        'contributions',
+        `contribution.${c.kind.toLowerCase()}.granted`,
+      );
+      granted++;
+    }
+    return { due: due.length, granted };
   }
 
   /** Recent live contributions to a record, newest first: credit lines and the moderation view. */
@@ -221,8 +316,9 @@ export class ContributionsService {
 
   /**
    * Takes a contribution back. The old value returns only if the record
-   * still shows this contribution. `refund` also takes the XP back: a hold
-   * waiting for a decision keeps it, a removal does not.
+   * still shows this contribution. `refund` also cancels the XP (taking it
+   * back if it was already paid): a hold waiting for a decision keeps it, a
+   * removal does not.
    */
   async revert(contributionId: string, refund: boolean): Promise<void> {
     const contribution = await this.prisma.contribution.findUnique({
@@ -253,7 +349,9 @@ export class ContributionsService {
         where: { id: contributionId },
         data: { xp: 0 },
       });
-      await this.takeXp(contribution.userId, contribution.xp);
+      if (contribution.xpGrantedAt) {
+        await this.takeXp(contribution.userId, contribution.xp);
+      }
     }
   }
 
@@ -290,7 +388,7 @@ export class ContributionsService {
     }
   }
 
-  /** Full XP for the day's first contributions, nothing after. */
+  /** Full XP for the day's first contributions, none after. */
   private async xpFor(userId: string, kind: ContributionKind): Promise<number> {
     const today = await this.prisma.contribution.count({
       where: {
@@ -300,25 +398,6 @@ export class ContributionsService {
       },
     });
     return today < DAILY_XP_CONTRIBUTIONS ? XP_BY_KIND[kind] : 0;
-  }
-
-  private async afterContribution(
-    userId: string,
-    xp: number,
-    kind: ContributionKind,
-  ): Promise<void> {
-    if (xp > 0) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { totalXP: { increment: xp } },
-      });
-    }
-    await this.cache.invalidateMany(CATALOG_NAMESPACES);
-    this.activity.track(
-      userId,
-      'contributions',
-      `contribution.${kind.toLowerCase()}`,
-    );
   }
 
   private async takeXp(userId: string, xp: number): Promise<void> {
@@ -425,6 +504,7 @@ export class ContributionsService {
     entityId: string;
     field: string | null;
     xp: number;
+    xpGrantedAt: Date | null;
     createdAt: Date;
     user: Author;
   }) {
@@ -435,6 +515,7 @@ export class ContributionsService {
       entityId: row.entityId,
       field: row.field,
       xp: row.xp,
+      xpGranted: !!row.xpGrantedAt,
       createdAt: row.createdAt,
       author: { id: row.user.id, name: authorName(row.user) },
     };
