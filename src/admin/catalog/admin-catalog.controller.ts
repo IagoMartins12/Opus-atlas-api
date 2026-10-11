@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -35,6 +36,7 @@ import {
   ListComposersQueryDto,
   ListScoresQueryDto,
   ListWorksQueryDto,
+  StartingWorksDto,
   UpdateComposerDto,
   UpdateScoreDto,
   UpdateWorkDto,
@@ -118,6 +120,31 @@ export class AdminCatalogController {
   @ApiOkResponse({ description: 'Resumo do compositor' })
   async composerSummary(@Param('id') id: string) {
     return this.service.composerSummary(id);
+  }
+
+  @Roles('USER')
+  @Curator()
+  @Put('composers/:id/starting-works')
+  @Audited({
+    action: 'composer.starting-works',
+    entityType: 'composer',
+    entityIdParam: 'id',
+  })
+  @ApiOperation({
+    summary: '"Por onde começar": as obras escolhidas pela equipe',
+    description:
+      'Até três obras do próprio compositor, em ordem. A página mostra estas ' +
+      'primeiro e completa com as escolhidas automaticamente. Lista vazia ' +
+      'devolve tudo ao automático.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'As obras escolhidas' })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  async setStartingWorks(
+    @Param('id') id: string,
+    @Body() dto: StartingWorksDto,
+  ) {
+    return this.service.setStartingWorks(id, dto.workIds);
   }
 
   @Roles('USER')

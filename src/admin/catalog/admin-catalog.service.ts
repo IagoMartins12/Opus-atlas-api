@@ -253,6 +253,7 @@ export class AdminCatalogService {
         permLinkImslp: true,
         dataSource: true,
         dataCompleteness: true,
+        startingWorkIds: true,
         createdByUser: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
@@ -305,9 +306,10 @@ export class AdminCatalogService {
       .map((id) => topoObras.find((w) => w.id === id))
       .filter((w): w is (typeof topoObras)[number] => !!w);
 
-    const { createdByUser, ...resto } = composer;
+    const { createdByUser, startingWorkIds, ...resto } = composer;
     return {
       ...resto,
+      startingWorks: await this.startingWorks(startingWorkIds),
       bioLength: composer.bio?.length ?? 0,
       bioEnLength: composer.bioEn?.length ?? 0,
       createdBy: createdByUser
@@ -335,6 +337,47 @@ export class AdminCatalogService {
         scores: w._count.cachedScores,
       })),
     };
+  }
+
+  /**
+   * "Por onde começar" escolhido pela equipe: só obras do próprio compositor,
+   * sem repetir, até três. Lista vazia volta tudo ao automático.
+   */
+  async setStartingWorks(composerId: string, workIds: string[]) {
+    const ids = [...new Set(workIds)];
+    const composer = await this.prisma.composer.findUnique({
+      where: { id: composerId },
+      select: { id: true },
+    });
+    if (!composer) throw new NotFoundException('Compositor não encontrado');
+
+    const own = await this.prisma.work.count({
+      where: { id: { in: ids }, composerId },
+    });
+    if (own !== ids.length) {
+      throw new BadRequestException(
+        'Escolha só obras deste compositor para "Por onde começar".',
+      );
+    }
+
+    await this.prisma.composer.update({
+      where: { id: composerId },
+      data: { startingWorkIds: ids },
+    });
+    await this.invalidateComposerCache();
+    return this.startingWorks(ids);
+  }
+
+  /** As obras escolhidas, na ordem escolhida. */
+  private async startingWorks(ids: string[]) {
+    if (!ids.length) return [];
+    const works = await this.prisma.work.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, title: true, opOrCatalog: true },
+    });
+    return ids
+      .map((id) => works.find((w) => w.id === id))
+      .filter((w): w is (typeof works)[number] => !!w);
   }
 
   /** Um compositor, no mesmo formato da lista (para abrir de qualquer tela). */

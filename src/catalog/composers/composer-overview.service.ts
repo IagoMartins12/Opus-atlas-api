@@ -44,13 +44,18 @@ export class ComposerOverviewService {
   private async load(id: string): Promise<ComposerOverviewDto> {
     const composer = await this.prisma.composer.findUnique({
       where: { id },
-      select: { id: true, birthYear: true, deathYear: true },
+      select: {
+        id: true,
+        birthYear: true,
+        deathYear: true,
+        startingWorkIds: true,
+      },
     });
     if (!composer) throw new NotFoundException('Composer not found');
 
     const [writtenFor, startingPoints, contemporaries] = await Promise.all([
       this.writtenFor(id),
-      this.startingPoints(id),
+      this.startingPoints(id, composer.startingWorkIds ?? []),
       this.contemporaries(composer),
     ]);
     return { writtenFor, startingPoints, contemporaries };
@@ -80,11 +85,13 @@ export class ComposerOverviewService {
   }
 
   /**
-   * The most studied works first (want to learn + learned + favorites), media as the
-   * tie-breaker; of those, the easiest three, in order of difficulty.
+   * The team's picks first, in their order; the rest automatic: the most
+   * studied works (want to learn + learned + favorites), media as the
+   * tie-breaker, and of those the easiest, in order of difficulty.
    */
   private async startingPoints(
     composerId: string,
+    curatedIds: string[],
   ): Promise<StartingPointDto[]> {
     const works = await this.prisma.work.findMany({
       where: { composerId, parentWorkId: null },
@@ -136,7 +143,22 @@ export class ComposerOverviewService {
     const byDifficulty = (a: number | null, b: number | null) =>
       (a ?? Number.MAX_SAFE_INTEGER) - (b ?? Number.MAX_SAFE_INTEGER);
 
-    return scored
+    const toDto = (s: (typeof scored)[number], curated: boolean) => ({
+      id: s.work.id,
+      title: s.work.title,
+      opOrCatalog: s.work.opOrCatalog,
+      instrumentName: s.work.instrument?.name ?? null,
+      difficulty: s.difficulty,
+      studying: s.studying,
+      learned: s.learned,
+      curated,
+    });
+    const curated = curatedIds
+      .map((id) => scored.find((s) => s.work.id === id))
+      .filter((s): s is (typeof scored)[number] => !!s)
+      .slice(0, STARTING_POINTS);
+    const automatic = scored
+      .filter((s) => !curatedIds.includes(s.work.id))
       .sort(
         (a, b) =>
           b.studying +
@@ -148,16 +170,12 @@ export class ComposerOverviewService {
       )
       .slice(0, STARTING_POOL)
       .sort((a, b) => byDifficulty(a.difficulty, b.difficulty))
-      .slice(0, STARTING_POINTS)
-      .map((s) => ({
-        id: s.work.id,
-        title: s.work.title,
-        opOrCatalog: s.work.opOrCatalog,
-        instrumentName: s.work.instrument?.name ?? null,
-        difficulty: s.difficulty,
-        studying: s.studying,
-        learned: s.learned,
-      }));
+      .slice(0, STARTING_POINTS - curated.length);
+
+    return [
+      ...curated.map((s) => toDto(s, true)),
+      ...automatic.map((s) => toDto(s, false)),
+    ];
   }
 
   /** Random composers (with a real portrait) whose lives overlapped. */

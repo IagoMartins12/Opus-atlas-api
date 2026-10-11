@@ -47,9 +47,12 @@ describe('ComposerOverviewService', () => {
     ]);
     const service = build({
       composer: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'c', birthYear: null, deathYear: null }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'c',
+          birthYear: null,
+          deathYear: null,
+          startingWorkIds: [],
+        }),
       },
       work: {
         groupBy: jest.fn().mockResolvedValue([]),
@@ -77,12 +80,51 @@ describe('ComposerOverviewService', () => {
     expect(overview.contemporaries).toEqual([]);
   });
 
+  // The team's picks lead, in their order; the automatic ones fill the rest.
+  it('puts the curated works first and completes with the automatic ones', async () => {
+    const works = [
+      work('hard-popular', '9'),
+      work('easy-popular', '2'),
+      work('mid-popular', '5'),
+      work('easy-unknown', '1'),
+    ];
+    const service = build({
+      composer: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'c',
+          birthYear: null,
+          deathYear: null,
+          startingWorkIds: ['hard-popular', 'gone'],
+        }),
+      },
+      work: {
+        groupBy: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue(works),
+      },
+      instrument: { findMany: jest.fn() },
+      wantToLearn: { groupBy: jest.fn().mockResolvedValue([]) },
+      learned: { groupBy: jest.fn().mockResolvedValue([]) },
+      favoriteWork: { groupBy: jest.fn().mockResolvedValue([]) },
+    });
+
+    const overview = await service.getOverview('c');
+
+    expect(overview.startingPoints.map((s) => [s.id, s.curated])).toEqual([
+      ['hard-popular', true],
+      ['easy-unknown', false],
+      ['easy-popular', false],
+    ]);
+  });
+
   it('names the top instrumentations', async () => {
     const service = build({
       composer: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'c', birthYear: null, deathYear: null }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'c',
+          birthYear: null,
+          deathYear: null,
+          startingWorkIds: [],
+        }),
       },
       work: {
         groupBy: jest.fn().mockResolvedValue([

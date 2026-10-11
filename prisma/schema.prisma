@@ -892,6 +892,9 @@ model Composer {
   // quando alguém escreveu ou revisou. É o que permite ao front avisar.
   bioGeneratedBy String?
   bioGeneratedAt DateTime?
+  /// "Por onde começar" chosen by the team, in order (up to three); the
+  /// page completes them with the automatic picks.
+  startingWorkIds String[] @default([]) @db.ObjectId
   videoUrl       String?
   // Dados IMSLP
   permLinkImslp  String?

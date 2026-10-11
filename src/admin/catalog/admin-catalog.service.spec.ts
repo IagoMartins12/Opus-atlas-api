@@ -485,4 +485,38 @@ describe('AdminCatalogService', () => {
       ]);
     });
   });
+
+  describe('"Por onde começar" da equipe', () => {
+    it('grava sem repetir, na ordem, e derruba o cache', async () => {
+      prisma.composer.findUnique.mockResolvedValue({ id: 'c-1' });
+      prisma.work.count.mockResolvedValue(2);
+      prisma.work.findMany.mockResolvedValue([
+        { id: 'w-2', title: 'B', opOrCatalog: null },
+        { id: 'w-1', title: 'A', opOrCatalog: null },
+      ]);
+
+      const result = await service.setStartingWorks('c-1', [
+        'w-1',
+        'w-2',
+        'w-1',
+      ]);
+
+      expect(prisma.composer.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { startingWorkIds: ['w-1', 'w-2'] },
+      });
+      expect(result.map((w) => w.id)).toEqual(['w-1', 'w-2']);
+      expect(cache.invalidateMany).toHaveBeenCalled();
+    });
+
+    it('recusa obra de outro compositor', async () => {
+      prisma.composer.findUnique.mockResolvedValue({ id: 'c-1' });
+      prisma.work.count.mockResolvedValue(0);
+
+      await expect(service.setStartingWorks('c-1', ['w-9'])).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.composer.update).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -3,6 +3,7 @@ import { IMSLPScoreType, ScoreSource, WorkType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { queryBoolean } from '../../../common/utils/query-boolean';
 import {
+  ArrayMaxSize,
   IsBoolean,
   IsEnum,
   IsIn,
@@ -333,6 +334,14 @@ export class ListScoresQueryDto extends PaginationQuery {
   @IsOptional()
   @IsISO8601()
   createdTo?: string;
+}
+
+/** "Por onde começar": as obras escolhidas pela equipe, em ordem. */
+export class StartingWorksDto {
+  @ApiPropertyOptional({ type: [String], maxItems: 3 })
+  @IsMongoId({ each: true })
+  @ArrayMaxSize(3)
+  workIds!: string[];
 }
 
 /** Verificação e qualidade — a única escrita administrativa em compositor. */

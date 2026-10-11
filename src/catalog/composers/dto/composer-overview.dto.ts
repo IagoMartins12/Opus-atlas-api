@@ -21,6 +21,8 @@ export class StartingPointDto {
   studying: number;
   @ApiProperty({ description: 'People who already learned it' })
   learned: number;
+  @ApiProperty({ description: 'Chosen by the team, not by the numbers' })
+  curated: boolean;
 }
 
 export class ContemporaryDto {
