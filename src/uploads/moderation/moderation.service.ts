@@ -83,6 +83,18 @@ const ENTITY_HANDLERS = {
       createdAt: true,
     },
   },
+  annotation: {
+    // Annotations have no files either.
+    storageEntity: 'annotation',
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      userId: true,
+      workId: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 /** As categorias que disparam providência imediata. */
@@ -213,6 +225,12 @@ export class ModerationService {
       await this.prisma.composer.update({
         where: { id: entityId },
         data: { verificationStatus: 'disputed' },
+      });
+    } else if (entityType === 'annotation') {
+      // Out of sight for everyone but its author until the team decides.
+      await this.prisma.workAnnotation.update({
+        where: { id: entityId },
+        data: { isHidden: true },
       });
     } else {
       // Comentário é o próprio conteúdo, como a partitura é o próprio arquivo:
@@ -537,7 +555,7 @@ export class ModerationService {
       await this.releaseHold(entityType, moderation.entityId);
     }
 
-    return this.prisma.uploadModeration.update({
+    const resolved = await this.prisma.uploadModeration.update({
       where: { id: moderationId },
       data: {
         status: dto.action === 'reject' ? 'rejected' : 'approved',
@@ -546,6 +564,38 @@ export class ModerationService {
         resolution: dto.action,
         resolvedAt: new Date(),
       },
+    });
+
+    await this.notifyReporter(moderation, dto.action === 'delete');
+
+    return resolved;
+  }
+
+  /**
+   * Tells whoever reported how it ended. A report that disappears into a
+   * queue teaches people not to report; one that comes back with an answer
+   * is what makes the next one worth sending. The moderator's notes stay
+   * internal: they may name the author or discuss evidence.
+   */
+  private async notifyReporter(
+    moderation: {
+      id: string;
+      reportedBy: string;
+      entityType: string;
+      entityId: string;
+    },
+    removed: boolean,
+  ): Promise<void> {
+    const { title, message } = reportOutcome(removed);
+    await this.notifications.notify({
+      userId: moderation.reportedBy,
+      type: NotificationType.GENERAL_ANNOUNCEMENT,
+      priority: NotificationPriority.MEDIUM,
+      title,
+      message,
+      relatedEntityType: moderation.entityType,
+      relatedEntityId: moderation.entityId,
+      uniqueHash: `moderation-result:${moderation.id}`,
     });
   }
 
@@ -623,12 +673,18 @@ export class ModerationService {
     resolution: 'approve' | 'delete';
     notes: string | null;
   }): Promise<number> {
+    const where = {
+      entityType: input.entityType,
+      entityId: input.entityId,
+      status: 'pending',
+    };
+    // Read before closing: the reporters hear the outcome either way.
+    const pending = await this.prisma.uploadModeration.findMany({
+      where,
+      select: { id: true, reportedBy: true, entityType: true, entityId: true },
+    });
     const { count } = await this.prisma.uploadModeration.updateMany({
-      where: {
-        entityType: input.entityType,
-        entityId: input.entityId,
-        status: 'pending',
-      },
+      where,
       data: {
         // Mesmo significado de `resolve`: fechada, com a decisão em `resolution`.
         status: 'approved',
@@ -638,6 +694,12 @@ export class ModerationService {
         resolvedAt: new Date(),
       },
     });
+
+    await Promise.all(
+      pending.map((moderation) =>
+        this.notifyReporter(moderation, input.resolution === 'delete'),
+      ),
+    );
 
     return count;
   }
@@ -666,6 +728,11 @@ export class ModerationService {
           where: { id: entityId },
           select: ENTITY_HANDLERS['blog-comment'].select,
         });
+      case 'annotation':
+        return this.prisma.workAnnotation.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.annotation.select,
+        });
     }
   }
 
@@ -685,6 +752,20 @@ export class ModerationService {
           isFlagged: false,
           moderatedAt: new Date(),
         },
+      });
+      return;
+    }
+
+    // An annotation is text, like a comment, but the person wrote it on a
+    // work: removing it takes it away and fixes the work's count.
+    if (entityType === 'annotation') {
+      const removed = await this.prisma.workAnnotation.delete({
+        where: { id: entityId },
+        select: { workId: true },
+      });
+      await this.prisma.work.updateMany({
+        where: { id: removed.workId, annotationsCount: { gt: 0 } },
+        data: { annotationsCount: { decrement: 1 } },
       });
       return;
     }
@@ -742,6 +823,11 @@ export class ModerationService {
         where: { id: entityId, verificationStatus: 'disputed' },
         data: { verificationStatus: 'pending' },
       });
+    } else if (entityType === 'annotation') {
+      await this.prisma.workAnnotation.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
     } else {
       await this.prisma.blogComment.updateMany({
         where: { id: entityId, status: CommentStatus.FLAGGED },
@@ -757,6 +843,24 @@ export class ModerationService {
   }
 }
 
+/** What the reporter hears once the team decided. */
+export function reportOutcome(removed: boolean): {
+  title: string;
+  message: string;
+} {
+  return removed
+    ? {
+        title: 'O que você denunciou saiu do ar',
+        message:
+          'A equipe analisou a sua denúncia e retirou o conteúdo. Obrigado por avisar.',
+      }
+    : {
+        title: 'Sua denúncia foi analisada',
+        message:
+          'A equipe olhou com cuidado e o conteúdo continua no ar. Obrigado por avisar mesmo assim.',
+      };
+}
+
 /** O aviso a quem teve conteúdo retido por denúncia grave. */
 function holdNotice(entityType: ReportableEntity): {
   title: string;
@@ -768,6 +872,16 @@ function holdNotice(entityType: ReportableEntity): {
       message:
         'Recebemos uma denúncia grave sobre um comentário seu, e ele saiu do ' +
         'ar enquanto a equipe analisa. Você será avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'annotation') {
+    return {
+      title: 'Sua anotação saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma anotação sua, e ela saiu do ' +
+        'ar enquanto a equipe analisa. Você continua vendo a anotação e será ' +
+        'avisado do resultado.',
     };
   }
 

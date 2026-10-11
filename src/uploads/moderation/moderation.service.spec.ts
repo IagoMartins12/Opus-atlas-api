@@ -45,6 +45,12 @@ describe('ModerationService', () => {
       update: jest.Mock;
       updateMany: jest.Mock;
     };
+    workAnnotation: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+      delete: jest.Mock;
+    };
   };
   let notifications: { notify: jest.Mock; notifyMany: jest.Mock };
   let storage: { deleteByEntity: jest.Mock };
@@ -103,6 +109,16 @@ describe('ModerationService', () => {
         }),
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      workAnnotation: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'note-1',
+          userId: 'anotador-1',
+          workId: 'work-1',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        delete: jest.fn().mockResolvedValue({ workId: 'work-1' }),
       },
     };
 
@@ -659,6 +675,124 @@ describe('ModerationService', () => {
           resolution: 'delete',
           moderatedBy: 'moderador-1',
         }),
+      });
+    });
+  });
+
+  // A report has to come back with an answer, or people stop sending them.
+  describe('retorno a quem denunciou', () => {
+    const pending = {
+      id: 'mod-1',
+      entityType: 'work',
+      entityId: 'work-1',
+      reportedBy: 'denunciante-1',
+      status: 'pending',
+    };
+
+    it('avisa que o conteúdo saiu do ar quando é removido', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'delete',
+        notes: 'Dados inventados',
+      });
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'denunciante-1',
+          title: 'O que você denunciou saiu do ar',
+          uniqueHash: 'moderation-result:mod-1',
+        }),
+      );
+    });
+
+    it('avisa que foi analisada quando o conteúdo fica, sem expor as notas', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'approve',
+        notes: 'Autor é reincidente, ficar de olho',
+      });
+
+      const sent = notifications.notify.mock.calls[0][0];
+      expect(sent.title).toBe('Sua denúncia foi analisada');
+      expect(sent.message).not.toContain('reincidente');
+    });
+
+    it('avisa também quando a decisão veio por outro painel', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValue([pending]);
+
+      await service.closePendingFor({
+        entityType: 'work',
+        entityId: 'work-1',
+        moderatorId: 'moderador',
+        resolution: 'delete',
+        notes: null,
+      });
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'denunciante-1' }),
+      );
+    });
+  });
+
+  describe('anotação', () => {
+    const noteReport = (category: 'illegal' | 'offensive') => ({
+      entityType: 'annotation' as const,
+      entityId: 'note-1',
+      category,
+      reason: 'Texto ofensivo numa anotação pública',
+    });
+    const pending = {
+      id: 'mod-1',
+      entityType: 'annotation',
+      entityId: 'note-1',
+      reportedBy: 'denunciante-1',
+      status: 'pending',
+    };
+
+    it('denúncia grave esconde a anotação e avisa quem escreveu', async () => {
+      await service.report('user-1', noteReport('illegal'), context);
+
+      expect(prisma.workAnnotation.update).toHaveBeenCalledWith({
+        where: { id: 'note-1' },
+        data: { isHidden: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'anotador-1',
+          title: 'Sua anotação saiu do ar para análise',
+        }),
+      );
+    });
+
+    it('remover apaga a anotação e corrige a contagem da obra', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'delete',
+        notes: 'Ofensa',
+      });
+
+      expect(prisma.workAnnotation.delete).toHaveBeenCalledWith({
+        where: { id: 'note-1' },
+        select: { workId: true },
+      });
+      expect(prisma.work.updateMany).toHaveBeenCalledWith({
+        where: { id: 'work-1', annotationsCount: { gt: 0 } },
+        data: { annotationsCount: { decrement: 1 } },
+      });
+      expect(storage.deleteByEntity).not.toHaveBeenCalled();
+    });
+
+    it('arquivar a denúncia devolve a anotação ao ar', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', { action: 'reject' });
+
+      expect(prisma.workAnnotation.updateMany).toHaveBeenCalledWith({
+        where: { id: 'note-1', isHidden: true },
+        data: { isHidden: false },
       });
     });
   });

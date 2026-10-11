@@ -1366,6 +1366,8 @@ model WorkAnnotation {
 
   // Interação social
   isPublic     Boolean @default(true)
+  /// Held by a grave report while the team reviews it (only the author sees it).
+  isHidden     Boolean?
   isVerified   Boolean @default(false) // Verificado por moderador/expert
   helpfulCount Int     @default(0) // Quantos acharam útil
   viewCount    Int     @default(0) // Visualizações

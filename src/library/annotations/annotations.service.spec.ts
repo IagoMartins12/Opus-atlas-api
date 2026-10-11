@@ -92,6 +92,28 @@ describe('AnnotationsService', () => {
     });
   });
 
+  describe('findAll', () => {
+    beforeEach(() => {
+      prisma.workAnnotation.findMany.mockResolvedValue([]);
+      prisma.workAnnotation.count.mockResolvedValue(0);
+      prisma.annotationHelpfulVote.findMany.mockResolvedValue([]);
+    });
+
+    it('visitantes veem só anotações públicas e não retidas', async () => {
+      await service.findAll({ workId: 'w1' } as never);
+      const where = prisma.workAnnotation.findMany.mock.calls[0][0].where;
+      expect(where.AND[0].OR).toEqual([
+        { isPublic: true, isHidden: { not: true } },
+      ]);
+    });
+
+    it('quem está logado vê também as próprias, inclusive privadas', async () => {
+      await service.findAll({ workId: 'w1' } as never, 'u1');
+      const where = prisma.workAnnotation.findMany.mock.calls[0][0].where;
+      expect(where.AND[0].OR).toContainEqual({ userId: 'u1' });
+    });
+  });
+
   describe('findOne', () => {
     it('lança 404 para anotação privada quando o chamador não é o autor', async () => {
       prisma.workAnnotation.findUnique.mockResolvedValue({
