@@ -14,6 +14,7 @@ import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
 import { StorageService } from '../../common/storage/storage.service';
 import { RequestContext } from '../shared/upload-history.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { CollectionsService } from '../../library/collections/collections.service';
 import { ContributionsService } from '../../library/contributions/contributions.service';
 import {
   CommentStatus,
@@ -121,6 +122,18 @@ const ENTITY_HANDLERS = {
       createdAt: true,
     },
   },
+  collection: {
+    storageEntity: 'collection',
+    // `ownerId` stands for the author when the hold is announced.
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      kind: true,
+      ownerId: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 /** As categorias que disparam providência imediata. */
@@ -158,6 +171,7 @@ export class ModerationService {
     private readonly cache: AppCacheService,
     private readonly notifications: NotificationsService,
     private readonly contributions: ContributionsService,
+    private readonly collections: CollectionsService,
   ) {}
 
   /**
@@ -236,6 +250,7 @@ export class ModerationService {
       createdBy?: string | null;
       uploadedBy?: string | null;
       userId?: string | null;
+      ownerId?: string | null;
     } | null,
   ): Promise<void> {
     if (entityType === 'score') {
@@ -267,6 +282,11 @@ export class ModerationService {
     } else if (entityType === 'contribution') {
       // The old value comes back while the team decides; the XP waits.
       await this.contributions.revert(entityId, false);
+    } else if (entityType === 'collection') {
+      await this.prisma.collection.update({
+        where: { id: entityId },
+        data: { isHidden: true, featuredOnHome: false },
+      });
     } else {
       // Comentário é o próprio conteúdo, como a partitura é o próprio arquivo:
       // sai do ar na hora. A leitura pública só mostra `APPROVED`.
@@ -295,9 +315,14 @@ export class ModerationService {
       createdBy?: string | null;
       uploadedBy?: string | null;
       userId?: string | null;
+      ownerId?: string | null;
     } | null,
   ): Promise<void> {
-    const authorId = entity?.uploadedBy ?? entity?.createdBy ?? entity?.userId;
+    const authorId =
+      entity?.uploadedBy ??
+      entity?.createdBy ??
+      entity?.userId ??
+      entity?.ownerId;
 
     if (!authorId) {
       return;
@@ -778,6 +803,11 @@ export class ModerationService {
           where: { id: entityId },
           select: ENTITY_HANDLERS.contribution.select,
         });
+      case 'collection':
+        return this.prisma.collection.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.collection.select,
+        });
     }
   }
 
@@ -809,6 +839,10 @@ export class ModerationService {
     }
     if (entityType === 'contribution') {
       await this.contributions.revert(entityId, true);
+      return;
+    }
+    if (entityType === 'collection') {
+      await this.collections.delete(entityId);
       return;
     }
 
@@ -891,6 +925,11 @@ export class ModerationService {
       });
     } else if (entityType === 'contribution') {
       await this.contributions.reapply(entityId);
+    } else if (entityType === 'collection') {
+      await this.prisma.collection.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
     } else {
       await this.prisma.blogComment.updateMany({
         where: { id: entityId, status: CommentStatus.FLAGGED },
@@ -944,6 +983,16 @@ function holdNotice(entityType: ReportableEntity): {
       message:
         'Recebemos uma denúncia grave sobre uma curiosidade que você ' +
         'escreveu, e ela saiu do ar enquanto a equipe analisa. Você será ' +
+        'avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'collection') {
+    return {
+      title: 'Sua coleção saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma coleção sua, e ela saiu do ar ' +
+        'enquanto a equipe analisa. Você continua vendo a coleção e será ' +
         'avisado do resultado.',
     };
   }

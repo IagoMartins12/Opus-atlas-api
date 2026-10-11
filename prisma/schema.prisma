@@ -629,6 +629,8 @@ model User {
   moderatedUploads    UploadModeration[]    @relation("ModeratedUploads")
   uploadHistory       UploadHistory[]
   contributions       Contribution[]
+  collections         Collection[]
+  collectionFavorites CollectionFavorite[]
   curiosities         ComposerCuriosity[]
   generatedReports    GeneratedReport[]     @relation("GeneratedReports")
   notifications       Notification[]        @relation("UserNotifications")
@@ -882,24 +884,24 @@ model Composer {
   deathMonth Int?
   deathDay   Int?
 
-  portraitUrl    String?
-  epochId        String    @db.ObjectId
-  epochName      String?
-  bio            String?
+  portraitUrl     String?
+  epochId         String    @db.ObjectId
+  epochName       String?
+  bio             String?
   // Biografia em inglês — antes num JSON em disco do front (composers-bio.json).
-  bioEn          String?
+  bioEn           String?
   // "anthropic/claude-opus-5" quando o texto em português saiu da IA; null
   // quando alguém escreveu ou revisou. É o que permite ao front avisar.
-  bioGeneratedBy String?
-  bioGeneratedAt DateTime?
+  bioGeneratedBy  String?
+  bioGeneratedAt  DateTime?
   /// "Por onde começar" chosen by the team, in order (up to three); the
   /// page completes them with the automatic picks.
-  startingWorkIds String[] @default([]) @db.ObjectId
-  videoUrl       String?
+  startingWorkIds String[]  @default([]) @db.ObjectId
+  videoUrl        String?
   // Dados IMSLP
-  permLinkImslp  String?
-  imslpId        String?
-  wikipediaLink  String?
+  permLinkImslp   String?
+  imslpId         String?
+  wikipediaLink   String?
 
   // Dados estatísticos e geográficos
   nationality String? // País/nacionalidade (ex: "German", "Austrian", "Brazilian")
@@ -1553,6 +1555,59 @@ enum ContributionKind {
   VIDEO
   CURIOSITY
   CORRECTION
+}
+
+/// A list made by someone with a confirmed email: works, composers or
+/// scores (one kind per collection, fixed at creation), in their order, each
+/// with an optional note. Public or private; anyone can favorite a public
+/// one; only the team puts one on the home page. Items are embedded: a
+/// collection is read and written whole, and stays small.
+model Collection {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  ownerId        String           @db.ObjectId
+  kind           CollectionKind
+  title          String
+  description    String?
+  isPublic       Boolean          @default(true)
+  featuredOnHome Boolean          @default(false)
+  /// Held after a serious report: only its owner still sees it.
+  isHidden       Boolean?
+  favoritesCount Int              @default(0)
+  items          CollectionItem[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  owner     User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  favorites CollectionFavorite[]
+
+  @@index([ownerId, updatedAt])
+  @@index([isPublic, featuredOnHome, favoritesCount])
+  @@map("collections")
+}
+
+type CollectionItem {
+  refId String  @db.ObjectId
+  note  String?
+}
+
+enum CollectionKind {
+  WORK
+  COMPOSER
+  SCORE
+}
+
+model CollectionFavorite {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  collectionId String   @db.ObjectId
+  createdAt    DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, collectionId])
+  @@index([collectionId])
+  @@map("collection_favorites")
 }
 
 /// A short fact about a composer, in one language. Editorial ones came from

@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { CollectionsService } from '../../library/collections/collections.service';
 import { ContributionsService } from '../../library/contributions/contributions.service';
 import { ModerationService } from './moderation.service';
 
@@ -150,6 +151,10 @@ describe('ModerationService', () => {
         { provide: AppCacheService, useValue: cache },
         { provide: NotificationsService, useValue: notifications },
         { provide: ContributionsService, useValue: contributions },
+        {
+          provide: CollectionsService,
+          useValue: { delete: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
