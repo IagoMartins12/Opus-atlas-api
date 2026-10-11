@@ -256,4 +256,21 @@ describe('CollectionsService', () => {
       BadRequestException,
     );
   });
+
+  it('partituras: as da obra escolhida', async () => {
+    prisma.workScore.findMany
+      .mockResolvedValueOnce([{ id: 's-1' }, { id: 's-2' }])
+      .mockResolvedValueOnce([
+        { id: 's-1', title: 'Edição Mikuli', pageCount: '25', work: null },
+        { id: 's-2', title: 'Urtext', pageCount: null, work: null },
+      ]);
+
+    const found = await service.candidates({ kind: 'SCORE', workId: 'w-1' });
+
+    expect(prisma.workScore.findMany.mock.calls[0][0].where).toEqual({
+      workId: 'w-1',
+      isActive: true,
+    });
+    expect(found.map((e) => e.title)).toEqual(['Edição Mikuli', 'Urtext']);
+  });
 });

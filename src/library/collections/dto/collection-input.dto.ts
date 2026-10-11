@@ -102,8 +102,16 @@ export class CandidatesQueryDto {
   @IsEnum(CollectionKind)
   kind!: CollectionKind;
 
-  @ApiProperty({ minLength: 2 })
+  @ApiPropertyOptional({ minLength: 2, description: 'O que a pessoa digitou.' })
+  @IsOptional()
   @IsString()
   @Length(2, 80)
-  q!: string;
+  q?: string;
+
+  @ApiPropertyOptional({
+    description: 'Partituras: as desta obra (no lugar de `q`).',
+  })
+  @IsOptional()
+  @IsMongoId()
+  workId?: string;
 }

@@ -22,6 +22,7 @@ import {
 const MAX_PER_OWNER = 50;
 const FACES = 4;
 const CANDIDATES = 8;
+const SCORES_OF_WORK = 60;
 
 const OWNER_SELECT = {
   id: true,
@@ -273,9 +274,25 @@ export class CollectionsService {
     return { featuredOnHome };
   }
 
-  /** What the editor offers while you type: up to eight of the kind. */
+  /**
+   * What the editor offers: up to eight of the kind for what you typed or,
+   * for scores, every score of the work you picked first.
+   */
   async candidates(query: CandidatesQueryDto) {
-    const q = query.q.trim();
+    if (query.kind === CollectionKind.SCORE && query.workId) {
+      const ids = (
+        await this.prisma.workScore.findMany({
+          where: { workId: query.workId, isActive: true },
+          orderBy: [{ groupIndex: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true },
+          take: SCORES_OF_WORK,
+        })
+      ).map((s) => s.id);
+      const entries = await this.resolve(CollectionKind.SCORE, ids);
+      return ids.flatMap((id) => entries.get(id) ?? []);
+    }
+    const q = query.q?.trim() ?? '';
+    if (q.length < 2) return [];
     let ids: string[];
     if (query.kind === CollectionKind.COMPOSER) {
       ids = (
