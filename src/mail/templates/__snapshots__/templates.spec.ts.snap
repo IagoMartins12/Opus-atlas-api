@@ -445,7 +445,7 @@ exports[`e-mails de conta password-changed (en) 1`] = `
 
 Hi, Ana. Your account password was just changed. If it was you, there is nothing to do.
 If it wasn't, reply to this email now: the team will help you recover the account.
-When: 10/12/2026, 2:23:20 PM
+When: 10/12/2026, 12:00:00 PM
 From (IP): 189.40.0.1
 
 Warmly,
@@ -464,7 +464,7 @@ exports[`e-mails de conta password-changed (pt) 1`] = `
 
 Olá, Ana. A senha da sua conta acabou de ser trocada. Se foi você, não precisa fazer nada.
 Se não foi, responda este e-mail agora: a equipe ajuda a recuperar a conta.
-Quando: 12/10/2026, 14:23:20
+Quando: 12/10/2026, 12:00:00
 De onde (IP): 189.40.0.1
 
 Com carinho,

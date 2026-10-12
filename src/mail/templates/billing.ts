@@ -32,7 +32,7 @@ export function paymentApproved(
     billingPeriod?: BillingPeriod;
     amount: number;
   },
-  { say, language, site }: TemplateContext,
+  { say, language, site, now }: TemplateContext,
 ): EmailSpec {
   const teaches = data.planType === 'MENTOR' || data.planType === 'MAESTRO';
 
@@ -41,7 +41,7 @@ export function paymentApproved(
     ? BILLING_PERIOD_NAMES[language][data.billingPeriod]
     : null;
   const amount = formatBRL(data.amount, language);
-  const today = new Date().toLocaleDateString(LOCALES[language], {
+  const today = now.toLocaleDateString(LOCALES[language], {
     day: 'numeric',
     month: 'long',
     year: 'numeric',

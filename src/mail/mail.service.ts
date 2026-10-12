@@ -219,7 +219,10 @@ export class MailService {
     const language = await this.languageOf(to);
     const say: Say = (pt, en) => (language === 'en' ? en : pt);
     const { subject, html, text } = renderEmail(
-      { ...build({ say, language, site: this.site }), language },
+      {
+        ...build({ say, language, site: this.site, now: new Date() }),
+        language,
+      },
       this.site,
     );
     return { to, subject, html, text, ...extra };

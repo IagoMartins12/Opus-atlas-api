@@ -9,6 +9,8 @@ export interface TemplateContext {
   language: EmailLanguage;
   /** Base URL of the site, for links (and the email images). */
   site: string;
+  /** "Now" for dates in the text; fixed in previews and tests. */
+  now: Date;
 }
 
 export const LOCALES: Record<EmailLanguage, string> = {

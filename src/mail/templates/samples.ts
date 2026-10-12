@@ -277,7 +277,7 @@ export function renderSample(
 ): RenderedEmail {
   const say = (pt: string, en: string) => (language === 'en' ? en : pt);
   return renderEmail(
-    { ...sample.build({ say, language, site }), language },
+    { ...sample.build({ say, language, site, now }), language },
     site,
     now,
   );

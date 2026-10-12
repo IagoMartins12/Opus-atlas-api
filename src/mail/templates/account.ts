@@ -185,7 +185,7 @@ export function googleAccountResetNotice(
 
 export function passwordChanged(
   data: { firstName: string; ipAddress: string },
-  { say, language }: TemplateContext,
+  { say, language, now }: TemplateContext,
 ): EmailSpec {
   return {
     subject: say('Sua senha foi trocada', 'Your password was changed'),
@@ -208,7 +208,7 @@ export function passwordChanged(
     details: [
       {
         label: say('Quando', 'When'),
-        value: new Date().toLocaleString(LOCALES[language], {
+        value: now.toLocaleString(LOCALES[language], {
           timeZone: 'America/Sao_Paulo',
         }),
       },
@@ -318,9 +318,9 @@ export function emailChangeConfirmedToNewAddress(
 
 export function accountDeletedFarewell(
   data: { firstName: string },
-  { say, language, site }: TemplateContext,
+  { say, language, site, now }: TemplateContext,
 ): EmailSpec {
-  const when = new Date().toLocaleDateString(LOCALES[language], {
+  const when = now.toLocaleDateString(LOCALES[language], {
     timeZone: 'America/Sao_Paulo',
   });
   return {
