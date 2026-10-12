@@ -614,6 +614,9 @@ model User {
   showLocation  Boolean @default(false)
   /// Lists on the site: "cards" or "list". Visitors keep it in the browser.
   listView      String?
+  /// The site language the person chose ("pt" | "en"); emails follow it.
+  /// Missing means Portuguese.
+  language      String?
 
   // Anotações relacionadas
   workAnnotations   WorkAnnotation[]

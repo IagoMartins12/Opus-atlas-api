@@ -25,6 +25,9 @@ export type Emblema =
   | 'estrela'
   | 'lua';
 
+/** The site's two languages; Portuguese when nothing says otherwise. */
+export type EmailLanguage = 'pt' | 'en';
+
 export type FooterKind = 'conta' | 'seguranca' | 'cobranca' | 'newsletter';
 
 export interface EmailLink {
@@ -33,6 +36,8 @@ export interface EmailLink {
 }
 
 export interface EmailSpec {
+  /** Language of the layout's own words (date, signature, footer). */
+  language?: EmailLanguage;
   subject: string;
   /** The line inboxes show beside the subject. */
   preheader: string;
@@ -70,18 +75,50 @@ export interface RenderedEmail {
   text: string;
 }
 
-const FOOTERS: Record<FooterKind, string> = {
-  conta:
-    'Você recebeu este e-mail porque tem uma conta no Opus Atlas. Escolha quais avisos chegam por e-mail em Meu perfil.',
-  seguranca:
-    'Não foi você? Ignore este e-mail: nada muda na sua conta sem o clique no botão.',
-  cobranca:
-    'Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.',
-  newsletter:
-    'Você recebe esta newsletter porque se inscreveu no site do Opus Atlas.',
+/** The layout's own words, in each language. */
+const WORDS: Record<
+  EmailLanguage,
+  {
+    footers: Record<FooterKind, string>;
+    address: string;
+    locale: string;
+    closing: string;
+    team: string;
+  }
+> = {
+  pt: {
+    footers: {
+      conta:
+        'Você recebeu este e-mail porque tem uma conta no Opus Atlas. Escolha quais avisos chegam por e-mail em Meu perfil.',
+      seguranca:
+        'Não foi você? Ignore este e-mail: nada muda na sua conta sem o clique no botão.',
+      cobranca:
+        'Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.',
+      newsletter:
+        'Você recebe esta newsletter porque se inscreveu no site do Opus Atlas.',
+    },
+    address: 'opusatlas.com.br · São Paulo, Brasil',
+    locale: 'pt-BR',
+    closing: 'Com carinho,',
+    team: 'Equipe Opus Atlas',
+  },
+  en: {
+    footers: {
+      conta:
+        "You're receiving this email because you have an Opus Atlas account. Choose which notices arrive by email in My profile.",
+      seguranca:
+        "Wasn't you? Ignore this email: nothing changes in your account unless you press the button.",
+      cobranca:
+        'Billed by Stripe, in Brazilian reais. To change or cancel your plan, go to My profile → Account settings. Within 7 days of subscribing you can cancel and get your money back.',
+      newsletter:
+        'You get this newsletter because you signed up on the Opus Atlas website.',
+    },
+    address: 'opusatlas.com.br · São Paulo, Brazil',
+    locale: 'en-US',
+    closing: 'Warmly,',
+    team: 'The Opus Atlas team',
+  },
 };
-
-const ADDRESS = 'opusatlas.com.br · São Paulo, Brasil';
 
 /** Palette: the site tokens, as hex (clients ignore CSS variables). */
 const C = {
@@ -161,8 +198,8 @@ function styleFragment(html: string): string {
 
 const plain = (text: string) => text.replace(/\*\*(.+?)\*\*/g, '$1');
 
-function dateLine(now: Date): string {
-  const date = new Intl.DateTimeFormat('pt-BR', {
+function dateLine(now: Date, locale: string): string {
+  const date = new Intl.DateTimeFormat(locale, {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -250,12 +287,13 @@ export function renderEmail(
   now = new Date(),
 ): RenderedEmail {
   const base = assetsBaseUrl.replace(/\/$/, '');
-  const footer = spec.footerText ?? FOOTERS[spec.footer];
+  const words = WORDS[spec.language ?? 'pt'];
+  const footer = spec.footerText ?? words.footers[spec.footer];
   const signed = spec.signed ?? true;
   const paragraphs = spec.paragraphs ?? [];
 
   const html = `<!doctype html>
-<html lang="pt-BR">
+<html lang="${words.locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -277,7 +315,7 @@ export function renderEmail(
 
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
           <td valign="middle"><img src="${base}/email/selo.png" width="50" height="51" alt="Opus Atlas" style="display:block;"></td>
-          <td valign="middle" align="right" class="oa-f" style="font-family:${SERIF}; font-style:italic; font-size:15px; color:${C.fraco};">${escapeHtml(dateLine(now))}</td>
+          <td valign="middle" align="right" class="oa-f" style="font-family:${SERIF}; font-style:italic; font-size:15px; color:${C.fraco};">${escapeHtml(dateLine(now, words.locale))}</td>
         </tr></table>
 
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -302,7 +340,7 @@ export function renderEmail(
         }
         ${
           signed
-            ? `<p class="oa-t" style="margin:30px 0 0; font-family:${SERIF}; font-size:18px; line-height:1.35; color:${C.texto};"><span class="oa-s" style="font-style:italic; color:${C.suave};">Com carinho,</span><br>Equipe Opus Atlas</p>`
+            ? `<p class="oa-t" style="margin:30px 0 0; font-family:${SERIF}; font-size:18px; line-height:1.35; color:${C.texto};"><span class="oa-s" style="font-style:italic; color:${C.suave};">${words.closing}</span><br>${words.team}</p>`
             : ''
         }
 
@@ -317,7 +355,7 @@ ${stub(spec)}
   <tr><td align="center" class="oa-f" style="padding:28px 24px 40px; font-family:${SANS}; font-size:12.5px; line-height:1.6; color:${C.fraco};">
     <p style="margin:0;">${inline(footer)}</p>
     ${spec.unsubscribe ? `<p style="margin:10px 0 0;"><a class="oa-f" href="${escapeHtml(spec.unsubscribe.url)}" style="color:${C.fraco};">${escapeHtml(spec.unsubscribe.label)}</a></p>` : ''}
-    <p style="margin:10px 0 0;">${ADDRESS}</p>
+    <p style="margin:10px 0 0;">${words.address}</p>
   </td></tr>
 </table>
 
@@ -343,14 +381,14 @@ ${stub(spec)}
       `${p.title}. ${p.text}`,
       `${p.label}: ${p.url}`,
     ]),
-    ...(signed ? ['', 'Com carinho,', 'Equipe Opus Atlas'] : []),
+    ...(signed ? ['', words.closing, words.team] : []),
     '',
     '---',
     plain(footer),
     ...(spec.unsubscribe
       ? [`${spec.unsubscribe.label}: ${spec.unsubscribe.url}`]
       : []),
-    ADDRESS,
+    words.address,
   ].join('\n');
 
   return { subject: spec.subject, html, text };

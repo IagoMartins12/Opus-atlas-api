@@ -101,6 +101,7 @@ const ACCOUNT_SELECT = {
   profilePublic: true,
   showLocation: true,
   listView: true,
+  language: true,
   studyHorizon: true,
   currentPlan: true,
   planExpiresAt: true,
@@ -325,6 +326,14 @@ export class ProfileService {
    * perfil para quem não o tem. Os papéis são lidos do banco, não do token:
    * o token vive 15 minutos e o admin pode ter mudado o papel nesse meio.
    */
+  /** The site language the person picked; `MailService` reads it. */
+  async setLanguage(userId: string, language: 'pt' | 'en'): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { language },
+    });
+  }
+
   async update(userId: string, dto: UpdateProfileDto): Promise<ProfileView> {
     if (!dto.account && !dto.instruments && !dto.teacher && !dto.student) {
       throw new BadRequestException('Nada para atualizar');

@@ -57,6 +57,12 @@ export class ProfileAccountDto {
   @ApiProperty() showLocation: boolean;
   @ApiPropertyOptional({ nullable: true, enum: LIST_VIEWS })
   listView: ListView | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['pt', 'en'],
+    description: 'O idioma escolhido no site; `null` até a primeira escolha.',
+  })
+  language: string | null;
   @ApiProperty({ enum: PlanType }) currentPlan: PlanType;
   @ApiPropertyOptional({ nullable: true }) planExpiresAt: Date | null;
   @ApiProperty() isTrialActive: boolean;

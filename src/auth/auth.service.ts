@@ -105,6 +105,7 @@ export class AuthService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         username,
+        language: dto.language,
       },
       select: {
         id: true,

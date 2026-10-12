@@ -1,11 +1,25 @@
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
+import { PrismaService } from '../prisma/prisma.service';
 import { MailService, normalizeMessageId } from './mail.service';
 
 jest.mock('nodemailer', () => ({ createTransport: jest.fn() }));
 
 const config = (values: Record<string, unknown>) =>
   ({ get: jest.fn((key: string) => values[key]) }) as unknown as ConfigService;
+
+/** Recipients' saved language, by email; everyone else has none. */
+const prisma = (languages: Record<string, string> = {}) =>
+  ({
+    user: {
+      findUnique: jest.fn(({ where }: { where: { email: string } }) =>
+        Promise.resolve(
+          languages[where.email] ? { language: languages[where.email] } : null,
+        ),
+      ),
+    },
+    newsletterSubscriber: { findUnique: jest.fn().mockResolvedValue(null) },
+  }) as unknown as PrismaService;
 
 const smtp = {
   'mail.user': 'u',
@@ -27,7 +41,7 @@ describe('MailService — envio', () => {
   });
 
   it('sem SMTP, só registra e conta como entregue (desenvolvimento)', async () => {
-    const service = new MailService(config({}));
+    const service = new MailService(config({}), prisma());
 
     await expect(
       service.trySend({ to: 'a@x.com', subject: 's', html: '<p>oi</p>' }),
@@ -38,7 +52,7 @@ describe('MailService — envio', () => {
   });
 
   it('com SMTP, devolve o Message-ID sem os sinais, e reaproveita o transporte', async () => {
-    const service = new MailService(config(smtp));
+    const service = new MailService(config(smtp), prisma());
 
     await expect(
       service.trySend({
@@ -79,7 +93,7 @@ describe('MailService — envio', () => {
 
   // Nome livre, endereço autorizado: o domínio de envio não muda.
   it('troca só o nome do remetente, limpando caracteres de cabeçalho', async () => {
-    const service = new MailService(config(smtp));
+    const service = new MailService(config(smtp), prisma());
 
     await service.trySend({
       to: 'a',
@@ -95,6 +109,7 @@ describe('MailService — envio', () => {
 
     const semSinais = new MailService(
       config({ ...smtp, 'mail.from': 'noreply@opusatlas.com' }),
+      prisma(),
     );
     await semSinais.trySend({
       to: 'a',
@@ -107,7 +122,7 @@ describe('MailService — envio', () => {
 
   it('falha do servidor volta como não entregue; send() só registra', async () => {
     sendMail.mockRejectedValue(new Error('550 recusado'));
-    const service = new MailService(config(smtp));
+    const service = new MailService(config(smtp), prisma());
 
     await expect(
       service.trySend({ to: 'a', subject: 's', html: 'x' }),
@@ -132,7 +147,7 @@ describe('MailService — modelos', () => {
   let send: jest.SpyInstance;
 
   beforeEach(() => {
-    service = new MailService(config(smtp));
+    service = new MailService(config(smtp), prisma());
     send = jest.spyOn(service, 'send').mockResolvedValue(undefined);
   });
 
@@ -288,7 +303,7 @@ describe('MailService — boas-vindas do Google', () => {
   it('nome escapado e link para completar o perfil', async () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: '<w@opus>' });
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
-    const service = new MailService(config(smtp));
+    const service = new MailService(config(smtp), prisma());
 
     await service.sendWelcomeEmail('ana@x.com', {
       firstName: '<b>Ana</b>',
@@ -303,5 +318,40 @@ describe('MailService — boas-vindas do Google', () => {
     );
     expect(message.html).toContain('&lt;b&gt;Ana&lt;/b&gt;');
     expect(message.html).toContain('http://front/?onboarding=true');
+  });
+});
+
+describe('MailService — idioma de quem recebe', () => {
+  it('escreve em inglês para quem escolheu inglês no site', async () => {
+    const service = new MailService(
+      config(smtp),
+      prisma({ 'ana@x.com': 'en' }),
+    );
+    const send = jest.spyOn(service, 'send').mockResolvedValue(undefined);
+
+    await service.sendPasswordResetEmail('ana@x.com', {
+      firstName: 'Ana',
+      resetUrl: 'https://x/r',
+    });
+    const mail = send.mock.calls[0][0] as { subject: string; html: string };
+
+    expect(mail.subject).toBe('Your link to create a new password');
+    expect(mail.html).toContain('<html lang="en-US">');
+    expect(mail.html).toContain('The Opus Atlas team');
+    expect(mail.html).toContain('Hi, Ana.');
+  });
+
+  it('sem idioma guardado, português', async () => {
+    const service = new MailService(config(smtp), prisma());
+    const send = jest.spyOn(service, 'send').mockResolvedValue(undefined);
+
+    await service.sendPasswordResetEmail('b@x.com', {
+      firstName: 'Bia',
+      resetUrl: 'https://x/r',
+    });
+    const mail = send.mock.calls[0][0] as { subject: string; html: string };
+
+    expect(mail.subject).toBe('Seu link para criar uma nova senha');
+    expect(mail.html).toContain('Equipe Opus Atlas');
   });
 });
