@@ -145,11 +145,11 @@ describe('MailService — modelos', () => {
     [
       'sendAccountConfirmationEmail',
       { confirmationUrl: 'https://x/c' },
-      'Confirme sua conta',
+      'Confirme seu e-mail',
     ],
-    ['sendPasswordResetEmail', { resetUrl: 'https://x/r' }, 'Redefinir senha'],
-    ['sendGoogleAccountResetNotice', {}, 'login do Google'],
-    ['sendPasswordChangedEmail', { ipAddress: '1.1.1.1' }, 'Senha alterada'],
+    ['sendPasswordResetEmail', { resetUrl: 'https://x/r' }, 'nova senha'],
+    ['sendGoogleAccountResetNotice', {}, 'Google'],
+    ['sendPasswordChangedEmail', { ipAddress: '1.1.1.1' }, 'senha foi trocada'],
     [
       'sendEmailChangeRequestEmail',
       { confirmationUrl: 'https://x/e' },
@@ -158,10 +158,10 @@ describe('MailService — modelos', () => {
     [
       'sendEmailChangedToOldAddress',
       { newEmail: 'novo@x.com' },
-      'foi alterado',
+      'e-mail da sua conta mudou',
     ],
-    ['sendEmailChangeConfirmedToNewAddress', {}, 'confirmado'],
-    ['sendAccountDeletedFarewellEmail', {}, 'Até logo'],
+    ['sendEmailChangeConfirmedToNewAddress', {}, 'e-mail da sua conta'],
+    ['sendAccountDeletedFarewellEmail', {}, 'excluída'],
     ['sendContactConfirmationEmail', { ticketId: 'CH-1' }, 'CH-1'],
     [
       'sendNewsletterConfirmationEmail',
@@ -185,7 +185,7 @@ describe('MailService — modelos', () => {
         acceptUrl: 'https://x/a',
         declineUrl: 'https://x/d',
       },
-      'Convite',
+      'convidou você',
     ],
     [
       'sendSubscriptionCancelledEmail',
@@ -221,14 +221,14 @@ describe('MailService — modelos', () => {
       amount: 1234.5,
     });
     expect(lastHtml()).toMatch(/R\$\s?1\.234,50/);
-    expect(lastHtml()).toContain('(Anual)');
+    expect(lastHtml()).toContain('Anual');
 
     await service.sendPaymentApprovedEmail('a@x.com', {
       firstName: 'Ana',
       planType: 'PLUS',
       amount: 10,
     });
-    expect(lastHtml()).not.toContain('(Mensal)');
+    expect(lastHtml()).not.toContain('Período');
   });
 
   it('troca de plano: upgrade confirmado ou downgrade agendado', async () => {
@@ -238,7 +238,7 @@ describe('MailService — modelos', () => {
       toPlan: 'MAESTRO',
       changeType: 'UPGRADE',
     });
-    expect(lastSubject()).toContain('Upgrade confirmado');
+    expect(lastSubject()).toBe('Seu plano agora é Maestro');
 
     await service.sendPlanChangedEmail('a', {
       firstName: 'Ana',
@@ -246,7 +246,7 @@ describe('MailService — modelos', () => {
       toPlan: 'PLUS',
       changeType: 'DOWNGRADE',
     });
-    expect(lastSubject()).toContain('Downgrade agendado');
+    expect(lastSubject()).toBe('Troca para Plus agendada');
   });
 
   it('lembrete de renovação traz data e valor', async () => {
@@ -297,7 +297,10 @@ describe('MailService — boas-vindas do Google', () => {
 
     const [message] = sendMail.mock.calls[0];
     expect(message.to).toBe('ana@x.com');
-    expect(message.subject).toContain('Bem-vindo');
+    expect(message.subject).toBe('Sua estante no Opus Atlas está pronta');
+    expect(message.text).toContain(
+      'Completar meu perfil: http://front/?onboarding=true',
+    );
     expect(message.html).toContain('&lt;b&gt;Ana&lt;/b&gt;');
     expect(message.html).toContain('http://front/?onboarding=true');
   });

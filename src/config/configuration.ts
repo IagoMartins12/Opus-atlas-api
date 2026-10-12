@@ -154,6 +154,12 @@ export const appConfiguration = () => ({
     from: process.env.EMAIL_FROM ?? 'Opus Atlas <noreply@opusatlas.com>',
     replyTo: process.env.EMAIL_REPLY_TO ?? 'contato@opusatlas.com',
     /**
+     * Where the email images (seal, emblems) are served: the site's public
+     * folder (`Classical-Music/public/email`). Email clients fetch them by
+     * absolute URL.
+     */
+    assetsBaseUrl: process.env.FRONTEND_BASE_URL ?? 'http://localhost:3000',
+    /**
      * Segredo de assinatura do webhook de entrega (Svix, usado pelo Resend).
      *
      * Sem ele a rota recusa tudo: não há como distinguir o provedor de um
