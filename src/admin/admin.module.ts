@@ -54,6 +54,7 @@ import { AdminUsersController } from './users/admin-users.controller';
 import { AdminUsersService } from './users/admin-users.service';
 import { TeacherInvitationService } from './users/teacher-invitation.service';
 import { BillingModule } from '../billing/billing.module';
+import { AdminMailController } from './mail/admin-mail.controller';
 import { TeacherInvitationsController } from './users/teacher-invitations.controller';
 
 /**
@@ -83,6 +84,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminSubscriptionsController,
     AdminNewsletterController,
     AdminTemplatesController,
+    AdminMailController,
     AdminMetricsController,
     AdminReportsController,
     AdminOperationsController,
