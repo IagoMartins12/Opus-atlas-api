@@ -273,4 +273,26 @@ describe('CollectionsService', () => {
     });
     expect(found.map((e) => e.title)).toEqual(['Edição Mikuli', 'Urtext']);
   });
+
+  it('obras de um compositor, sem precisar digitar', async () => {
+    prisma.work.findMany
+      .mockResolvedValueOnce([{ id: 'w-1' }])
+      .mockResolvedValueOnce([
+        {
+          id: 'w-1',
+          title: 'Nocturnes',
+          opOrCatalog: 'Op.9',
+          composer: null,
+          instrument: null,
+        },
+      ]);
+
+    const found = await service.candidates({ kind: 'WORK', composerId: 'c-1' });
+
+    expect(prisma.work.findMany.mock.calls[0][0].where).toEqual({
+      composerId: 'c-1',
+      parentWorkId: null,
+    });
+    expect(found[0].title).toBe('Nocturnes');
+  });
 });

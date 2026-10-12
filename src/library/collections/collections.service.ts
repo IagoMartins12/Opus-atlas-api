@@ -295,6 +295,23 @@ export class CollectionsService {
       return ids.flatMap((id) => entries.get(id) ?? []);
     }
     const q = query.q?.trim() ?? '';
+    if (query.kind === CollectionKind.WORK && query.composerId) {
+      // Narrowed to one composer: their works matching what was typed, or
+      // the ones with the most scores when nothing was typed yet.
+      const works = await this.prisma.work.findMany({
+        where: {
+          composerId: query.composerId,
+          parentWorkId: null,
+          ...(q && { title: { contains: q, mode: 'insensitive' } }),
+        },
+        orderBy: { cachedScores: { _count: 'desc' } },
+        select: { id: true },
+        take: CANDIDATES,
+      });
+      const ids = works.map((w) => w.id);
+      const entries = await this.resolve(CollectionKind.WORK, ids);
+      return ids.flatMap((id) => entries.get(id) ?? []);
+    }
     if (q.length < 2) return [];
     let ids: string[];
     if (query.kind === CollectionKind.COMPOSER) {

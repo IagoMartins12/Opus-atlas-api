@@ -114,4 +114,12 @@ export class CandidatesQueryDto {
   @IsOptional()
   @IsMongoId()
   workId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Obras: só as deste compositor (filtro opcional; sem `q`, as mais completas dele).',
+  })
+  @IsOptional()
+  @IsMongoId()
+  composerId?: string;
 }
