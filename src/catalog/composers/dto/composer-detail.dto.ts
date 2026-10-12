@@ -61,6 +61,14 @@ export class ComposerDetailDto {
   })
   bioGeneratedByAi: boolean;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['pt', 'en'],
+    description:
+      'Idioma original da biografia quando a do outro idioma é tradução automática ainda não revisada',
+  })
+  bioTranslatedFrom?: 'pt' | 'en' | null;
+
   @ApiPropertyOptional({ nullable: true })
   permLinkImslp?: string;
 

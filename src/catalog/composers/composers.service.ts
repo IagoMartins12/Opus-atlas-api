@@ -251,6 +251,7 @@ const COMPOSER_DETAIL_SELECT = {
   bio: true,
   bioEn: true,
   bioGeneratedBy: true,
+  bioTranslatedFrom: true,
   roles: true,
   permLinkImslp: true,
   wikipediaLink: true,
@@ -749,6 +750,11 @@ export class ComposersService {
       bio: this.normalizeOptionalString(composer.bio),
       bioEn: this.normalizeOptionalString(composer.bioEn),
       bioGeneratedByAi: Boolean(composer.bioGeneratedBy),
+      bioTranslatedFrom:
+        composer.bioTranslatedFrom === 'pt' ||
+        composer.bioTranslatedFrom === 'en'
+          ? composer.bioTranslatedFrom
+          : null,
       permLinkImslp: this.normalizeOptionalString(composer.permLinkImslp),
       wikipediaLink: this.normalizeOptionalString(composer.wikipediaLink),
       epochId: composer.epochId,

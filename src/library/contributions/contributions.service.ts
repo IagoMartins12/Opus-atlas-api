@@ -20,6 +20,7 @@ import {
 import { composerDateParts } from '../../common/dates/loose-date';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { ComposerBioService } from '../../catalog/composers/composer-bio.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   ContributableEntity,
@@ -76,6 +77,7 @@ export class ContributionsService {
     private readonly cache: AppCacheService,
     private readonly activity: ActivityTracker,
     private readonly notifications: NotificationsService,
+    private readonly bios: ComposerBioService,
   ) {}
 
   async contribute(userId: string, dto: CreateContributionDto) {
@@ -99,7 +101,12 @@ export class ContributionsService {
       throw new BadRequestException('O valor enviado é igual ao atual.');
     }
 
+    const translation =
+      dto.entityType === 'composer' && rule.kind === ContributionKind.BIO
+        ? await this.planTranslation(dto.entityId, dto.field)
+        : null;
     await this.writeField(dto.entityType, dto.entityId, dto.field, value);
+    if (translation) void this.translateBio(dto.entityId, value, translation);
     const xp = await this.xpFor(userId, rule.kind);
     const contribution = await this.prisma.contribution.create({
       data: {
@@ -376,6 +383,59 @@ export class ContributionsService {
 
   // -------------------------------------------------------------------
 
+  /**
+   * After a person writes the biography in one language: whether to fill the
+   * other one by machine translation. Yes when it is empty or itself a
+   * machine translation; no when a person wrote it. Writing the language
+   * that was translated counts as reviewing it, and clears the mark.
+   */
+  private async planTranslation(
+    composerId: string,
+    field: string,
+  ): Promise<{ from: 'pt' | 'en'; to: 'pt' | 'en'; other: string } | null> {
+    const from = field === 'bio' ? 'pt' : 'en';
+    const to = from === 'pt' ? 'en' : 'pt';
+    const other = from === 'pt' ? 'bioEn' : 'bio';
+    const row = await this.prisma.composer.findUnique({
+      where: { id: composerId },
+      select: { bio: true, bioEn: true, bioTranslatedFrom: true },
+    });
+    if (!row) return null;
+    if (row.bioTranslatedFrom === to) {
+      await this.prisma.composer.update({
+        where: { id: composerId },
+        data: { bioTranslatedFrom: null },
+      });
+      return null;
+    }
+    const otherText = from === 'pt' ? row.bioEn : row.bio;
+    return !otherText || row.bioTranslatedFrom === from
+      ? { from, to, other }
+      : null;
+  }
+
+  /**
+   * Fills the other language in the background; a failure leaves it as it
+   * was (the contribution itself already stands).
+   */
+  private async translateBio(
+    composerId: string,
+    text: string,
+    plan: { from: 'pt' | 'en'; to: 'pt' | 'en'; other: string },
+  ): Promise<void> {
+    try {
+      const translated = await this.bios.translateText(text, plan.to);
+      if (!translated) return;
+      await this.prisma.composer.update({
+        where: { id: composerId },
+        data: { [plan.other]: translated, bioTranslatedFrom: plan.from },
+      });
+      await this.cache.invalidateMany(CATALOG_NAMESPACES);
+    } catch {
+      // No provider configured or the call failed: nothing to undo.
+    }
+  }
+
   private async assertVerified(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -444,10 +504,15 @@ export class ContributionsService {
     value: string | null,
   ): Promise<void> {
     if (entityType === 'work') {
-      await this.prisma.work.update({
-        where: { id: entityId },
-        data: { [field]: value },
-      });
+      const data: Prisma.WorkUpdateInput = { [field]: value };
+      // The player reads the id; the link and title follow it.
+      if (field === 'youtubeVideoId') {
+        data.youtubeVideoUrl = value
+          ? `https://www.youtube.com/watch?v=${value}`
+          : null;
+        data.youtubeTitle = null;
+      }
+      await this.prisma.work.update({ where: { id: entityId }, data });
       return;
     }
     const data: Prisma.ComposerUpdateInput = { [field]: value };

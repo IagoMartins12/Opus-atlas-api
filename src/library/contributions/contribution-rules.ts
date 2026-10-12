@@ -43,6 +43,13 @@ const video: FieldRule = {
   hint: 'Envie um link do YouTube.',
 };
 
+/** The same link, kept as the video id the work's player reads. */
+const workVideo: FieldRule = {
+  kind: ContributionKind.VIDEO,
+  normalize: (value) => value.match(YOUTUBE_ID)?.[1] ?? null,
+  hint: 'Envie um link do YouTube.',
+};
+
 const short = (max: number): FieldRule => ({
   kind: ContributionKind.CORRECTION,
   normalize: text(1, max),
@@ -81,6 +88,7 @@ export const CONTRIBUTABLE_FIELDS: Record<
     wikipediaLink: wikipedia,
   },
   work: {
+    youtubeVideoId: workVideo,
     compositionYear: short(40),
     firstPublishDate: short(40),
     tone: short(40),

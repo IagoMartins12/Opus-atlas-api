@@ -87,6 +87,13 @@ export const TRANSLATION_SYSTEM = [
   'Keep the paragraph breaks. Answer with the translation only.',
 ].join(' ');
 
+/** The way back, for a biography a person wrote in English. */
+export const TRANSLATION_TO_PT_SYSTEM = [
+  'You translate English encyclopedia entries about classical music into Brazilian Portuguese.',
+  'Translate faithfully: do not add, remove or correct facts.',
+  'Keep the paragraph breaks. Answer with the translation only.',
+].join(' ');
+
 export function translationPrompt(text: string): string {
   return text;
 }

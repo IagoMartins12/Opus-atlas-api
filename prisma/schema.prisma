@@ -897,6 +897,9 @@ model Composer {
   // quando alguém escreveu ou revisou. É o que permite ao front avisar.
   bioGeneratedBy  String?
   bioGeneratedAt  DateTime?
+  /// The biography's original language ("pt" | "en") when the other one is
+  /// a machine translation nobody reviewed yet. Null: both written by people.
+  bioTranslatedFrom String?
   /// "Por onde começar" chosen by the team, in order (up to three); the
   /// page completes them with the automatic picks.
   startingWorkIds String[]  @default([]) @db.ObjectId

@@ -21,6 +21,7 @@ import {
   cleanBio,
   hasBio,
   TRANSLATION_SYSTEM,
+  TRANSLATION_TO_PT_SYSTEM,
   translationPrompt,
 } from './composer-bio.prompt';
 
@@ -227,11 +228,15 @@ export class ComposerBioService {
     };
   }
 
-  /** Traduz para o inglês um texto em português do formulário, sem gravar. */
-  async translateText(portuguese: string): Promise<string> {
+  /**
+   * Traduz um texto sem gravar: português → inglês (o padrão, o do
+   * formulário) ou inglês → português (`to: 'pt'`, a biografia contribuída
+   * em inglês).
+   */
+  async translateText(text: string, to: BioLanguage = 'en'): Promise<string> {
     const completion = await this.call({
-      system: TRANSLATION_SYSTEM,
-      prompt: translationPrompt(portuguese),
+      system: to === 'en' ? TRANSLATION_SYSTEM : TRANSLATION_TO_PT_SYSTEM,
+      prompt: translationPrompt(text),
       maxTokens: TRANSLATION_MAX_TOKENS,
     });
 

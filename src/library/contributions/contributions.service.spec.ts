@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { NOT_HIDDEN } from '../../common/database/optional-fields';
+import { ComposerBioService } from '../../catalog/composers/composer-bio.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -24,6 +25,7 @@ const author = {
 const longBio = 'Uma biografia revista com cuidado. '.repeat(12);
 
 describe('ContributionsService', () => {
+  let bios: { translateText: jest.Mock };
   let service: ContributionsService;
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
@@ -99,6 +101,7 @@ describe('ContributionsService', () => {
     activity = { track: jest.fn() };
     notifications = { notify: jest.fn().mockResolvedValue(undefined) };
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
+    bios = { translateText: jest.fn().mockResolvedValue('Translated story.') };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -107,6 +110,7 @@ describe('ContributionsService', () => {
         { provide: AppCacheService, useValue: cache },
         { provide: ActivityTracker, useValue: activity },
         { provide: NotificationsService, useValue: notifications },
+        { provide: ComposerBioService, useValue: bios },
       ],
     }).compile();
     service = module.get(ContributionsService);
@@ -143,6 +147,71 @@ describe('ContributionsService', () => {
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(result.xpGranted).toBe(false);
       expect(result.author.name).toBe('Clara Schumann');
+    });
+
+    // A outra língua vazia: a tradução automática a preenche, marcada.
+    it('traduz a biografia para a outra língua quando ela está vazia', async () => {
+      await service.contribute('user-1', bio);
+      await new Promise((r) => setImmediate(r));
+
+      expect(bios.translateText).toHaveBeenCalledWith(longBio.trim(), 'en');
+      expect(prisma.composer.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { bioEn: 'Translated story.', bioTranslatedFrom: 'pt' },
+      });
+    });
+
+    // Uma pessoa escreveu as duas: nada é traduzido por cima.
+    it('não traduz por cima de texto escrito por uma pessoa', async () => {
+      prisma.composer.findUnique.mockResolvedValue({
+        id: 'c-1',
+        bio: 'Antiga',
+        bioEn: 'Written by someone.',
+        bioTranslatedFrom: null,
+      });
+
+      await service.contribute('user-1', bio);
+      await new Promise((r) => setImmediate(r));
+
+      expect(bios.translateText).not.toHaveBeenCalled();
+    });
+
+    // Escrever a língua que era tradução conta como revisão.
+    it('tira a marca de tradução quando alguém escreve a língua traduzida', async () => {
+      prisma.composer.findUnique.mockResolvedValue({
+        id: 'c-1',
+        bio: 'Antiga',
+        bioEn: 'Machine text.',
+        bioTranslatedFrom: 'en',
+      });
+
+      await service.contribute('user-1', bio);
+
+      expect(prisma.composer.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { bioTranslatedFrom: null },
+      });
+      expect(bios.translateText).not.toHaveBeenCalled();
+    });
+
+    it('aceita vídeo do YouTube na obra, guardado como id', async () => {
+      prisma.work.findUnique.mockResolvedValue({ youtubeVideoId: null });
+
+      await service.contribute('user-1', {
+        entityType: 'work',
+        entityId: 'w-1',
+        field: 'youtubeVideoId',
+        value: 'https://youtu.be/dQw4w9WgXcQ',
+      });
+
+      expect(prisma.work.update).toHaveBeenCalledWith({
+        where: { id: 'w-1' },
+        data: {
+          youtubeVideoId: 'dQw4w9WgXcQ',
+          youtubeVideoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          youtubeTitle: null,
+        },
+      });
     });
 
     it('exige e-mail confirmado', async () => {

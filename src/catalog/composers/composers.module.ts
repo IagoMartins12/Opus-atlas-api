@@ -16,6 +16,6 @@ import { ComposersService } from './composers.service';
     ComposerOverviewService,
     ComposerOnThisDayService,
   ],
-  exports: [ComposersService],
+  exports: [ComposersService, ComposerBioService],
 })
 export class ComposersModule {}
