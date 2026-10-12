@@ -66,11 +66,12 @@ describe('ComposerOverviewService', () => {
 
     const overview = await service.getOverview('c');
 
-    // All four fit in the pool of ten; ordered by difficulty, top three.
+    // All four fit in the pool of ten and in the five sent, by difficulty.
     expect(overview.startingPoints.map((s) => s.id)).toEqual([
       'easy-unknown',
       'easy-popular',
       'mid-popular',
+      'hard-popular',
     ]);
     expect(overview.startingPoints[1]).toMatchObject({
       difficulty: 2,
@@ -113,6 +114,7 @@ describe('ComposerOverviewService', () => {
       ['hard-popular', true],
       ['easy-unknown', false],
       ['easy-popular', false],
+      ['mid-popular', false],
     ]);
   });
 

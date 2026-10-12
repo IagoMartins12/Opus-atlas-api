@@ -30,7 +30,9 @@ const WORK_SELECT = {
   id: true,
   title: true,
   opOrCatalog: true,
-  composer: { select: { name: true, fullName: true } },
+  composer: {
+    select: { id: true, name: true, fullName: true, portraitUrl: true },
+  },
 } as const;
 
 const WORK_SELECT_WITH_INSTRUMENT = {

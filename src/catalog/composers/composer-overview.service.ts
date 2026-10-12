@@ -12,7 +12,12 @@ import {
 
 const OVERVIEW_TTL_MS = 60 * 60 * 1000;
 const WRITTEN_FOR_LIMIT = 5;
-const STARTING_POINTS = 3;
+/**
+ * Works sent for "where to start". The site shows as many as fit the
+ * person's study horizon (two for months, up to five for a lifetime), so the
+ * cached answer carries the most anyone needs.
+ */
+const STARTING_POINTS = 5;
 /** Candidates for "where to start" before ordering by difficulty. */
 const STARTING_POOL = 10;
 const CONTEMPORARIES = 15;
