@@ -13,11 +13,12 @@ import {
 import { buildIdempotencyKey } from '../../common/queue/job-contract';
 import { audienceWhere } from './newsletter-audience';
 import {
+  CampaignContent,
   CampaignVariables,
-  ensureUnsubscribe,
   KNOWN_VARIABLES,
-  render,
+  personalize,
   resolveContent,
+  sampleVariables,
   unknownVariables,
 } from './campaign-content';
 
@@ -286,17 +287,11 @@ export class NewsletterDispatchService {
         year: String(new Date().getFullYear()),
       };
 
-      const body = ensureUnsubscribe(
-        render(content.html, variables, 'html'),
-        render(content.text, variables, 'text'),
-        variables.unsubscribeUrl,
-      );
+      const email = personalize(content, variables, this.siteUrl());
 
       const result = await this.mail.trySend({
         to: subscriber.email,
-        subject: render(content.subject, variables, 'text'),
-        html: body.html,
-        text: body.text,
+        ...email,
         fromName: campaign.senderName,
         replyTo: campaign.replyToEmail ?? undefined,
         // Descadastro em um clique, direto pelo cliente de e-mail. É o que os
@@ -502,6 +497,12 @@ export class NewsletterDispatchService {
     }
 
     return urls;
+  }
+
+  /** The email as a made-up subscriber would receive it. */
+  preview(content: CampaignContent) {
+    const site = this.siteUrl();
+    return personalize(content, sampleVariables(site), site);
   }
 
   private siteUrl(): string {

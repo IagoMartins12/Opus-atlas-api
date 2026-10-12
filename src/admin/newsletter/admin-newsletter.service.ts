@@ -13,6 +13,7 @@ import { toCsv } from '../../common/utils/csv.util';
 import { toJsonInput } from '../../common/utils/json.util';
 import { audienceWhere, readSegments } from './newsletter-audience';
 import { deliveryRate } from './newsletter-rates';
+import { resolveContent } from './campaign-content';
 import {
   CreateCampaignDto,
   ListCampaignsQueryDto,
@@ -307,6 +308,7 @@ export class AdminNewsletterService {
       select: {
         id: true,
         subject: true,
+        customSubject: true,
         customHtmlContent: true,
         customTextContent: true,
         template: { select: { htmlContent: true, textContent: true } },
@@ -317,19 +319,18 @@ export class AdminNewsletterService {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    const html = campaign.customHtmlContent ?? campaign.template?.htmlContent;
-
-    if (!html) {
+    if (!campaign.customHtmlContent && !campaign.template) {
       throw new BadRequestException(
         'A campanha não tem template nem conteúdo próprio para enviar',
       );
     }
 
+    const email = this.dispatch.preview(resolveContent(campaign));
+
     await this.mail.send({
       to: dto.to,
-      subject: `[TESTE] ${campaign.subject}`,
-      html,
-      text: campaign.customTextContent ?? campaign.template?.textContent ?? '',
+      ...email,
+      subject: `[TESTE] ${email.subject}`,
     });
 
     await this.prisma.newsletterCampaign.update({

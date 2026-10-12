@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EmailTemplateType } from '@prisma/client';
+import { NewsletterDispatchService } from './newsletter-dispatch.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdminTemplatesService } from './admin-templates.service';
 
@@ -98,6 +99,7 @@ describe('AdminTemplatesService', () => {
       providers: [
         AdminTemplatesService,
         { provide: PrismaService, useValue: prisma },
+        { provide: NewsletterDispatchService, useValue: {} },
       ],
     }).compile();
 

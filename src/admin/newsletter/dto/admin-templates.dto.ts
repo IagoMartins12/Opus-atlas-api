@@ -63,6 +63,25 @@ export class ListTemplatesQueryDto {
   search?: string;
 }
 
+/** What the admin is writing, to see it as subscribers will. */
+export class PreviewTemplateDto {
+  @ApiProperty({ example: 'Novidades do acervo, {{firstName}}' })
+  @IsString()
+  @MaxLength(200)
+  subject: string;
+
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200_000)
+  htmlContent: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100_000)
+  textContent?: string;
+}
+
 export class CreateTemplateDto {
   @ApiProperty({ example: 'Boas-vindas' })
   @IsString()

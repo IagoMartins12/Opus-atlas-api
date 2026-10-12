@@ -37,6 +37,7 @@ import {
   NewsletterAnalyticsQueryDto,
   UpdateTemplateDto,
   UpdateTestListDto,
+  PreviewTemplateDto,
 } from './dto/admin-templates.dto';
 
 /**
@@ -85,6 +86,19 @@ export class AdminTemplatesController {
   @ApiNotFoundResponse({ type: ErrorResponseDto })
   async analyze(@Param('id') id: string) {
     return this.service.analyzeTemplate(id);
+  }
+
+  @Post('templates/preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Prévia de um template',
+    description:
+      'Devolve assunto, HTML e texto como um assinante de exemplo receberia: ' +
+      'variáveis preenchidas e o corpo dentro do layout dos e-mails.',
+  })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  previewTemplate(@Body() dto: PreviewTemplateDto) {
+    return this.service.previewTemplate(dto);
   }
 
   @Post('templates')

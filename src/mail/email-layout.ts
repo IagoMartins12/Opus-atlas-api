@@ -36,9 +36,16 @@ export interface EmailSpec {
   subject: string;
   /** The line inboxes show beside the subject. */
   preheader: string;
-  title: string;
+  /** Optional only for a `body` that opens with its own `<h1>`. */
+  title?: string;
   /** Plain text; `**bold**` becomes bold. Escaped by the renderer. */
-  paragraphs: string[];
+  paragraphs?: string[];
+  /**
+   * Content written in the admin panel (newsletter campaigns), in place of
+   * the paragraphs. Trusted HTML: only super admins write it. Bare `h1`,
+   * `h2`, `p`, `ul`, `li`, `blockquote` and `hr` take the letter's styles.
+   */
+  body?: { html: string; text: string };
   emblem: Emblema;
   action?: EmailLink;
   /** A quiet second link under the button ("Recusar"). */
@@ -125,6 +132,31 @@ const STYLE = `
 /** Escape, then `**bold**` → <strong>. */
 function inline(text: string): string {
   return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+const RULE = `<table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:22px auto 0;"><tr><td class="oa-rule" width="56" style="border-top:1px solid ${C.filete}; font-size:0; line-height:0;">&nbsp;</td></tr></table>`;
+
+const H1 = `class="oa-h1 oa-t" style="margin:24px 0 0; text-align:center; font-family:${SERIF}; font-weight:500; font-size:38px; line-height:1.08; color:${C.texto};"`;
+
+/** Inline styles for the bare tags of admin-written HTML. */
+const FRAGMENT_TAGS: Record<string, string> = {
+  h2: `class="oa-t" style="margin:30px 0 0; font-family:${SERIF}; font-weight:500; font-size:26px; line-height:1.2; color:${C.texto};"`,
+  h3: `class="oa-t" style="margin:24px 0 0; font-family:${SERIF}; font-weight:500; font-size:21px; line-height:1.3; color:${C.texto};"`,
+  p: `class="oa-s" style="margin:16px 0 0; font-family:${SERIF}; font-size:19px; line-height:1.55; color:${C.suave};"`,
+  ul: `class="oa-s" style="margin:16px 0 0; padding-left:22px; font-family:${SERIF}; font-size:19px; line-height:1.55; color:${C.suave};"`,
+  ol: `class="oa-s" style="margin:16px 0 0; padding-left:22px; font-family:${SERIF}; font-size:19px; line-height:1.55; color:${C.suave};"`,
+  li: `style="margin:6px 0 0;"`,
+  blockquote: `class="oa-t oa-rule" style="margin:22px 0 0; padding:2px 0 2px 18px; border-left:2px solid ${C.filete}; font-family:${SERIF}; font-style:italic; font-size:20px; line-height:1.5; color:${C.texto};"`,
+};
+
+function styleFragment(html: string): string {
+  return html
+    .replace(/<h1>([\s\S]*?)<\/h1>/gi, `<h1 ${H1}>$1</h1>${RULE}`)
+    .replace(
+      /<(h2|h3|p|ul|ol|li|blockquote)>/gi,
+      (_m, tag: string) => `<${tag} ${FRAGMENT_TAGS[tag.toLowerCase()]}>`,
+    )
+    .replace(/<hr\s*\/?>/gi, RULE);
 }
 
 const plain = (text: string) => text.replace(/\*\*(.+?)\*\*/g, '$1');
@@ -220,6 +252,7 @@ export function renderEmail(
   const base = assetsBaseUrl.replace(/\/$/, '');
   const footer = spec.footerText ?? FOOTERS[spec.footer];
   const signed = spec.signed ?? true;
+  const paragraphs = spec.paragraphs ?? [];
 
   const html = `<!doctype html>
 <html lang="pt-BR">
@@ -251,10 +284,10 @@ export function renderEmail(
           <td align="center" style="padding:26px 0 0;"><img class="oa-emblem" src="${base}/email/emblema-${spec.emblem}.png" width="116" height="116" alt="" style="display:block;"></td>
         </tr></table>
 
-        <h1 class="oa-h1 oa-t" style="margin:24px 0 0; text-align:center; font-family:${SERIF}; font-weight:500; font-size:38px; line-height:1.08; color:${C.texto};">${escapeHtml(spec.title)}</h1>
-        <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:22px auto 0;"><tr><td class="oa-rule" width="56" style="border-top:1px solid ${C.filete}; font-size:0; line-height:0;">&nbsp;</td></tr></table>
+        ${spec.title ? `<h1 ${H1}>${escapeHtml(spec.title)}</h1>\n        ${RULE}` : ''}
 
-        ${spec.paragraphs
+        ${spec.body ? styleFragment(spec.body.html) : ''}
+        ${paragraphs
           .map(
             (p, i) =>
               `<p class="${i === 0 ? 'oa-t' : 'oa-s'}" style="margin:16px 0 0; font-family:${SERIF}; font-size:19px; line-height:1.55; color:${i === 0 ? C.texto : C.suave}; white-space:pre-line;">${inline(p)}</p>`,
@@ -294,9 +327,9 @@ ${stub(spec)}
 </html>`;
 
   const text = [
-    spec.title,
-    '',
-    ...spec.paragraphs.map(plain),
+    ...(spec.title ? [spec.title, ''] : []),
+    ...(spec.body ? [spec.body.text] : []),
+    ...paragraphs.map(plain),
     ...(spec.action ? ['', `${spec.action.label}: ${spec.action.url}`] : []),
     ...(spec.secondary
       ? [`${spec.secondary.label}: ${spec.secondary.url}`]

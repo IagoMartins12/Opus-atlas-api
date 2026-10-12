@@ -1,4 +1,5 @@
 import { escapeHtml } from '../../common/utils/html.util';
+import { renderEmail, type RenderedEmail } from '../../mail/email-layout';
 
 /**
  * Resolução e personalização do conteúdo de uma campanha.
@@ -174,6 +175,56 @@ export function ensureUnsubscribe(
     html: `${html}${footerHtml}`,
     text: `${text}\n\nCancelar inscrição: ${unsubscribeUrl}`,
   };
+}
+
+/** Variables for previews and test sends: a made-up subscriber. */
+export function sampleVariables(siteUrl: string): CampaignVariables {
+  return {
+    firstName: 'Ana',
+    lastName: 'Ribeiro',
+    email: 'ana@exemplo.com',
+    unsubscribeUrl: `${siteUrl}/newsletter/unsubscribe/exemplo`,
+    siteUrl,
+    campaignName: 'Prévia',
+    year: String(new Date().getFullYear()),
+  };
+}
+
+/**
+ * The email one subscriber receives: variables filled in, then the Opus
+ * letter (layout D) around the body, with the unsubscribe link in its
+ * footer. A full HTML document from the legacy editor goes out as written,
+ * with the unsubscribe footer appended when missing.
+ */
+export function personalize(
+  content: CampaignContent,
+  variables: CampaignVariables,
+  assetsBaseUrl: string,
+): RenderedEmail {
+  const subject = render(content.subject, variables, 'text');
+  const html = render(content.html, variables, 'html');
+  const text = render(content.text, variables, 'text');
+
+  if (/<html[\s>]/i.test(content.html)) {
+    return {
+      subject,
+      ...ensureUnsubscribe(html, text, variables.unsubscribeUrl),
+    };
+  }
+
+  return renderEmail(
+    {
+      subject,
+      preheader: text.split('\n').find((line) => line.trim()) ?? '',
+      body: { html, text },
+      emblem: 'lua',
+      footer: 'newsletter',
+      unsubscribe: variables.unsubscribeUrl
+        ? { label: 'Cancelar a inscrição', url: variables.unsubscribeUrl }
+        : undefined,
+    },
+    assetsBaseUrl,
+  );
 }
 
 function htmlToText(html: string): string {
