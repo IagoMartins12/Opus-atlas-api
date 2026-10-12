@@ -13,6 +13,7 @@
  *
  * Uso: `npm run build && node --env-file=.env.local dist/scripts/seed-blog.js`
  */
+import { escapeRegex } from '../common/utils/regex.util';
 import { PrismaClient, Prisma } from '@prisma/client';
 
 const DOMINIO = '@seed.opusatlas.local';
@@ -852,7 +853,7 @@ async function main() {
           const obra = await prisma.work.findFirst({
             where: {
               composerId: compositor.id,
-              title: { contains: trecho, mode: 'insensitive' },
+              title: { contains: escapeRegex(trecho), mode: 'insensitive' },
             },
             select: { id: true },
           });

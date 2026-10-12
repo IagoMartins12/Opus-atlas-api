@@ -1,3 +1,4 @@
+import { escapeRegex } from '../../common/utils/regex.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -302,7 +303,9 @@ export class CollectionsService {
         where: {
           composerId: query.composerId,
           parentWorkId: null,
-          ...(q && { title: { contains: q, mode: 'insensitive' } }),
+          ...(q && {
+            title: { contains: escapeRegex(q), mode: 'insensitive' },
+          }),
         },
         orderBy: { cachedScores: { _count: 'desc' } },
         select: { id: true },

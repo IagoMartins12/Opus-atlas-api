@@ -896,10 +896,13 @@ export class ComposersService {
     const and: Prisma.ComposerWhereInput[] = [IS_COMPOSER];
 
     if (filters.search) {
-      const terms = filters.search.split(/\s+/).map(escapeRegex);
+      const terms = filters.search.split(/\s+/);
       const allIn = (field: 'name' | 'fullName' | 'alternativeNames') => ({
         AND: terms.map((term) => ({
-          [field]: { contains: term, mode: 'insensitive' as const },
+          [field]: {
+            contains: escapeRegex(term),
+            mode: 'insensitive' as const,
+          },
         })),
       });
       and.push({
