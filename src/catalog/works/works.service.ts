@@ -39,6 +39,7 @@ import {
   WorkScoresResponseDto,
 } from './dto/work-score-item.dto';
 import { errorMessage } from '../../common/utils/error.util';
+import { instrumentKind } from '../instruments/instrument-kind';
 import { TextIndexService } from '../../common/search/text-index.service';
 
 /** Select Prisma reaproveitado em toda query de listagem/detalhe de obra —
@@ -735,7 +736,7 @@ export class WorksService {
 
   async getFilterOptions(): Promise<WorkFilterOptionsResponseDto> {
     return this.appCache.remember(
-      `${CacheNamespace.WORKS}:filter-options:v1`,
+      `${CacheNamespace.WORKS}:filter-options:v2`,
       {
         ttlMs: WORK_FILTER_OPTIONS_CACHE_TTL_MS,
         hotTtlMs: WORK_HOT_CACHE_TTL_MS,
@@ -828,7 +829,12 @@ export class WorksService {
       ]);
 
     return {
-      instruments: instruments.map((item) => this.toFilterOptionItem(item)),
+      instruments: instruments
+        .filter((item) => instrumentKind(item.name) === 'instrument')
+        .map((item) => this.toFilterOptionItem(item)),
+      ensembles: instruments
+        .filter((item) => instrumentKind(item.name) === 'ensemble')
+        .map((item) => this.toFilterOptionItem(item)),
       epochs: epochs.map((item) => this.toFilterOptionItem(item)),
       workGenres: workGenres.map((item) => this.toFilterOptionItem(item)),
       popularComposers: popularComposers.map((composer) =>
