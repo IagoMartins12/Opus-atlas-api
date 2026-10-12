@@ -244,6 +244,8 @@ const SEEDS: Seed[] = [
  */
 async function main(): Promise<void> {
   const apply = process.argv.includes('--apply');
+  const skipped: string[] = [];
+  let written = 0;
   const logger = new Logger('SeedCollections');
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: ['error', 'warn', 'log'],
@@ -313,6 +315,13 @@ async function main(): Promise<void> {
       }
 
       logger.log(`${seed.title}: ${items.length}/${seed.items.length} itens`);
+      // A smaller catalog (staging) may hold none of the works: an empty
+      // collection helps no one, so it is left out, and the summary says so.
+      if (!items.length) {
+        skipped.push(seed.title);
+        continue;
+      }
+      written += 1;
       if (!apply) continue;
       await prisma.collection.deleteMany({
         where: { ownerId: owner.id, title: seed.title },
@@ -335,8 +344,10 @@ async function main(): Promise<void> {
         .get(AppCacheService)
         .invalidateMany([CacheNamespace.COLLECTIONS]);
     logger.log(
-      `${apply ? 'Gravadas' : '[simulação] gravaria'}: ${SEEDS.length} coleções`,
+      `${apply ? 'Gravadas' : '[simulação] gravaria'}: ${written} coleções`,
     );
+    if (skipped.length)
+      logger.warn(`Sem nenhum item, ficaram de fora: ${skipped.join('; ')}`);
     if (missing.length)
       logger.warn(`Fora do banco: ${[...new Set(missing)].join('; ')}`);
   } catch (error: unknown) {
