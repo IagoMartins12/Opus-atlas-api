@@ -47,6 +47,8 @@
     "catalog:import-curiosities:apply": "node dist/scripts/import-editorial-curiosities.js --apply",
     "catalog:seed-collections": "node dist/scripts/seed-collections.js",
     "catalog:seed-collections:apply": "node dist/scripts/seed-collections.js --apply",
+    "catalog:merge-duplicate-composers": "node dist/scripts/merge-duplicate-composers.js",
+    "catalog:merge-duplicate-composers:apply": "node dist/scripts/merge-duplicate-composers.js --apply",
     "mail:previews": "node dist/scripts/mail-previews.js",
     "mail:send-samples": "node dist/scripts/mail-send-samples.js",
     "users:audit-admin-roles": "node dist/scripts/audit-admin-roles.js",
