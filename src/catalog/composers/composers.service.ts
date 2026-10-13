@@ -17,7 +17,10 @@ import {
   type ComposerSort,
 } from './dto/composer-list-query.dto';
 import { ComposerWorkItemDto } from './dto/composer-work-item.dto';
-import { ComposerWorksQueryDto } from './dto/composer-works-query.dto';
+import {
+  ComposerWorksQueryDto,
+  type ComposerWorkSort,
+} from './dto/composer-works-query.dto';
 import { ComposerWorksResponseDto } from './dto/composer-works-response.dto';
 import { ComposerWorkTypeCountsResponseDto } from './dto/composer-work-type-counts-response.dto';
 import { FeaturedComposerResponseDto } from './dto/featured-composer-response.dto';
@@ -287,6 +290,15 @@ const COMPOSER_DETAIL_SELECT = {
   },
 } as const;
 
+const COMPOSER_WORK_ORDER: Record<
+  Exclude<ComposerWorkSort, 'famous'>,
+  Prisma.WorkOrderByWithRelationInput[]
+> = {
+  title: [{ title: 'asc' }, { id: 'asc' }],
+  'title-desc': [{ title: 'desc' }, { id: 'desc' }],
+  recent: [{ createdAt: 'desc' }, { id: 'desc' }],
+};
+
 const COMPOSER_WORKS_SELECT = {
   id: true,
   title: true,
@@ -514,18 +526,24 @@ export class ComposersService {
     const skip = (normalized.page - 1) * normalized.limit;
     const where = this.buildComposerWorksWhere(composerId, normalized);
 
-    const [works, totalCount] = await Promise.all([
-      this.prisma.work.findMany({
-        where,
-        select: COMPOSER_WORKS_SELECT,
-        orderBy: {
-          title: 'asc',
-        },
-        skip,
-        take: normalized.limit,
-      }),
-      this.prisma.work.count({ where }),
-    ]);
+    const [works, totalCount] =
+      normalized.sort === 'famous'
+        ? await this.findFamousWorksPage(
+            composerId,
+            where,
+            skip,
+            normalized.limit,
+          )
+        : await Promise.all([
+            this.prisma.work.findMany({
+              where,
+              select: COMPOSER_WORKS_SELECT,
+              orderBy: COMPOSER_WORK_ORDER[normalized.sort],
+              skip,
+              take: normalized.limit,
+            }),
+            this.prisma.work.count({ where }),
+          ]);
 
     const response: ComposerWorksResponseDto = {
       works: works.map((work) => this.toComposerWorkItemDto(work)),
@@ -536,6 +554,80 @@ export class ComposersService {
 
     await this.cacheManager.set(cacheKey, response, COMPOSER_WORKS_TTL_MS);
     return response;
+  }
+
+  /**
+   * "Most known" has no column to sort by: the team's picks for the composer
+   * come first, then what people study, learned and favorited (the same
+   * signal as "Por onde começar"), recordings as the tie-breaker, then A–Z.
+   * Ranked over the filtered ids; only the page is read in full.
+   */
+  private async findFamousWorksPage(
+    composerId: string,
+    where: Prisma.WorkWhereInput,
+    skip: number,
+    take: number,
+  ) {
+    const [candidates, composer] = await Promise.all([
+      this.prisma.work.findMany({
+        where,
+        select: {
+          id: true,
+          title: true,
+          spotifyTrackId: true,
+          youtubeVideoId: true,
+        },
+      }),
+      this.prisma.composer.findUnique({
+        where: { id: composerId },
+        select: { startingWorkIds: true },
+      }),
+    ]);
+    const ids = candidates.map((w) => w.id);
+    const of = { workId: { in: ids } };
+    const counts = await Promise.all([
+      this.prisma.wantToLearn.groupBy({
+        by: ['workId'],
+        where: of,
+        _count: { _all: true },
+      }),
+      this.prisma.learned.groupBy({
+        by: ['workId'],
+        where: of,
+        _count: { _all: true },
+      }),
+      this.prisma.favoriteWork.groupBy({
+        by: ['workId'],
+        where: of,
+        _count: { _all: true },
+      }),
+    ]);
+    const people = new Map<string, number>();
+    for (const groups of counts)
+      for (const g of groups)
+        people.set(g.workId, (people.get(g.workId) ?? 0) + g._count._all);
+    const picks = composer?.startingWorkIds ?? [];
+    const pick = (id: string) => {
+      const i = picks.indexOf(id);
+      return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    };
+
+    const ranked = [...candidates].sort(
+      (a, b) =>
+        pick(a.id) - pick(b.id) ||
+        (people.get(b.id) ?? 0) - (people.get(a.id) ?? 0) ||
+        Number(Boolean(b.spotifyTrackId || b.youtubeVideoId)) -
+          Number(Boolean(a.spotifyTrackId || a.youtubeVideoId)) ||
+        a.title.localeCompare(b.title),
+    );
+    const pageIds = ranked.slice(skip, skip + take).map((w) => w.id);
+    const page = await this.prisma.work.findMany({
+      where: { id: { in: pageIds } },
+      select: COMPOSER_WORKS_SELECT,
+    });
+    const order = new Map(pageIds.map((id, i) => [id, i]));
+    page.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    return [page, candidates.length] as const;
   }
 
   async getFilterOptions(
@@ -986,6 +1078,7 @@ export class ComposersService {
       search: query.search?.trim() ?? '',
       workType: query.workType?.trim() ?? '',
       difficultyLevel: query.difficultyLevel?.trim() ?? '',
+      sort: query.sort ?? 'famous',
     };
   }
 
@@ -1004,6 +1097,7 @@ export class ComposersService {
       query.search || 'all',
       query.workType || 'all',
       query.difficultyLevel || 'all',
+      query.sort,
     ].join(':');
   }
 
