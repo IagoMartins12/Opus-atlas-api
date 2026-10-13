@@ -185,16 +185,50 @@ describe('ModerationService', () => {
     });
 
     // Sem isso, uma pessoa sozinha afunda a fila com o mesmo item repetido.
-    it('recusa denúncia repetida do mesmo usuário sobre o mesmo item', async () => {
-      prisma.uploadModeration.findFirst.mockResolvedValue({ id: 'mod-antiga' });
+    it('recusa denúncia enquanto a anterior do mesmo usuário está aberta', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'pending', category: 'OTHER' },
+      ]);
 
       await expect(service.report('user-1', dto, context)).rejects.toThrow(
         ConflictException,
       );
     });
 
+    it('recusa o mesmo motivo depois de decidido', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: dto.category },
+      ]);
+
+      await expect(service.report('user-1', dto, context)).rejects.toThrow(
+        'por esse motivo',
+      );
+    });
+
+    it('para em três denúncias do mesmo usuário sobre o mesmo item', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: 'A' },
+        { status: 'resolved', category: 'B' },
+        { status: 'approved', category: 'C' },
+      ]);
+
+      await expect(service.report('user-1', dto, context)).rejects.toThrow(
+        'limite',
+      );
+    });
+
+    it('permite outro motivo depois de decidido o primeiro', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: 'OUTRO_MOTIVO' },
+      ]);
+
+      await expect(
+        service.report('user-1', dto, context),
+      ).resolves.toBeDefined();
+    });
+
     it('permite denúncia de outro usuário sobre o mesmo item', async () => {
-      prisma.uploadModeration.findFirst.mockResolvedValue(null);
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([]);
 
       await expect(
         service.report('user-2', dto, context),

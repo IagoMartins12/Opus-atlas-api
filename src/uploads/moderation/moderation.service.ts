@@ -161,6 +161,9 @@ type ModerationRow = Prisma.UploadModerationGetPayload<{
   include: typeof MODERATION_INCLUDE;
 }>;
 
+/** Reports one person may make about the same item, across subjects. */
+const MAX_REPORTS_PER_ITEM = 3;
+
 @Injectable()
 export class ModerationService {
   private readonly logger = new Logger(ModerationService.name);
@@ -188,19 +191,31 @@ export class ModerationService {
       throw new NotFoundException('Conteúdo denunciado não encontrado');
     }
 
-    const existing = await this.prisma.uploadModeration.findFirst({
+    // One person, one item: a report open at a time, the same subject
+    // (category) only once, and a ceiling overall. Without it, one account
+    // can sink the queue with the same item, decision after decision.
+    const anteriores = await this.prisma.uploadModeration.findMany({
       where: {
         entityType: dto.entityType,
         entityId: dto.entityId,
         reportedBy: userId,
-        status: 'pending',
       },
-      select: { id: true },
+      select: { status: true, category: true },
     });
 
-    if (existing) {
+    if (anteriores.some((r) => r.status === 'pending')) {
       throw new ConflictException(
         'Você já denunciou este item. Aguarde a análise.',
+      );
+    }
+    if (anteriores.some((r) => r.category === dto.category)) {
+      throw new ConflictException(
+        'Você já denunciou este item por esse motivo, e a equipe já decidiu.',
+      );
+    }
+    if (anteriores.length >= MAX_REPORTS_PER_ITEM) {
+      throw new ConflictException(
+        'Você chegou ao limite de denúncias para este item.',
       );
     }
 
