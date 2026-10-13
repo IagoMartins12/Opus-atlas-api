@@ -56,7 +56,7 @@ export class ComposerOverviewService {
         startingWorkIds: true,
       },
     });
-    if (!composer) throw new NotFoundException('Composer not found');
+    if (!composer) throw new NotFoundException('Compositor não encontrado');
 
     const [writtenFor, startingPoints, contemporaries] = await Promise.all([
       this.writtenFor(id),

@@ -4,6 +4,7 @@ import { PrismaExceptionFilter } from './prisma-exception.filter';
 
 interface CapturedResponse {
   status: jest.Mock;
+  vary: jest.Mock;
   json: jest.Mock;
 }
 
@@ -34,6 +35,7 @@ describe('PrismaExceptionFilter', () => {
     filter = new PrismaExceptionFilter();
     response = {
       status: jest.fn().mockReturnThis(),
+      vary: jest.fn(),
       json: jest.fn().mockReturnThis(),
     };
   });

@@ -21,7 +21,7 @@ describe('AllExceptionsFilter — mensagem de erro interno', () => {
     const json = jest.fn();
     const host = {
       switchToHttp: () => ({
-        getResponse: () => ({ status: () => ({ json }) }),
+        getResponse: () => ({ status: () => ({ json }), vary: () => {} }),
         getRequest: () => ({ headers: {}, url: '/api/x', method: 'GET' }),
       }),
     } as unknown as ArgumentsHost;

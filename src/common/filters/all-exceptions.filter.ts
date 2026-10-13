@@ -9,6 +9,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { localeFromHeader } from '../i18n/locale';
+import { translateMessage } from '../i18n/translate';
 import { errorStack } from '../utils/error.util';
 import { SentryService } from '../observability/sentry.service';
 
@@ -16,6 +18,11 @@ export interface ErrorResponseBody {
   statusCode: number;
   error: string;
   message: string | string[];
+  /**
+   * The message as the code wrote it (Portuguese), whatever the language of
+   * `message`: what a client matches on, never what it shows.
+   */
+  messageKey: string | string[];
   path: string;
   timestamp: string;
   requestId?: string;
@@ -85,10 +92,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
       error = 'Internal Server Error';
     }
 
+    // In the language the request asked for (`Accept-Language`).
+    response.vary('Accept-Language');
     const body: ErrorResponseBody = {
       statusCode,
       error,
-      message,
+      message: translateMessage(
+        message,
+        localeFromHeader(request.headers['accept-language']),
+      ),
+      messageKey: message,
       path: request.url,
       timestamp: new Date().toISOString(),
       requestId,

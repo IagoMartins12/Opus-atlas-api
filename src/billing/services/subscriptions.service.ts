@@ -608,7 +608,7 @@ export class SubscriptionsService {
     return {
       success: true,
       message: subscription.endDate
-        ? `Assinatura cancelada. Você terá acesso até ${subscription.endDate.toLocaleDateString('pt-BR')}`
+        ? `Assinatura cancelada. Você terá acesso até ${subscription.endDate.toISOString().slice(0, 10)}`
         : 'Assinatura cancelada com sucesso',
       subscription: updated,
       accessUntil: subscription.endDate ?? now,

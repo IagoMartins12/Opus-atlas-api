@@ -33,6 +33,7 @@ import { envFilePath } from './config/env-files';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
+import { I18nInterceptor } from './common/i18n/i18n.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { ObservabilityModule } from './common/observability/observability.module';
@@ -211,6 +212,8 @@ import { OriginGuard } from './common/guards/origin.guard';
     // --- Interceptors globais ---
     // Timeout antes de tudo, para que uma rota travada não segure a conexão.
     { provide: APP_INTERCEPTOR, useClass: TimeoutInterceptor },
+    // Answers in the request's language (`Accept-Language`).
+    { provide: APP_INTERCEPTOR, useClass: I18nInterceptor },
     // Log estruturado + métricas Prometheus de toda requisição.
     { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
     // Trilha de auditoria das rotas anotadas com `@Audited()`.

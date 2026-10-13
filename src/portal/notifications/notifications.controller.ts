@@ -30,6 +30,7 @@ import { AnnouncementDto, UpdatePreferencesDto } from './dto/preferences.dto';
 import { Throttle } from '@nestjs/throttler';
 import { NotificationListResponseDto } from './dto/notification.dto';
 import { NotificationsService } from './notifications.service';
+import { TranslateFields } from '../../common/i18n/translate-fields.decorator';
 
 /**
  * Caixa de entrada do usuário.
@@ -46,6 +47,7 @@ export class NotificationsController {
   constructor(private readonly service: NotificationsService) {}
 
   @Get()
+  @TranslateFields('title', 'message')
   @ApiOperation({
     summary: 'Lista as notificações do usuário',
     description:
@@ -105,6 +107,7 @@ export class NotificationsController {
   }
 
   @Get('pending')
+  @TranslateFields('title', 'message')
   @ApiOperation({
     summary: 'Notificações que ainda não foram exibidas',
     description:
