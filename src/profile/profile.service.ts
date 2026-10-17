@@ -14,6 +14,7 @@ import {
   StorageAssetKind,
   StudentInviteStatus,
   TokenType,
+  TeacherStatus,
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as bcrypt from 'bcryptjs';
@@ -69,7 +70,8 @@ const TEXT_FIELDS = [
 /**
  * A conta, como `GET /profile` a devolve: os campos que a sessão do NextAuth
  * carregava, mais forma de login e plano. `hashedPassword`, `accounts` e
- * `teacherProfile` entram só para calcular `login` e `teacherVerified`, e
+ * `teacherProfile` entram só para calcular `login`, `teacherVerified` e
+ * `teacherPortal`, e
  * saem da resposta.
  */
 const ACCOUNT_SELECT = {
@@ -109,7 +111,7 @@ const ACCOUNT_SELECT = {
   totalXP: true,
   hashedPassword: true,
   accounts: { select: { provider: true } },
-  teacherProfile: { select: { isVerified: true } },
+  teacherProfile: { select: { status: true, isVerified: true } },
 } as const;
 
 type AccountRow = Prisma.UserGetPayload<{ select: typeof ACCOUNT_SELECT }>;
@@ -130,8 +132,15 @@ function toAccount(
   return {
     ...fields,
     name: [fields.firstName, fields.lastName].filter(Boolean).join(' '),
+    // The team's approval of the credentials (badge, catalog editing).
     teacherVerified: fields.isTeacher
       ? (teacherProfile?.isVerified ?? false)
+      : null,
+    // The teacher portal opens with an active profile: right away for a
+    // Mentor or Maestro subscriber, after accepting for someone invited. It
+    // never waits for the team's approval above.
+    teacherPortal: fields.isTeacher
+      ? teacherProfile?.status === TeacherStatus.ACTIVE
       : null,
     studentInviteStatus,
     login: {

@@ -71,9 +71,16 @@ export class ProfileAccountDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'Professor aprovado pelo admin. `null` para quem não é professor.',
+      'Professor aprovado pelo admin (selo; libera editar o catálogo). `null` para quem não é professor.',
   })
   teacherVerified: boolean | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Portal do professor liberado: perfil de professor ativo (assinante Mentor/Maestro na hora; convidado depois de aceitar). Não depende da aprovação. `null` para quem não é professor.',
+  })
+  teacherPortal: boolean | null;
 
   @ApiPropertyOptional({
     nullable: true,

@@ -235,7 +235,7 @@ describe('ProfileService', () => {
     it('sem include vem tudo: conta, instrumentos, estatísticas e os papéis da conta', async () => {
       withAccount({
         isTeacher: true,
-        teacherProfile: { isVerified: true },
+        teacherProfile: { status: 'ACTIVE', isVerified: true },
         accounts: [{ provider: 'google' }, { provider: 'google' }],
       });
       prisma.userInstrument.findMany.mockResolvedValue([
@@ -256,6 +256,7 @@ describe('ProfileService', () => {
         id: USER,
         name: 'Ana Lima',
         teacherVerified: true,
+        teacherPortal: true,
         studentInviteStatus: null,
         login: { hasPassword: true, providers: ['google'] },
       });
@@ -338,6 +339,28 @@ describe('ProfileService', () => {
         expect.objectContaining({
           where: { student: { userId: USER }, isActive: true },
         }),
+      );
+    });
+
+    it('assinante Mentor ou Maestro tem o portal antes da aprovação', async () => {
+      withAccount({
+        isTeacher: true,
+        teacherProfile: { status: 'ACTIVE', isVerified: false },
+      });
+
+      const { account } = await service.get(USER, 'account');
+      expect(account.teacherPortal).toBe(true);
+      expect(account.teacherVerified).toBe(false);
+    });
+
+    it('convidado que ainda não aceitou não tem o portal', async () => {
+      withAccount({
+        isTeacher: true,
+        teacherProfile: { status: 'PENDING', isVerified: false },
+      });
+
+      expect((await service.get(USER, 'account')).account.teacherPortal).toBe(
+        false,
       );
     });
 
