@@ -1131,6 +1131,13 @@ export class RelationshipsService {
       },
     });
 
+    if (limit === 0) {
+      throw new ForbiddenException(
+        `Seu plano (${access.plan}) não inclui alunos. ` +
+          'Assine o Mentor ou o Maestro para convidar.',
+      );
+    }
+
     if (active >= limit) {
       throw new ForbiddenException(
         `Seu plano (${access.plan}) permite ${limit} aluno(s) ativo(s). ` +

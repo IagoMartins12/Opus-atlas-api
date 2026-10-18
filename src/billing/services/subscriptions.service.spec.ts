@@ -210,6 +210,17 @@ describe('SubscriptionsService', () => {
       });
     });
 
+    // O 0 é "o plano não oferece", não "sem limite".
+    it('checkFeatureAccess devolve o 0 como 0', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ planType: 'PLUS' }),
+      );
+
+      const access = await service.checkFeatureAccess(USER, 'maxStudents');
+
+      expect(access.limit).toBe(0);
+    });
+
     it('checkFeatureAccess lê o limite do plano', async () => {
       prisma.subscription.findFirst.mockResolvedValue(
         subscription({ planType: 'MAESTRO' }),

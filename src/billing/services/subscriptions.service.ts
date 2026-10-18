@@ -104,17 +104,25 @@ export class SubscriptionsService {
     });
   }
 
-  /** Checa acesso a uma feature específica do plano atual — reaproveitável
-   * por outros módulos (ex.: limite de upload, limite de alunos). */
+  /**
+   * Checa acesso a uma feature específica do plano atual — reaproveitável
+   * por outros módulos (ex.: limite de upload, limite de alunos).
+   *
+   * `limit` é o número da matriz como ele é: `-1` ilimitado, `0` o plano não
+   * oferece, `n` o teto. Só feature que não é número volta sem `limit`.
+   * Antes o 0 virava `undefined`, que todo chamador lê como "sem limite": um
+   * professor no Free ou no Plus convidava quantos alunos quisesse, e o portal
+   * dizia "sem limite de alunos".
+   */
   async checkFeatureAccess(userId: string, feature: keyof PlanFeatureSet) {
     const subscription = await this.getCurrentSubscription(userId);
     const plan = subscription?.planType ?? 'FREE';
-    const limit = getFeatureLimit(plan, feature);
+    const numeric = typeof PLAN_FEATURES[plan][feature] === 'number';
 
     return {
       plan,
       hasAccess: hasFeature(plan, feature),
-      limit: limit !== 0 ? limit : undefined,
+      limit: numeric ? getFeatureLimit(plan, feature) : undefined,
     };
   }
 

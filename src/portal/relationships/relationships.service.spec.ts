@@ -376,6 +376,20 @@ describe('RelationshipsService', () => {
       });
     });
 
+    // O 0 virava "sem limite": professor no Free ou no Plus convidava à vontade.
+    it('plano sem alunos (0) não convida ninguém', async () => {
+      subscriptions.checkFeatureAccess.mockResolvedValue({
+        plan: 'PLUS',
+        hasAccess: false,
+        limit: 0,
+      });
+
+      await expect(
+        service.inviteStudent('teacher-user', dto, context),
+      ).rejects.toThrow('não inclui alunos');
+      expect(prisma.teacherStudent.create).not.toHaveBeenCalled();
+    });
+
     it('`-1` no plano significa sem teto', async () => {
       subscriptions.checkFeatureAccess.mockResolvedValue({
         plan: 'MAESTRO',
