@@ -63,6 +63,8 @@ export const GRAVE_ACTIONS = [
   'plan-pricing.update',
   'subscription.cancel',
   'subscription.update',
+  'subscription.grant',
+  'user.teacher-invitation.update',
 ] as const;
 
 /** A classe de uma ação. O que não está classificado é `write`. */

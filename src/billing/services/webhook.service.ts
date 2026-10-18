@@ -150,15 +150,29 @@ export class WebhookService {
       }
 
       case 'customer.subscription.deleted': {
+        // Só o que ainda estava valendo: a assinatura que nós mesmos
+        // encerramos (cron, upgrade, cancelamento) já tem o estado final, e o
+        // eco deste evento não pode trocá-lo — uma encerrada voltaria a
+        // "cancelada" e o cron a encerraria de novo, com outro e-mail.
         const stripeSub = event.data.object as Stripe.Subscription;
         await this.prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: stripeSub.id },
+          where: {
+            stripeSubscriptionId: stripeSub.id,
+            status: { in: ['TRIAL', 'ACTIVE', 'PAST_DUE'] },
+          },
           data: {
             status: 'CANCELLED',
             cancelledAt: new Date(),
             autoRenew: false,
           },
         });
+        const local = await this.prisma.subscription.findFirst({
+          where: { stripeSubscriptionId: stripeSub.id },
+          select: { userId: true },
+        });
+        if (local) {
+          await this.subscriptionsService.updateUserPlanCache(local.userId);
+        }
         break;
       }
 
@@ -225,33 +239,12 @@ export class WebhookService {
       return;
     }
 
-    const subscription = await this.prisma.subscription.findFirst({
-      where: { stripeSubscriptionId },
-    });
-
-    if (!subscription) {
-      this.logger.warn(
-        `Assinatura não encontrada para stripeSubscriptionId=${stripeSubscriptionId}`,
-      );
-      return;
-    }
-
-    await this.prisma.payment.create({
-      data: {
-        subscriptionId: subscription.id,
-        amount: (invoice.amount_due ?? 0) / 100,
-        finalAmount: (invoice.amount_due ?? 0) / 100,
-        currency: (invoice.currency ?? 'brl').toUpperCase(),
-        status: 'REJECTED',
-      },
-    });
-
-    // PAST_DUE em vez de EXPIRED direto: o Stripe normalmente tenta cobrar de
-    // novo antes de desistir — a expiração definitiva fica a cargo do cron
-    // (`check-subscriptions`) ou do evento `customer.subscription.deleted`.
-    await this.prisma.subscription.update({
-      where: { id: subscription.id },
-      data: { status: 'PAST_DUE' },
+    // PAST_DUE em vez de EXPIRED direto: o Stripe tenta cobrar de novo, e a
+    // pessoa tem um prazo para trocar o cartão (`registerPaymentFailure`).
+    await this.subscriptionsService.registerPaymentFailure({
+      stripeSubscriptionId,
+      amountDue: (invoice.amount_due ?? 0) / 100,
+      currency: invoice.currency ?? 'brl',
     });
   }
 }

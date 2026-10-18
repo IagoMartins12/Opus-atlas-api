@@ -467,10 +467,54 @@ export class MailService {
 
   async sendTrialExpiringEmail(
     to: string,
-    data: { firstName: string; planType: PlanType; daysRemaining: number },
+    data: {
+      firstName: string;
+      planType: PlanType;
+      daysRemaining: number;
+      chargeDate: Date;
+      amount: number;
+    },
   ): Promise<void> {
     await this.send(
       await this.compose(to, (ctx) => templates.trialExpiring(data, ctx)),
+    );
+  }
+
+  async sendTrialStartedEmail(
+    to: string,
+    data: {
+      firstName: string;
+      planType: PlanType;
+      chargeDate: Date;
+      amount: number;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.trialStarted(data, ctx)),
+    );
+  }
+
+  async sendPaymentFailedEmail(
+    to: string,
+    data: {
+      firstName: string;
+      planType: PlanType;
+      amount: number;
+      graceEndsAt: Date;
+      afterTrial: boolean;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.paymentFailed(data, ctx)),
+    );
+  }
+
+  async sendSubscriptionEndedEmail(
+    to: string,
+    data: { firstName: string; planType: PlanType },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.subscriptionEnded(data, ctx)),
     );
   }
 }

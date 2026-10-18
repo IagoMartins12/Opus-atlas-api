@@ -48,6 +48,48 @@ opusatlas.com.br · São Paulo, Brasil",
 }
 `;
 
+exports[`e-mails de cobranca payment-failed (en) 1`] = `
+{
+  "subject": "We could not charge your Mentor plan",
+  "text": "The payment was declined
+
+Hi, Ana. Your Mentor trial has ended, but the card on file declined the R$39.90 charge.
+The plan stays unlocked until November 19. Update your card in My profile → Account settings → Payment and invoices; the charge is retried automatically. Without payment by then, the subscription ends and the account returns to Free, keeping your history.
+
+Update my card: https://opusatlas.com.br/profile
+
+November 19 (deadline to update your card)
+
+Warmly,
+The Opus Atlas team
+
+---
+Billed by Stripe, in Brazilian reais. To change or cancel your plan, go to My profile → Account settings. Within 7 days of subscribing you can cancel and get your money back.
+opusatlas.com.br · São Paulo, Brazil",
+}
+`;
+
+exports[`e-mails de cobranca payment-failed (pt) 1`] = `
+{
+  "subject": "Não conseguimos cobrar o plano Mentor",
+  "text": "O pagamento foi recusado
+
+Olá, Ana. O teste do plano Mentor terminou, mas o cartão cadastrado recusou a cobrança de R$ 39,90.
+O plano continua liberado até 19 de novembro. Atualize o cartão em Meu perfil → Configurações da Conta → Pagamento e faturas; a cobrança é feita de novo sozinha. Sem pagamento até lá, a assinatura é encerrada e a conta volta ao Free, com o seu histórico.
+
+Atualizar o cartão: https://opusatlas.com.br/profile
+
+19 de novembro (prazo para atualizar o cartão)
+
+Com carinho,
+Equipe Opus Atlas
+
+---
+Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.
+opusatlas.com.br · São Paulo, Brasil",
+}
+`;
+
 exports[`e-mails de cobranca plan-changed (en) 1`] = `
 {
   "subject": "Your plan is now Maestro",
@@ -170,16 +212,55 @@ opusatlas.com.br · São Paulo, Brasil",
 }
 `;
 
+exports[`e-mails de cobranca subscription-ended (en) 1`] = `
+{
+  "subject": "Your Mentor subscription has ended",
+  "text": "Subscription ended
+
+Hi, Ana. Since the Mentor charge was not completed in time, the subscription has ended and nothing else will be charged.
+The account is back on Free, with your favorites, lists and notes kept. To return to the plan, just subscribe again.
+
+See the plans: https://opusatlas.com.br/pricing
+
+Warmly,
+The Opus Atlas team
+
+---
+Billed by Stripe, in Brazilian reais. To change or cancel your plan, go to My profile → Account settings. Within 7 days of subscribing you can cancel and get your money back.
+opusatlas.com.br · São Paulo, Brazil",
+}
+`;
+
+exports[`e-mails de cobranca subscription-ended (pt) 1`] = `
+{
+  "subject": "Sua assinatura do Mentor foi encerrada",
+  "text": "Assinatura encerrada
+
+Olá, Ana. Como a cobrança do plano Mentor não foi concluída no prazo, a assinatura foi encerrada e nada mais será cobrado.
+A conta voltou ao Free, com favoritos, listas e anotações guardados. Para voltar ao plano, é só assinar de novo.
+
+Ver os planos: https://opusatlas.com.br/pricing
+
+Com carinho,
+Equipe Opus Atlas
+
+---
+Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.
+opusatlas.com.br · São Paulo, Brasil",
+}
+`;
+
 exports[`e-mails de cobranca trial-expiring (en) 1`] = `
 {
   "subject": "Your Plus trial ends in 3 days",
   "text": "Your trial is ending
 
-Hi, Ana. Your Plus trial ends in 3 days. Subscribe to keep everything you use today.
+Hi, Ana. Your Plus trial ends in 3 days. On November 15, the card on file pays R$19.90 and you keep everything you use today.
+If you do not want to continue, cancel before then in My profile → Account settings. Nothing will be charged.
 
-See the plans: https://opusatlas.com.br/pricing
+See my subscription: https://opusatlas.com.br/profile
 
-3 days (until the trial ends)
+R$19.90 (on November 15)
 
 Warmly,
 The Opus Atlas team
@@ -195,11 +276,54 @@ exports[`e-mails de cobranca trial-expiring (pt) 1`] = `
   "subject": "Seu teste do Plus termina em 3 dias",
   "text": "Seu período de teste está acabando
 
-Olá, Ana. O teste do plano Plus termina em 3 dias. Assine para continuar com tudo o que você usa hoje.
+Olá, Ana. O teste do plano Plus termina em 3 dias. Em 15 de novembro, o cartão cadastrado paga R$ 19,90 e você continua com tudo o que usa hoje.
+Se não quiser continuar, cancele antes em Meu perfil → Configurações da Conta. Nada será cobrado.
 
-Ver os planos: https://opusatlas.com.br/pricing
+Ver minha assinatura: https://opusatlas.com.br/profile
 
-3 dias (até o fim do teste)
+R$ 19,90 (em 15 de novembro)
+
+Com carinho,
+Equipe Opus Atlas
+
+---
+Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.
+opusatlas.com.br · São Paulo, Brasil",
+}
+`;
+
+exports[`e-mails de cobranca trial-started (en) 1`] = `
+{
+  "subject": "Your Mentor trial has started",
+  "text": "Your free trial has started
+
+Hi, Ana. Your Mentor plan is unlocked. Nothing is charged until November 15; on that day, the card on file pays R$39.90 and the subscription continues.
+If you do not want to continue, cancel before that date in My profile → Account settings. Nothing will be charged.
+
+See my subscription: https://opusatlas.com.br/profile
+
+R$39.90 (first charge on November 15)
+
+Warmly,
+The Opus Atlas team
+
+---
+Billed by Stripe, in Brazilian reais. To change or cancel your plan, go to My profile → Account settings. Within 7 days of subscribing you can cancel and get your money back.
+opusatlas.com.br · São Paulo, Brazil",
+}
+`;
+
+exports[`e-mails de cobranca trial-started (pt) 1`] = `
+{
+  "subject": "Seu teste do Mentor começou",
+  "text": "Teste grátis começou
+
+Olá, Ana. O plano Mentor já está liberado. Nada é cobrado até 15 de novembro; nesse dia, o cartão cadastrado paga R$ 39,90 e a assinatura segue.
+Se não quiser continuar, cancele antes dessa data em Meu perfil → Configurações da Conta. Nada será cobrado.
+
+Ver minha assinatura: https://opusatlas.com.br/profile
+
+R$ 39,90 (primeira cobrança em 15 de novembro)
 
 Com carinho,
 Equipe Opus Atlas

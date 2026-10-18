@@ -222,17 +222,71 @@ export class UpdateAdminUserDto {
   @ApiPropertyOptional({
     type: TeacherPlanGrantDto,
     description:
-      'Só com `isTeacher: true`: plano concedido quando o convite for aceito.',
+      '**Obrigatório ao convidar** (`isTeacher: true` numa conta que não é ' +
+      'professor): o plano, Mentor ou Maestro, concedido quando o convite ' +
+      'for aceito. É ele que dá o limite de alunos.',
   })
   @IsOptional()
   @ValidateNested()
   @Type(() => TeacherPlanGrantDto)
   teacherPlanGrant?: TeacherPlanGrantDto;
 
+  @ApiPropertyOptional({
+    description:
+      'Validade do convite (ISO 8601). Ausente: 30 dias a partir do envio.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  teacherInviteExpiresAt?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
   isStudent?: boolean;
+}
+
+/** Mudanças num convite de professor ainda sem resposta. */
+export class UpdateTeacherInvitationDto {
+  @ApiPropertyOptional({ enum: TEACHER_GRANT_PLANS })
+  @IsOptional()
+  @IsIn(TEACHER_GRANT_PLANS)
+  planType?: (typeof TEACHER_GRANT_PLANS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Vencimento do plano (ISO 8601). Nulo: sem vencimento.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601()
+  planExpiresAt?: string | null;
+
+  @ApiPropertyOptional({ description: 'Nova validade do convite (ISO 8601).' })
+  @IsOptional()
+  @IsISO8601()
+  inviteExpiresAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Emite links novos e manda outro e-mail com o convite.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  resend?: boolean;
+}
+
+/** Plano concedido pela equipe: trocar Mentor ↔ Maestro e o vencimento. */
+export class UpdateGrantedPlanDto {
+  @ApiPropertyOptional({ enum: TEACHER_GRANT_PLANS })
+  @IsOptional()
+  @IsIn(TEACHER_GRANT_PLANS)
+  planType?: (typeof TEACHER_GRANT_PLANS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Vencimento (ISO 8601). Nulo: sem vencimento.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601()
+  expiresAt?: string | null;
 }
 
 export class AdminUserSummaryDto {

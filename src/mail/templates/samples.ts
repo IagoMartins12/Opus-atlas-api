@@ -196,9 +196,53 @@ export const EMAIL_SAMPLES: EmailSample[] = [
     name: 'Fim do teste',
     build: (c) =>
       t.trialExpiring(
-        { firstName: 'Ana', planType: 'PLUS', daysRemaining: 3 },
+        {
+          firstName: 'Ana',
+          planType: 'PLUS',
+          daysRemaining: 3,
+          chargeDate: new Date('2026-11-15T12:00:00Z'),
+          amount: 19.9,
+        },
         c,
       ),
+  },
+  {
+    id: 'trial-started',
+    group: 'cobranca',
+    name: 'Teste começou',
+    build: (c) =>
+      t.trialStarted(
+        {
+          firstName: 'Ana',
+          planType: 'MENTOR',
+          chargeDate: new Date('2026-11-15T12:00:00Z'),
+          amount: 39.9,
+        },
+        c,
+      ),
+  },
+  {
+    id: 'payment-failed',
+    group: 'cobranca',
+    name: 'Cobrança recusada',
+    build: (c) =>
+      t.paymentFailed(
+        {
+          firstName: 'Ana',
+          planType: 'MENTOR',
+          amount: 39.9,
+          graceEndsAt: new Date('2026-11-19T12:00:00Z'),
+          afterTrial: true,
+        },
+        c,
+      ),
+  },
+  {
+    id: 'subscription-ended',
+    group: 'cobranca',
+    name: 'Assinatura encerrada',
+    build: (c) =>
+      t.subscriptionEnded({ firstName: 'Ana', planType: 'MENTOR' }, c),
   },
   {
     id: 'contact-support',

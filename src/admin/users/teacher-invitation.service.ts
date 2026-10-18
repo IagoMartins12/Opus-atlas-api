@@ -26,6 +26,16 @@ export interface TeacherPlanGrant {
   expiresAt: Date | null;
 }
 
+/** O convite sem resposta, como o painel o mostra. */
+export interface PendingTeacherInvitation {
+  sentAt: Date;
+  inviteExpiresAt: Date;
+  expired: boolean;
+  /** Nulo só em convite antigo, de quando o plano era opcional. */
+  planType: PlanType | null;
+  planExpiresAt: Date | null;
+}
+
 /** O que vai no `metadata` do token de aceite (JSON: a data como texto). */
 interface GrantMetadata {
   planGrant?: { planType: PlanType; expiresAt: string | null };
@@ -77,12 +87,14 @@ export class TeacherInvitationService {
    * Emite os links e envia o e-mail. Falha de e-mail vira log, não erro.
    *
    * `grant` é o plano que a equipe decidiu conceder: vai no link de aceite e
-   * só é concedido quando a pessoa aceita.
+   * só é concedido quando a pessoa aceita. `inviteExpiresAt` é a validade dos
+   * links; sem ela, 30 dias.
    */
   async send(
     userId: string,
     invitedById?: string,
     grant?: TeacherPlanGrant,
+    inviteExpiresAt?: Date,
   ): Promise<boolean> {
     const [user, invitedBy] = await Promise.all([
       this.prisma.user.findUnique({
@@ -117,10 +129,12 @@ export class TeacherInvitationService {
               },
             }
           : undefined,
+        expiresAt: inviteExpiresAt,
       }),
       this.tokens.createToken({
         userId,
         type: TokenType.TEACHER_INVITATION_DECLINE,
+        expiresAt: inviteExpiresAt,
       }),
     ]);
 
@@ -287,6 +301,106 @@ export class TeacherInvitationService {
       success: true,
       message: 'Enviamos um novo convite para o seu e-mail.',
     };
+  }
+
+  /**
+   * O convite que ainda espera resposta — o link de aceite mais recente não
+   * usado —, para o painel mostrar e editar. Vencido também aparece: é
+   * justamente o que a equipe pode querer prorrogar.
+   */
+  async getPending(userId: string): Promise<PendingTeacherInvitation | null> {
+    const token = await this.prisma.userToken.findFirst({
+      where: {
+        userId,
+        type: TokenType.TEACHER_INVITATION_ACCEPT,
+        used: false,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true, expiresAt: true, metadata: true },
+    });
+    if (!token) return null;
+
+    const grant = (token.metadata as GrantMetadata | null)?.planGrant;
+    return {
+      sentAt: token.createdAt,
+      inviteExpiresAt: token.expiresAt,
+      expired: token.expiresAt.getTime() < Date.now(),
+      planType: grant?.planType ?? null,
+      planExpiresAt: grant?.expiresAt ? new Date(grant.expiresAt) : null,
+    };
+  }
+
+  /**
+   * A equipe muda o convite ainda sem resposta: o plano oferecido, o
+   * vencimento desse plano e a validade dos links. O link do e-mail continua o
+   * mesmo — muda o que ele concede e até quando vale —, a não ser que se peça
+   * o reenvio, que emite links novos e manda outro e-mail.
+   */
+  async updatePending(
+    userId: string,
+    actingUserId: string,
+    changes: {
+      planType?: PlanType;
+      planExpiresAt?: Date | null;
+      inviteExpiresAt?: Date;
+      resend?: boolean;
+    },
+  ): Promise<PendingTeacherInvitation> {
+    const current = await this.getPending(userId);
+    if (!current) {
+      throw new NotFoundException('Nenhum convite de professor pendente');
+    }
+
+    const planType = changes.planType ?? current.planType;
+    if (!planType) {
+      throw new BadRequestException(
+        'Escolha o plano do professor convidado: Mentor ou Maestro',
+      );
+    }
+    const planExpiresAt =
+      changes.planExpiresAt !== undefined
+        ? changes.planExpiresAt
+        : current.planExpiresAt;
+    const inviteExpiresAt = changes.inviteExpiresAt ?? current.inviteExpiresAt;
+    const now = Date.now();
+    if (planExpiresAt && planExpiresAt.getTime() <= now) {
+      throw new BadRequestException('O vencimento do plano precisa ser futuro');
+    }
+    if (inviteExpiresAt.getTime() <= now) {
+      throw new BadRequestException('A validade do convite precisa ser futura');
+    }
+
+    if (changes.resend) {
+      await this.send(
+        userId,
+        actingUserId,
+        { planType, expiresAt: planExpiresAt },
+        inviteExpiresAt,
+      );
+    } else {
+      const unused = {
+        userId,
+        used: false,
+      };
+      await this.prisma.userToken.updateMany({
+        where: { ...unused, type: TokenType.TEACHER_INVITATION_ACCEPT },
+        data: {
+          expiresAt: inviteExpiresAt,
+          metadata: {
+            planGrant: {
+              planType,
+              expiresAt: planExpiresAt?.toISOString() ?? null,
+            },
+          },
+        },
+      });
+      await this.prisma.userToken.updateMany({
+        where: { ...unused, type: TokenType.TEACHER_INVITATION_DECLINE },
+        data: { expiresAt: inviteExpiresAt },
+      });
+    }
+
+    return (await this.getPending(userId))!;
   }
 
   // -------------------------------------------------------------------

@@ -39,6 +39,11 @@ describe('StripeService', () => {
       checkout: { sessions: { create: jest.fn(), retrieve: jest.fn() } },
       billingPortal: { sessions: { create: jest.fn() } },
       webhooks: { constructEvent: jest.fn() },
+      subscriptions: {
+        update: jest.fn(),
+        cancel: jest.fn(),
+        retrieve: jest.fn(),
+      },
     };
     let service: StripeService;
 
@@ -80,6 +85,79 @@ describe('StripeService', () => {
           },
         }),
       );
+      const [args] = stripe.checkout.sessions.create.mock.calls[0];
+      expect(args.subscription_data.trial_period_days).toBeUndefined();
+    });
+
+    it('com teste: o Stripe pede o cartão e só cobra no fim do teste', async () => {
+      await service.createCheckoutSession({
+        userId: 'u1',
+        userEmail: 'a@x.com',
+        planType: 'MENTOR',
+        billingPeriod: 'YEARLY',
+        successUrl: 'https://s',
+        cancelUrl: 'https://c',
+        trialDays: 14,
+      });
+
+      const [args] = stripe.checkout.sessions.create.mock.calls[0];
+      expect(args.payment_method_collection).toBe('always');
+      expect(args.subscription_data).toMatchObject({
+        trial_period_days: 14,
+        trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+      });
+    });
+
+    it('quem já é cliente no Stripe volta como o mesmo cliente', async () => {
+      await service.createCheckoutSession({
+        userId: 'u1',
+        userEmail: 'a@x.com',
+        planType: 'MENTOR',
+        billingPeriod: 'YEARLY',
+        successUrl: 'https://s',
+        cancelUrl: 'https://c',
+        customerId: 'cus_1',
+      });
+
+      const [args] = stripe.checkout.sessions.create.mock.calls[0];
+      expect(args.customer).toBe('cus_1');
+      expect(args.customer_email).toBeUndefined();
+    });
+
+    it('cancelar no fim do período e desfazer', async () => {
+      await service.setCancelAtPeriodEnd('sub_1', true);
+      expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
+        cancel_at_period_end: true,
+      });
+    });
+
+    it('encerrar agora tolera assinatura que o Stripe já encerrou', async () => {
+      stripe.subscriptions.cancel.mockRejectedValueOnce(
+        Object.assign(new Error('No such subscription'), {
+          code: 'resource_missing',
+        }),
+      );
+      await expect(service.cancelSubscriptionNow('sub_1')).resolves.toBe(
+        undefined,
+      );
+
+      stripe.subscriptions.cancel.mockRejectedValueOnce(new Error('rede'));
+      await expect(service.cancelSubscriptionNow('sub_1')).rejects.toThrow(
+        'rede',
+      );
+    });
+
+    it('descida agendada troca o preço sem cobrança proporcional', async () => {
+      stripe.subscriptions.retrieve.mockResolvedValue({
+        items: { data: [{ id: 'si_1' }] },
+      });
+
+      await service.changePriceAtRenewal('sub_1', 'price_plus');
+
+      expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
+        items: [{ id: 'si_1', price: 'price_plus' }],
+        proration_behavior: 'none',
+      });
     });
 
     it('portal de cobrança e leitura da sessão', async () => {

@@ -41,9 +41,20 @@ const ACTIVE_STATUSES: Subscription['status'][] = ['TRIAL', 'ACTIVE'];
 export const TEACHER_PLANS: PlanType[] = ['MENTOR', 'MAESTRO'];
 
 /**
- * O que dá acesso ao plano: teste, ativa, e cancelada **até o fim do período
+ * Dias entre a cobrança recusada e o encerramento da assinatura. Nesse prazo a
+ * pessoa é avisada, mantém o acesso e pode trocar o cartão no portal do
+ * Stripe — que também tenta cobrar de novo. Sem solução, o cron encerra
+ * (`SubscriptionsCronService.expireSubscriptions`).
+ */
+export const PAYMENT_GRACE_DAYS = 4;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * O que dá acesso ao plano: teste, ativa, cancelada **até o fim do período
  * já pago** — é o que a mensagem de cancelamento promete ("você terá acesso
- * até…") e o que o enum documenta. `PENDING` (checkout aberto) não dá.
+ * até…") — e atrasada **até o fim do prazo para trocar o cartão**
+ * (`PAYMENT_GRACE_DAYS`). `PENDING` (checkout aberto) não dá.
  */
 const ACCESS_WHERE = (now: Date): Prisma.SubscriptionWhereInput => ({
   OR: [
@@ -51,9 +62,21 @@ const ACCESS_WHERE = (now: Date): Prisma.SubscriptionWhereInput => ({
       status: { in: ACTIVE_STATUSES },
       OR: [{ endDate: null }, { endDate: { gte: now } }],
     },
-    { status: 'CANCELLED', endDate: { gte: now } },
+    { status: { in: ['CANCELLED', 'PAST_DUE'] }, endDate: { gte: now } },
   ],
 });
+
+type SubscriptionMetadata = {
+  couponDiscount?: number;
+  trialDays?: number;
+  replacesSubscriptionId?: string;
+  pendingDowngrade?: PlanType;
+  paymentFailedAt?: string;
+  origin?: string;
+} & Prisma.JsonObject;
+
+const metadataOf = (subscription: { metadata: Prisma.JsonValue | null }) =>
+  (subscription.metadata as SubscriptionMetadata | null) ?? {};
 
 @Injectable()
 export class SubscriptionsService {
@@ -216,16 +239,18 @@ export class SubscriptionsService {
       );
 
     // Teste grátis é um por pessoa: sem isto, deixar o teste expirar e assinar
-    // de novo dava outro teste, indefinidamente.
+    // de novo dava outro teste, indefinidamente. Conta só o que chegou a
+    // valer — checkout abandonado (PENDING → EXPIRED sem Stripe) não gasta o
+    // teste de ninguém.
     const hadPaidPlan =
       (await this.prisma.subscription.count({
-        where: { userId, planType: { not: 'FREE' } },
+        where: {
+          userId,
+          planType: { not: 'FREE' },
+          stripeSubscriptionId: { not: null },
+        },
       })) > 0;
     const trialDays = hadPaidPlan ? 0 : TRIAL_PERIOD_DAYS[dto.planType];
-    const trialEndDate =
-      trialDays > 0
-        ? new Date(now.getTime() + trialDays * 24 * 60 * 60 * 1000)
-        : null;
 
     const frontendBaseUrl = this.getFrontendBaseUrl();
     const checkoutSession = await this.stripeService.createCheckoutSession({
@@ -248,23 +273,31 @@ export class SubscriptionsService {
             discount,
           )
         : null,
+      trialDays,
+      customerId: await this.stripeCustomerIdOf(userId),
     });
 
+    const metadata: SubscriptionMetadata = {};
+    if (coupon) metadata.couponDiscount = discount;
+    if (trialDays > 0) metadata.trialDays = trialDays;
+
+    // Com ou sem teste, nada vale antes de o checkout terminar: o teste é do
+    // Stripe e começa quando o cartão é aceito (`confirmCheckoutSession`).
+    // Antes, o teste começava ao **abrir** o checkout — quem desistia ficava
+    // com o plano, e quem seguia era cobrado na hora.
     const subscription = await this.prisma.subscription.create({
       data: {
         userId,
         planType: dto.planType,
         billingPeriod: dto.billingPeriod,
-        // Sem teste, a assinatura espera o pagamento sem dar acesso ao plano.
-        status: trialEndDate ? 'TRIAL' : 'PENDING',
+        status: 'PENDING',
         startDate: now,
-        trialEndDate,
         price: finalPrice,
         autoRenew: true,
         stripeSessionId: checkoutSession.id,
         stripeCheckoutUrl: checkoutSession.url,
         couponId: coupon?.id,
-        ...(coupon ? { metadata: { couponDiscount: discount } } : {}),
+        ...(Object.keys(metadata).length ? { metadata } : {}),
       },
     });
 
@@ -275,28 +308,20 @@ export class SubscriptionsService {
         action: 'CREATED',
         toPlan: dto.planType,
         toPrice: finalPrice,
-        reason: trialEndDate
-          ? 'Iniciando período de teste'
-          : 'Assinatura criada',
+        reason:
+          trialDays > 0
+            ? `Checkout aberto com teste de ${trialDays} dias`
+            : 'Assinatura criada',
       },
     });
 
-    // Com teste, o plano já dá acesso: um plano para professores já faz da
-    // conta um professor. Sem teste, isso espera o pagamento
-    // (`confirmCheckoutSession`).
-    if (trialEndDate) {
-      await this.activateTeacherForPlan(userId, dto.planType);
-    }
-
-    // O cupom só é consumido quando o pagamento confirma
+    // O cupom só é consumido quando o checkout termina
     // (`confirmCheckoutSession`): antes, checkout abandonado queimava o cupom
     // de uso único da pessoa e contava no limite do cupom.
 
     return {
       success: true,
-      message: trialEndDate
-        ? `Período de teste de ${trialDays} dias iniciado!`
-        : 'Redirecionando para o checkout seguro...',
+      message: 'Redirecionando para o checkout seguro...',
       subscription,
       payment: {
         sessionId: checkoutSession.id,
@@ -306,13 +331,19 @@ export class SubscriptionsService {
   }
 
   /**
-   * Ativa uma assinatura a partir de uma sessão de checkout do Stripe já paga
+   * Ativa uma assinatura a partir de uma sessão de checkout do Stripe concluída
    * — chamado tanto pelo endpoint de retorno (`GET /stripe/success`) quanto
-   * pelo webhook (`checkout.session.completed`). Idempotente: se já existe um
-   * `Payment` para esta sessão, não faz nada (evita duplicar cobrança
-   * registrada quando os dois caminhos disparam para o mesmo checkout — bug
-   * presente em parte do legado, que só tinha essa checagem em uma das três
-   * implementações de webhook).
+   * pelo webhook (`checkout.session.completed`).
+   *
+   * **Dois desfechos.** Paga: ativa e registra o pagamento. Com teste
+   * (`no_payment_required`, a assinatura do Stripe em `trialing`): o teste
+   * começa agora, com o cartão já aceito, e a primeira cobrança é a fatura do
+   * fim do teste (`registerRenewal`, ou `registerPaymentFailure` se o cartão
+   * for recusado).
+   *
+   * Idempotente: só quem tira a assinatura de `PENDING` segue — retorno e
+   * webhook disparam para o mesmo checkout, às vezes ao mesmo tempo, e a
+   * troca de estado condicionada é resolvida pelo banco.
    */
   async confirmCheckoutSession(sessionId: string): Promise<void> {
     const existingPayment = await this.prisma.payment.findFirst({
@@ -333,8 +364,23 @@ export class SubscriptionsService {
       return;
     }
 
+    if (subscription.status !== 'PENDING') {
+      this.logger.debug(`Checkout ${sessionId} já confirmado, ignorando`);
+      return;
+    }
+
     const session = await this.stripeService.retrieveCheckoutSession(sessionId);
-    if (session.payment_status !== 'paid') {
+    const stripeSubscription =
+      typeof session.subscription === 'string' ? null : session.subscription;
+    const trialEnd = stripeSubscription?.trial_end
+      ? new Date(stripeSubscription.trial_end * 1000)
+      : null;
+    const trialing =
+      session.payment_status === 'no_payment_required' &&
+      stripeSubscription?.status === 'trialing' &&
+      trialEnd !== null;
+
+    if (session.payment_status !== 'paid' && !trialing) {
       this.logger.warn(
         `Sessão ${sessionId} ainda não paga (${session.payment_status})`,
       );
@@ -342,17 +388,20 @@ export class SubscriptionsService {
     }
 
     const now = new Date();
-    const endDate =
-      subscription.billingPeriod === 'YEARLY'
-        ? new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000)
-        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const endDate = trialing
+      ? trialEnd
+      : new Date(
+          now.getTime() +
+            (subscription.billingPeriod === 'YEARLY' ? 365 : 30) * DAY_MS,
+        );
 
-    await this.prisma.subscription.update({
-      where: { id: subscription.id },
+    const { count } = await this.prisma.subscription.updateMany({
+      where: { id: subscription.id, status: 'PENDING' },
       data: {
-        status: 'ACTIVE',
+        status: trialing ? 'TRIAL' : 'ACTIVE',
         startDate: now,
         endDate,
+        trialEndDate: trialing ? trialEnd : null,
         stripeSubscriptionId:
           typeof session.subscription === 'string'
             ? session.subscription
@@ -363,6 +412,48 @@ export class SubscriptionsService {
             : session.customer?.id,
       },
     });
+    if (count === 0) {
+      this.logger.debug(`Checkout ${sessionId} confirmado em paralelo`);
+      return;
+    }
+
+    if (subscription.couponId) {
+      await this.consumeCoupon(
+        subscription.couponId,
+        subscription.userId,
+        metadataOf(subscription).couponDiscount ?? 0,
+      );
+    }
+
+    await this.replacePreviousSubscription(subscription, now);
+    await this.updateUserPlanCache(subscription.userId);
+    await this.activateTeacherForPlan(
+      subscription.userId,
+      subscription.planType,
+    );
+
+    if (trialing) {
+      await this.prisma.subscriptionHistory.create({
+        data: {
+          subscriptionId: subscription.id,
+          userId: subscription.userId,
+          action: 'TRIAL_STARTED',
+          toPlan: subscription.planType,
+          toPrice: subscription.price,
+          reason: `Teste até ${trialEnd.toISOString().slice(0, 10)}, cartão aceito pelo Stripe`,
+        },
+      });
+
+      if (subscription.user.email) {
+        await this.mailService.sendTrialStartedEmail(subscription.user.email, {
+          firstName: subscription.user.firstName ?? 'Usuário',
+          planType: subscription.planType,
+          chargeDate: trialEnd,
+          amount: subscription.price ?? 0,
+        });
+      }
+      return;
+    }
 
     const payment = await this.prisma.payment.create({
       data: {
@@ -391,45 +482,131 @@ export class SubscriptionsService {
 
     await this.invoicesService.createFromPayment(subscription.id, payment.id);
 
-    if (subscription.couponId) {
-      await this.consumeCoupon(
-        subscription.couponId,
-        subscription.userId,
-        (subscription.metadata as { couponDiscount?: number } | null)
-          ?.couponDiscount ?? 0,
-      );
-    }
-
-    // Se esta assinatura é resultado de um upgrade, só agora (com o pagamento
-    // já confirmado) a assinatura anterior é cancelada — ao contrário do
-    // legado, que cancelava o plano antigo no mesmo instante em que o
-    // checkout era criado, deixando o usuário sem nenhum plano pago caso o
-    // checkout fosse abandonado.
-    const metadata = subscription.metadata as {
-      replacesSubscriptionId?: string;
-    } | null;
-    if (metadata?.replacesSubscriptionId) {
-      await this.prisma.subscription.updateMany({
-        where: {
-          id: metadata.replacesSubscriptionId,
-          status: { in: ACTIVE_STATUSES },
-        },
-        data: { status: 'CANCELLED', cancelledAt: now, autoRenew: false },
-      });
-    }
-
-    await this.updateUserPlanCache(subscription.userId);
-    await this.activateTeacherForPlan(
-      subscription.userId,
-      subscription.planType,
-    );
-
     if (subscription.user.email) {
       await this.mailService.sendPaymentApprovedEmail(subscription.user.email, {
         firstName: subscription.user.firstName ?? 'Usuário',
         planType: subscription.planType,
         billingPeriod: subscription.billingPeriod ?? undefined,
         amount: payment.finalAmount,
+      });
+    }
+  }
+
+  /**
+   * Se esta assinatura é resultado de um upgrade, só agora (com o checkout
+   * concluído) a anterior é encerrada — o legado a cancelava ao **abrir** o
+   * checkout, e quem desistia ficava sem plano nenhum.
+   *
+   * **E encerrada também no Stripe.** Antes, ela só mudava aqui: a assinatura
+   * antiga seguia viva no Stripe, e quem subia de plano pagava as duas.
+   */
+  private async replacePreviousSubscription(
+    subscription: { metadata: Prisma.JsonValue | null },
+    now: Date,
+  ): Promise<void> {
+    const previousId = metadataOf(subscription).replacesSubscriptionId;
+    if (!previousId) return;
+
+    const previous = await this.prisma.subscription.findFirst({
+      where: {
+        id: previousId,
+        status: { in: [...ACTIVE_STATUSES, 'PAST_DUE'] },
+      },
+    });
+    if (!previous) return;
+
+    if (previous.stripeSubscriptionId) {
+      await this.stripeService.cancelSubscriptionNow(
+        previous.stripeSubscriptionId,
+      );
+    }
+    await this.prisma.subscription.update({
+      where: { id: previous.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: now,
+        endDate: now,
+        autoRenew: false,
+      },
+    });
+  }
+
+  /**
+   * Cobrança recusada — no fim do teste (cartão inválido, sem saldo) ou numa
+   * renovação. **A primeira recusa abre o prazo**: a assinatura fica atrasada,
+   * mantém o acesso por `PAYMENT_GRACE_DAYS` e a pessoa recebe um e-mail
+   * dizendo o que fazer e até quando. As tentativas seguintes do Stripe não
+   * esticam o prazo. Paga no prazo, `registerRenewal` devolve a ativa; sem
+   * solução, o cron encerra aqui e no Stripe.
+   */
+  async registerPaymentFailure(invoice: {
+    stripeSubscriptionId: string;
+    amountDue: number;
+    currency: string;
+  }): Promise<void> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { stripeSubscriptionId: invoice.stripeSubscriptionId },
+      include: { user: true },
+    });
+
+    if (!subscription) {
+      this.logger.warn(
+        `Cobrança recusada sem assinatura conhecida (stripeSubscriptionId=${invoice.stripeSubscriptionId})`,
+      );
+      return;
+    }
+
+    await this.prisma.payment.create({
+      data: {
+        subscriptionId: subscription.id,
+        amount: invoice.amountDue,
+        finalAmount: invoice.amountDue,
+        currency: invoice.currency.toUpperCase(),
+        status: 'REJECTED',
+      },
+    });
+
+    // Já atrasada: o prazo corre desde a primeira recusa.
+    if (subscription.status === 'PAST_DUE') return;
+    // Cancelada ou encerrada: não há o que salvar.
+    if (!['TRIAL', 'ACTIVE'].includes(subscription.status)) return;
+
+    const now = new Date();
+    const graceEndsAt = new Date(now.getTime() + PAYMENT_GRACE_DAYS * DAY_MS);
+    const afterTrial = subscription.status === 'TRIAL';
+
+    await this.prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        status: 'PAST_DUE',
+        endDate: graceEndsAt,
+        metadata: {
+          ...metadataOf(subscription),
+          paymentFailedAt: now.toISOString(),
+        },
+      },
+    });
+
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: subscription.id,
+        userId: subscription.userId,
+        action: 'PAYMENT_FAILED',
+        fromPlan: subscription.planType,
+        toPlan: subscription.planType,
+        reason: `${afterTrial ? 'Cobrança do fim do teste' : 'Renovação'} recusada; encerra em ${graceEndsAt.toISOString().slice(0, 10)} sem pagamento`,
+      },
+    });
+
+    await this.updateUserPlanCache(subscription.userId);
+
+    if (subscription.user.email) {
+      await this.mailService.sendPaymentFailedEmail(subscription.user.email, {
+        firstName: subscription.user.firstName ?? 'Usuário',
+        planType: subscription.planType,
+        amount: invoice.amountDue,
+        graceEndsAt,
+        afterTrial,
       });
     }
   }
@@ -475,7 +652,7 @@ export class SubscriptionsService {
     }
 
     const jaRegistrado = await this.prisma.payment.findFirst({
-      where: { stripeInvoiceId: invoice.id },
+      where: { stripeInvoiceId: invoice.id, status: 'APPROVED' },
     });
 
     if (jaRegistrado) {
@@ -498,14 +675,25 @@ export class SubscriptionsService {
             1000,
       );
 
+    // A descida agendada vale a partir desta fatura: o Stripe já cobrou o
+    // preço novo (`changePriceAtRenewal`), e o plano daqui acompanha.
+    const { pendingDowngrade } = metadataOf(subscription);
+    const metadata = { ...metadataOf(subscription) };
+    delete metadata.pendingDowngrade;
+    delete metadata.paymentFailedAt;
+
     await this.prisma.subscription.update({
       where: { id: subscription.id },
       data: {
         // `PAST_DUE` volta a valer: uma cobrança que falhou e foi recuperada
         // na tentativa seguinte não pode deixar a assinatura marcada como
-        // atrasada.
+        // atrasada. O teste que acabou com a cobrança aceita vira ativa.
         status: 'ACTIVE',
         endDate,
+        metadata,
+        ...(pendingDowngrade
+          ? { planType: pendingDowngrade, price: invoice.amountPaid }
+          : {}),
       },
     });
 
@@ -528,9 +716,15 @@ export class SubscriptionsService {
         subscriptionId: subscription.id,
         userId: subscription.userId,
         action: 'RENEWED',
-        toPlan: subscription.planType,
-        toPrice: subscription.price,
-        reason: 'Renovação cobrada pelo Stripe',
+        fromPlan: subscription.planType,
+        toPlan: pendingDowngrade ?? subscription.planType,
+        toPrice: invoice.amountPaid,
+        reason:
+          subscription.status === 'TRIAL'
+            ? 'Fim do teste: primeira cobrança aceita pelo Stripe'
+            : pendingDowngrade
+              ? `Renovação no plano ${pendingDowngrade} (descida agendada)`
+              : 'Renovação cobrada pelo Stripe',
       },
     });
 
@@ -566,14 +760,34 @@ export class SubscriptionsService {
     }
 
     const now = new Date();
+    const pastDue = subscription.status === 'PAST_DUE';
+
+    // No Stripe primeiro: se ele recusar, nada muda aqui — dizer "cancelada"
+    // enquanto o Stripe segue cobrando é o pior desfecho. Em dia (ou no
+    // teste), cancela no fim do período e nada mais é cobrado; atrasada,
+    // encerra agora, porque não há período pago a honrar.
+    if (subscription.stripeSubscriptionId) {
+      if (pastDue) {
+        await this.stripeService.cancelSubscriptionNow(
+          subscription.stripeSubscriptionId,
+        );
+      } else {
+        await this.stripeService.setCancelAtPeriodEnd(
+          subscription.stripeSubscriptionId,
+          true,
+        );
+      }
+    }
+
     const updated = await this.prisma.subscription.update({
       where: { id: subscription.id },
       data: {
         status: 'CANCELLED',
         cancelledAt: now,
         autoRenew: false,
+        ...(pastDue ? { endDate: now } : {}),
         metadata: {
-          ...((subscription.metadata as Prisma.JsonObject) ?? {}),
+          ...metadataOf(subscription),
           cancelReason: dto.reason ?? 'Não informado',
           cancelFeedback: dto.feedback ?? null,
           cancelledBy: 'user',
@@ -627,14 +841,25 @@ export class SubscriptionsService {
       );
     }
 
+    if (subscription.stripeSubscriptionId) {
+      await this.stripeService.setCancelAtPeriodEnd(
+        subscription.stripeSubscriptionId,
+        false,
+      );
+    }
+
+    const stillInTrial =
+      subscription.trialEndDate !== null &&
+      subscription.trialEndDate > new Date();
+
     const updated = await this.prisma.subscription.update({
       where: { id: subscription.id },
       data: {
-        status: 'ACTIVE',
+        status: stillInTrial ? 'TRIAL' : 'ACTIVE',
         cancelledAt: null,
         autoRenew: true,
         metadata: {
-          ...((subscription.metadata as Prisma.JsonObject) ?? {}),
+          ...metadataOf(subscription),
           reactivatedAt: new Date().toISOString(),
           reactivatedBy: 'user',
         },
@@ -682,12 +907,26 @@ export class SubscriptionsService {
     );
 
     if (changeType === 'DOWNGRADE') {
+      // Com Stripe, a próxima cobrança já sai no preço do plano novo, e o
+      // plano daqui muda quando ela for paga. Antes a descida ficava só
+      // anotada: o Stripe renovava no plano caro e nada mais acontecia.
+      // Plano concedido pela equipe (sem Stripe) não renova: só anota.
+      if (current.stripeSubscriptionId) {
+        await this.stripeService.changePriceAtRenewal(
+          current.stripeSubscriptionId,
+          await this.stripeCatalog.priceIdFor(
+            dto.newPlanType,
+            dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY',
+          ),
+        );
+      }
+
       await this.prisma.subscription.update({
         where: { id: current.id },
         data: {
-          autoRenew: false,
+          autoRenew: Boolean(current.stripeSubscriptionId),
           metadata: {
-            ...((current.metadata as Prisma.JsonObject) ?? {}),
+            ...metadataOf(current),
             pendingDowngrade: dto.newPlanType,
           },
         },
@@ -725,6 +964,7 @@ export class SubscriptionsService {
         dto.newPlanType,
         dto.billingPeriod ?? 'MONTHLY',
       ),
+      customerId: current.stripeCustomerId,
     });
 
     const newSubscription = await this.prisma.subscription.create({
@@ -862,6 +1102,80 @@ export class SubscriptionsService {
     return subscription;
   }
 
+  /**
+   * A equipe muda o plano que concedeu — Mentor ↔ Maestro e o vencimento
+   * (nulo: sem vencimento). Sem plano concedido em vigor, concede um novo.
+   *
+   * **Só plano concedido.** Uma assinatura paga pelo Stripe não se mexe por
+   * aqui: o preço e o ciclo dela são do Stripe, e mudar o plano sem mudar a
+   * cobrança faria os dois lados divergirem.
+   */
+  async updateGrantedPlan(
+    userId: string,
+    changes: { planType?: PlanType; expiresAt?: Date | null },
+    actingUserId: string,
+  ): Promise<Subscription> {
+    if (changes.expiresAt && changes.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('O vencimento do plano precisa ser futuro');
+    }
+
+    const current = await this.getCurrentSubscription(userId);
+    if (current?.stripeSubscriptionId) {
+      throw new BadRequestException(
+        'Esta conta paga pelo Stripe: o plano muda pela própria assinatura',
+      );
+    }
+
+    const granted =
+      current && metadataOf(current).origin === 'GRANTED_BY_TEAM'
+        ? current
+        : null;
+
+    if (!granted) {
+      if (!changes.planType || changes.planType === 'FREE') {
+        throw new BadRequestException('Escolha o plano a conceder');
+      }
+      const created = await this.grantPlan(
+        userId,
+        changes.planType,
+        changes.expiresAt ?? null,
+        actingUserId,
+      );
+      await this.activateTeacherForPlan(userId, changes.planType);
+      return created;
+    }
+
+    const planType = changes.planType ?? granted.planType;
+    if (planType === 'FREE') {
+      throw new BadRequestException('Conceda um plano pago');
+    }
+    const endDate =
+      changes.expiresAt !== undefined ? changes.expiresAt : granted.endDate;
+
+    const updated = await this.prisma.subscription.update({
+      where: { id: granted.id },
+      data: { planType, endDate },
+    });
+
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: granted.id,
+        userId,
+        action: 'GRANT_UPDATED',
+        fromPlan: granted.planType,
+        toPlan: planType,
+        toPrice: 0,
+        reason: endDate
+          ? `Plano concedido alterado pela equipe: ${planType} até ${endDate.toISOString().slice(0, 10)}`
+          : `Plano concedido alterado pela equipe: ${planType}, sem vencimento`,
+      },
+    });
+
+    await this.updateUserPlanCache(userId);
+    await this.activateTeacherForPlan(userId, planType);
+    return updated;
+  }
+
   async updateUserPlanCache(userId: string): Promise<void> {
     const subscription = await this.getCurrentSubscription(userId);
 
@@ -944,6 +1258,16 @@ export class SubscriptionsService {
     }
 
     return coupon;
+  }
+
+  /** O cliente do Stripe da pessoa, se ela já teve um: o checkout o reaproveita. */
+  private async stripeCustomerIdOf(userId: string): Promise<string | null> {
+    const previous = await this.prisma.subscription.findFirst({
+      where: { userId, stripeCustomerId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { stripeCustomerId: true },
+    });
+    return previous?.stripeCustomerId ?? null;
   }
 
   private getFrontendBaseUrl(): string {

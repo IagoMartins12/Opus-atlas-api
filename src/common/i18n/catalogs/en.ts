@@ -313,6 +313,11 @@ export const en: Catalog = {
   'Sem permissão para acessar esta nota fiscal':
     'No permission to access this invoice',
   'Você já está neste plano': 'You are already on this plan',
+  'Escolha o plano a conceder': 'Choose the plan to grant',
+  'Esta conta paga pelo Stripe: o plano muda pela própria assinatura':
+    'This account pays through Stripe: the plan changes through its own subscription',
+  'O vencimento do plano precisa ser futuro':
+    'The plan expiry date must be in the future',
   'Você já possui uma assinatura ativa':
     'You already have an active subscription',
   'session_id ausente': 'Missing session_id',

@@ -12,7 +12,11 @@ describe('TeacherInvitationService', () => {
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock };
     teacher: { update: jest.Mock };
-    userToken: { findUnique: jest.Mock };
+    userToken: {
+      findUnique: jest.Mock;
+      findFirst: jest.Mock;
+      updateMany: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
   let tokens: {
@@ -38,7 +42,11 @@ describe('TeacherInvitationService', () => {
         update: jest.fn().mockReturnValue('user-update'),
       },
       teacher: { update: jest.fn().mockReturnValue('teacher-update') },
-      userToken: { findUnique: jest.fn() },
+      userToken: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       $transaction: jest.fn().mockResolvedValue([]),
     };
     tokens = {
@@ -141,6 +149,111 @@ describe('TeacherInvitationService', () => {
     tokens.checkRateLimit.mockResolvedValue({ allowed: false });
 
     await expect(service.resend('tok')).rejects.toBeInstanceOf(HttpException);
+  });
+
+  describe('convite pendente, pelo painel', () => {
+    const DAY = 86_400_000;
+    const pendente = (over: Record<string, unknown> = {}) => ({
+      createdAt: new Date(Date.now() - DAY),
+      expiresAt: new Date(Date.now() + 29 * DAY),
+      metadata: { planGrant: { planType: 'MENTOR', expiresAt: null } },
+      ...over,
+    });
+
+    it('mostra plano, vencimentos e se já venceu', async () => {
+      prisma.userToken.findFirst.mockResolvedValue(
+        pendente({ expiresAt: new Date(Date.now() - 1000) }),
+      );
+
+      const convite = await service.getPending('u1');
+
+      expect(convite).toMatchObject({
+        planType: 'MENTOR',
+        planExpiresAt: null,
+        expired: true,
+      });
+    });
+
+    it('sem convite pendente, editar é 404', async () => {
+      await expect(
+        service.updatePending('u1', 'admin', { planType: 'MAESTRO' }),
+      ).rejects.toThrow('Nenhum convite de professor pendente');
+    });
+
+    it('troca o plano e prorroga o convite no mesmo link, sem novo e-mail', async () => {
+      prisma.userToken.findFirst.mockResolvedValue(pendente());
+      const ate = new Date(Date.now() + 10 * DAY);
+
+      await service.updatePending('u1', 'admin', {
+        planType: 'MAESTRO',
+        inviteExpiresAt: ate,
+      });
+
+      expect(prisma.userToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', used: false, type: 'TEACHER_INVITATION_ACCEPT' },
+        data: {
+          expiresAt: ate,
+          metadata: { planGrant: { planType: 'MAESTRO', expiresAt: null } },
+        },
+      });
+      expect(prisma.userToken.updateMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'u1',
+          used: false,
+          type: 'TEACHER_INVITATION_DECLINE',
+        },
+        data: { expiresAt: ate },
+      });
+      expect(mail.sendTeacherInvitationEmail).not.toHaveBeenCalled();
+    });
+
+    it('com reenvio, saem links novos com a validade escolhida', async () => {
+      prisma.userToken.findFirst.mockResolvedValue(pendente());
+      prisma.user.findUnique.mockResolvedValue({
+        email: 'ana@example.com',
+        firstName: 'Ana',
+        lastName: null,
+      });
+      const ate = new Date(Date.now() + 10 * DAY);
+
+      await service.updatePending('u1', 'admin', {
+        inviteExpiresAt: ate,
+        resend: true,
+      });
+
+      expect(tokens.createToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'TEACHER_INVITATION_ACCEPT',
+          expiresAt: ate,
+        }),
+      );
+      expect(prisma.userToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('datas no passado são recusadas', async () => {
+      prisma.userToken.findFirst.mockResolvedValue(pendente());
+
+      await expect(
+        service.updatePending('u1', 'admin', {
+          planExpiresAt: new Date(Date.now() - DAY),
+        }),
+      ).rejects.toThrow('O vencimento do plano precisa ser futuro');
+      await expect(
+        service.updatePending('u1', 'admin', {
+          inviteExpiresAt: new Date(Date.now() - DAY),
+        }),
+      ).rejects.toThrow('A validade do convite precisa ser futura');
+    });
+
+    it('convite antigo, sem plano, exige que se escolha um', async () => {
+      prisma.userToken.findFirst.mockResolvedValue(pendente({ metadata: {} }));
+
+      await expect(
+        service.updatePending('u1', 'admin', {
+          inviteExpiresAt: new Date(Date.now() + DAY),
+        }),
+      ).rejects.toThrow('Escolha o plano do professor convidado');
+    });
   });
 
   describe('plano que acompanha o convite', () => {

@@ -1,5 +1,6 @@
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeService } from './stripe.service';
 import { SubscriptionsCronService } from './subscriptions-cron.service';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -18,7 +19,9 @@ describe('SubscriptionsCronService', () => {
   let mail: {
     sendTrialExpiringEmail: jest.Mock;
     sendRenewalReminderEmail: jest.Mock;
+    sendSubscriptionEndedEmail: jest.Mock;
   };
+  let stripe: { cancelSubscriptionNow: jest.Mock };
   let service: SubscriptionsCronService;
 
   /** Cada etapa do cron faz um `findMany` com um filtro próprio. */
@@ -56,22 +59,27 @@ describe('SubscriptionsCronService', () => {
     mail = {
       sendTrialExpiringEmail: jest.fn().mockResolvedValue(undefined),
       sendRenewalReminderEmail: jest.fn().mockResolvedValue(undefined),
+      sendSubscriptionEndedEmail: jest.fn().mockResolvedValue(undefined),
     };
+    stripe = { cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined) };
     service = new SubscriptionsCronService(
       prisma as unknown as PrismaService,
       subscriptions as unknown as SubscriptionsService,
       mail as unknown as MailService,
+      stripe as unknown as StripeService,
     );
   });
 
-  it('avisa teste acabando, uma vez por dia, e registra', async () => {
+  it('avisa teste acabando, com data e valor da cobrança, uma vez por dia', async () => {
+    const trialEndDate = new Date(Date.now() + 2 * DAY - 1000);
     rowsFor({
       expiring: [
         {
           id: 's1',
           userId: 'u1',
           planType: 'PLUS',
-          trialEndDate: new Date(Date.now() + 2 * DAY - 1000),
+          price: 19.9,
+          trialEndDate,
           user: { email: 'a@x.com', firstName: null },
         },
         {
@@ -90,6 +98,8 @@ describe('SubscriptionsCronService', () => {
       firstName: 'Usuário',
       planType: 'PLUS',
       daysRemaining: 2,
+      chargeDate: trialEndDate,
+      amount: 19.9,
     });
     expect(result.trialsExpiring).toBe(1);
     expect(prisma.subscriptionHistory.create).toHaveBeenCalledWith({
@@ -110,12 +120,19 @@ describe('SubscriptionsCronService', () => {
     expect(mail.sendTrialExpiringEmail).not.toHaveBeenCalled();
   });
 
-  it('teste vencido expira e o plano do usuário volta ao gratuito', async () => {
+  it('teste vencido sem notícia do Stripe expira, depois da folga do webhook', async () => {
     rowsFor({
       expiredTrials: [{ id: 's1', userId: 'u1', planType: 'PLUS', price: 30 }],
     });
 
     const result = await service.checkSubscriptions();
+
+    const [{ where }] = prisma.subscription.findMany.mock.calls.find(
+      ([args]) => args.where.status === 'TRIAL' && args.where.trialEndDate?.lt,
+    );
+    expect(where.trialEndDate.lt.getTime()).toBeLessThan(
+      Date.now() - DAY + 1000,
+    );
 
     expect(prisma.subscription.update).toHaveBeenCalledWith({
       where: { id: 's1' },
@@ -174,6 +191,58 @@ describe('SubscriptionsCronService', () => {
         reason: 'Fim do período pago de assinatura cancelada',
       }),
     });
+  });
+
+  it('atrasada sem pagamento no prazo: encerra no Stripe, aqui, e avisa', async () => {
+    rowsFor({
+      expired: [
+        {
+          id: 's1',
+          userId: 'u1',
+          planType: 'MENTOR',
+          status: 'PAST_DUE',
+          stripeSubscriptionId: 'sub_1',
+          user: { email: 'a@x.com', firstName: 'Ana' },
+        },
+      ],
+    });
+
+    await service.checkSubscriptions();
+
+    expect(stripe.cancelSubscriptionNow).toHaveBeenCalledWith('sub_1');
+    expect(prisma.subscription.update).toHaveBeenCalledWith({
+      where: { id: 's1' },
+      data: { status: 'EXPIRED' },
+    });
+    expect(prisma.subscriptionHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reason: 'Cobrança recusada e não resolvida no prazo',
+      }),
+    });
+    expect(mail.sendSubscriptionEndedEmail).toHaveBeenCalledWith('a@x.com', {
+      firstName: 'Ana',
+      planType: 'MENTOR',
+    });
+  });
+
+  it('se o Stripe recusar o encerramento, a assinatura não muda aqui', async () => {
+    rowsFor({
+      expired: [
+        {
+          id: 's1',
+          userId: 'u1',
+          status: 'PAST_DUE',
+          stripeSubscriptionId: 'sub_1',
+          user: { email: 'a@x.com' },
+        },
+      ],
+    });
+    stripe.cancelSubscriptionNow.mockRejectedValue(new Error('stripe fora'));
+
+    const result = await service.checkSubscriptions();
+
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(result.errors).toContain('Expirar assinatura s1: stripe fora');
   });
 
   it('checkout abandonado há mais de dois dias expira', async () => {

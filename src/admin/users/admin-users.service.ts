@@ -8,6 +8,7 @@ import {
 import { PlanType, Prisma, TeacherStatus } from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TeacherInvitationService } from './teacher-invitation.service';
 import { toCsv } from '../../common/utils/csv.util';
@@ -18,6 +19,8 @@ import {
   ExportAdminUsersQueryDto,
   ListAdminUsersQueryDto,
   UpdateAdminUserDto,
+  UpdateGrantedPlanDto,
+  UpdateTeacherInvitationDto,
 } from './dto/admin-users.dto';
 
 const MAX_EXPORT_ROWS = 10_000;
@@ -70,6 +73,7 @@ export class AdminUsersService {
     private readonly prisma: PrismaService,
     private readonly cache: AppCacheService,
     private readonly invitations: TeacherInvitationService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -147,47 +151,69 @@ export class AdminUsersService {
     }
 
     const agora = new Date();
-    const [[counts], assinatura, historico] = await Promise.all([
-      this.withCounts([user]),
-      // A assinatura que dá acesso hoje (a mais recente das vivas).
-      this.prisma.subscription.findFirst({
-        where: {
-          userId,
-          OR: [
-            { status: { in: ['ACTIVE', 'TRIAL', 'PAST_DUE'] } },
-            { status: 'CANCELLED', endDate: { gt: agora } },
-          ],
-        },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          planType: true,
-          billingPeriod: true,
-          status: true,
-          endDate: true,
-          trialEndDate: true,
-        },
-      }),
-      // O que o painel fez com esta conta — a trilha, filtrada pelo alvo.
-      this.prisma.adminAuditLog.findMany({
-        where: { entityType: 'user', entityId: userId },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-        select: {
-          id: true,
-          action: true,
-          actorId: true,
-          metadata: true,
-          success: true,
-          createdAt: true,
-        },
-      }),
-    ]);
+    const [[counts], assinatura, historico, conviteProfessor] =
+      await Promise.all([
+        this.withCounts([user]),
+        // A assinatura que dá acesso hoje (a mais recente das vivas).
+        this.prisma.subscription.findFirst({
+          where: {
+            userId,
+            OR: [
+              { status: { in: ['ACTIVE', 'TRIAL', 'PAST_DUE'] } },
+              { status: 'CANCELLED', endDate: { gt: agora } },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            planType: true,
+            billingPeriod: true,
+            status: true,
+            endDate: true,
+            trialEndDate: true,
+            stripeSubscriptionId: true,
+            metadata: true,
+          },
+        }),
+        // O que o painel fez com esta conta — a trilha, filtrada pelo alvo.
+        this.prisma.adminAuditLog.findMany({
+          where: { entityType: 'user', entityId: userId },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          select: {
+            id: true,
+            action: true,
+            actorId: true,
+            metadata: true,
+            success: true,
+            createdAt: true,
+          },
+        }),
+        user.teacherProfile?.status === TeacherStatus.PENDING
+          ? this.invitations.getPending(userId)
+          : null,
+      ]);
 
     return {
       ...user,
       counts: counts.counts,
-      assinatura,
+      // `concedida`: plano dado pela equipe, que o painel pode editar; o pago
+      // pelo Stripe muda só pela própria assinatura.
+      assinatura: assinatura
+        ? {
+            id: assinatura.id,
+            planType: assinatura.planType,
+            billingPeriod: assinatura.billingPeriod,
+            status: assinatura.status,
+            endDate: assinatura.endDate,
+            trialEndDate: assinatura.trialEndDate,
+            concedida:
+              !assinatura.stripeSubscriptionId &&
+              (assinatura.metadata as { origin?: string } | null)?.origin ===
+                'GRANTED_BY_TEAM',
+          }
+        : null,
+      conviteProfessor,
       historicoNoPainel: historico,
     };
   }
@@ -795,9 +821,22 @@ export class AdminUsersService {
         'O plano concedido acompanha o convite de professor (isTeacher: true)',
       );
     }
+    // Convite sem plano deixava o professor no Free, com 0 alunos: virava
+    // professor e não conseguia convidar ninguém. O plano é o limite.
+    if (dto.isTeacher === true && !target.isTeacher && !grant) {
+      throw new BadRequestException(
+        'Escolha o plano do professor convidado: Mentor ou Maestro',
+      );
+    }
     const grantExpiresAt = grant?.expiresAt ? new Date(grant.expiresAt) : null;
     if (grantExpiresAt && grantExpiresAt <= new Date()) {
       throw new BadRequestException('O vencimento do plano precisa ser futuro');
+    }
+    const inviteExpiresAt = dto.teacherInviteExpiresAt
+      ? new Date(dto.teacherInviteExpiresAt)
+      : undefined;
+    if (inviteExpiresAt && inviteExpiresAt <= new Date()) {
+      throw new BadRequestException('A validade do convite precisa ser futura');
     }
 
     // Ser professor é `isTeacher`, nunca o papel. O legado usava `role: 1`
@@ -865,9 +904,59 @@ export class AdminUsersService {
         grant
           ? { planType: grant.planType, expiresAt: grantExpiresAt }
           : undefined,
+        inviteExpiresAt,
       );
     }
 
+    return this.findOne(targetUserId);
+  }
+
+  /** Muda o convite de professor ainda sem resposta (plano, vencimentos, reenvio). */
+  async updateTeacherInvitation(
+    actingUserId: string,
+    targetUserId: string,
+    dto: UpdateTeacherInvitationDto,
+  ) {
+    await this.invitations.updatePending(targetUserId, actingUserId, {
+      planType: dto.planType,
+      planExpiresAt:
+        dto.planExpiresAt === undefined
+          ? undefined
+          : dto.planExpiresAt === null
+            ? null
+            : new Date(dto.planExpiresAt),
+      inviteExpiresAt: dto.inviteExpiresAt
+        ? new Date(dto.inviteExpiresAt)
+        : undefined,
+      resend: dto.resend,
+    });
+    return this.findOne(targetUserId);
+  }
+
+  /** Muda (ou concede) o plano dado pela equipe — nunca o pago pelo Stripe. */
+  async updateGrantedPlan(
+    actingUserId: string,
+    targetUserId: string,
+    dto: UpdateGrantedPlanDto,
+  ) {
+    const existe = await this.prisma.user.count({
+      where: { id: targetUserId },
+    });
+    if (!existe) throw new NotFoundException('Usuário não encontrado');
+
+    await this.subscriptions.updateGrantedPlan(
+      targetUserId,
+      {
+        planType: dto.planType,
+        expiresAt:
+          dto.expiresAt === undefined
+            ? undefined
+            : dto.expiresAt === null
+              ? null
+              : new Date(dto.expiresAt),
+      },
+      actingUserId,
+    );
     return this.findOne(targetUserId);
   }
 

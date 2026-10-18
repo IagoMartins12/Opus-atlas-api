@@ -1,4 +1,5 @@
 import { AppCacheService } from '../../common/cache/cache.service';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { TeacherInvitationService } from './teacher-invitation.service';
 import {
   BadRequestException,
@@ -11,7 +12,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminUsersService } from './admin-users.service';
 
 describe('AdminUsersService', () => {
-  const invitations = { send: jest.fn().mockResolvedValue(true) };
+  const invitations = {
+    send: jest.fn().mockResolvedValue(true),
+    getPending: jest.fn().mockResolvedValue(null),
+    updatePending: jest.fn().mockResolvedValue({}),
+  };
+  const subscriptions = { updateGrantedPlan: jest.fn().mockResolvedValue({}) };
+  /** Convidar exige o plano: é ele que dá o limite de alunos. */
+  const convite = {
+    isTeacher: true,
+    teacherPlanGrant: { planType: 'MENTOR' as const },
+  };
 
   let service: AdminUsersService;
   let prisma: {
@@ -91,6 +102,7 @@ describe('AdminUsersService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AppCacheService, useValue: { invalidateMany: jest.fn() } },
         { provide: TeacherInvitationService, useValue: invitations },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -162,7 +174,7 @@ describe('AdminUsersService', () => {
     // No legado o `teacher.create` acontecia antes do `user.update`: falhando o
     // segundo, sobrava perfil de professor numa conta que não é professor.
     it('conta e perfil mudam na mesma transação', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(tx.user.update).toHaveBeenCalled();
@@ -171,14 +183,14 @@ describe('AdminUsersService', () => {
     });
 
     it('promover a professor cria o perfil e marca a conta', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.user.update.mock.calls[0][0].data.isTeacher).toBe(true);
     });
 
     // Promover a professor não é o mesmo que aprovar o professor.
     it('o perfil nasce pendente e não verificado', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.teacher.create.mock.calls[0][0].data).toEqual({
         userId: 'user-2',
@@ -192,7 +204,7 @@ describe('AdminUsersService', () => {
         alvo({ teacherProfile: { id: 'teacher-1' } }),
       );
 
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.teacher.create).not.toHaveBeenCalled();
     });
@@ -213,12 +225,84 @@ describe('AdminUsersService', () => {
     });
 
     it('promover a professor envia o convite', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(invitations.send).toHaveBeenCalledWith(
         'user-2',
         'admin-1',
+        { planType: 'MENTOR', expiresAt: null },
         undefined,
+      );
+    });
+
+    // Sem plano, o professor ficava no Free, com 0 alunos.
+    it('convidar sem plano é recusado', async () => {
+      invitations.send.mockClear();
+      await expect(
+        service.update('admin-1', 'user-2', { isTeacher: true }),
+      ).rejects.toThrow('Escolha o plano do professor convidado');
+      expect(invitations.send).not.toHaveBeenCalled();
+    });
+
+    it('a validade escolhida para o convite vai junto', async () => {
+      const ate = new Date(Date.now() + 10 * 86_400_000).toISOString();
+
+      await service.update('admin-1', 'user-2', {
+        ...convite,
+        teacherInviteExpiresAt: ate,
+      });
+
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        expect.anything(),
+        new Date(ate),
+      );
+    });
+
+    it('validade do convite no passado é recusada', async () => {
+      await expect(
+        service.update('admin-1', 'user-2', {
+          ...convite,
+          teacherInviteExpiresAt: '2020-01-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow('A validade do convite precisa ser futura');
+    });
+
+    it('editar o convite pendente passa datas como Date e nulo como nulo', async () => {
+      const ate = new Date(Date.now() + 5 * 86_400_000).toISOString();
+
+      await service.updateTeacherInvitation('admin-1', 'user-2', {
+        planType: 'MAESTRO',
+        planExpiresAt: null,
+        inviteExpiresAt: ate,
+      });
+
+      expect(invitations.updatePending).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        {
+          planType: 'MAESTRO',
+          planExpiresAt: null,
+          inviteExpiresAt: new Date(ate),
+          resend: undefined,
+        },
+      );
+    });
+
+    it('editar o plano concedido de uma conta que não existe é 404', async () => {
+      await expect(
+        service.updateGrantedPlan('admin-1', 'user-x', { planType: 'MAESTRO' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prisma.user.count.mockResolvedValue(1);
+      await service.updateGrantedPlan('admin-1', 'user-2', {
+        expiresAt: null,
+      });
+      expect(subscriptions.updateGrantedPlan).toHaveBeenCalledWith(
+        'user-2',
+        { planType: undefined, expiresAt: null },
+        'admin-1',
       );
     });
 
@@ -229,7 +313,7 @@ describe('AdminUsersService', () => {
         alvo({ teacherProfile: { id: 'teacher-1' } }),
       );
 
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.teacher.update.mock.calls[0][0].data).toEqual({
         status: 'PENDING',
@@ -245,10 +329,12 @@ describe('AdminUsersService', () => {
         teacherPlanGrant: { planType: 'MAESTRO', expiresAt: ate },
       });
 
-      expect(invitations.send).toHaveBeenCalledWith('user-2', 'admin-1', {
-        planType: 'MAESTRO',
-        expiresAt: new Date(ate),
-      });
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        { planType: 'MAESTRO', expiresAt: new Date(ate) },
+        undefined,
+      );
     });
 
     it('plano sem vencimento vai como nulo', async () => {
@@ -257,10 +343,12 @@ describe('AdminUsersService', () => {
         teacherPlanGrant: { planType: 'MENTOR' },
       });
 
-      expect(invitations.send).toHaveBeenCalledWith('user-2', 'admin-1', {
-        planType: 'MENTOR',
-        expiresAt: null,
-      });
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        { planType: 'MENTOR', expiresAt: null },
+        undefined,
+      );
     });
 
     it('plano sem convite de professor é recusado', async () => {

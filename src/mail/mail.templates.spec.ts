@@ -209,9 +209,34 @@ describe('MailService — modelos', () => {
     ],
     [
       'sendTrialExpiringEmail',
-      { planType: 'MENTOR', daysRemaining: 2 },
+      {
+        planType: 'MENTOR',
+        daysRemaining: 2,
+        chargeDate: new Date('2026-11-15T12:00:00Z'),
+        amount: 39.9,
+      },
       'teste',
     ],
+    [
+      'sendTrialStartedEmail',
+      {
+        planType: 'MENTOR',
+        chargeDate: new Date('2026-11-15T12:00:00Z'),
+        amount: 39.9,
+      },
+      'teste',
+    ],
+    [
+      'sendPaymentFailedEmail',
+      {
+        planType: 'MENTOR',
+        amount: 39.9,
+        graceEndsAt: new Date('2026-11-19T12:00:00Z'),
+        afterTrial: true,
+      },
+      'cartão',
+    ],
+    ['sendSubscriptionEndedEmail', { planType: 'MENTOR' }, 'encerrada'],
   ])(
     '%s escapa o nome e tem o assunto certo',
     async (method, data, subjectPart) => {

@@ -32,6 +32,8 @@ import {
   ExportAdminUsersQueryDto,
   ListAdminUsersQueryDto,
   UpdateAdminUserDto,
+  UpdateGrantedPlanDto,
+  UpdateTeacherInvitationDto,
 } from './dto/admin-users.dto';
 
 /**
@@ -165,5 +167,65 @@ export class AdminUsersController {
     @Body() dto: UpdateAdminUserDto,
   ) {
     return this.service.update(user.sub, id, dto);
+  }
+
+  @Patch(':id/teacher-invitation')
+  @Audited({
+    action: 'user.teacher-invitation.update',
+    entityType: 'user',
+    entityIdParam: 'id',
+  })
+  @ApiOperation({
+    summary: 'Muda o convite de professor ainda sem resposta',
+    description:
+      'Plano oferecido (Mentor ou Maestro), vencimento do plano e validade ' +
+      'do convite. Sem `resend`, o link do e-mail continua o mesmo; com ele, ' +
+      'saem links novos e outro e-mail.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'Usuário, com o convite atualizado' })
+  @ApiBadRequestResponse({
+    description: 'Data no passado ou plano ausente',
+    type: ErrorResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'Nenhum convite pendente',
+    type: ErrorResponseDto,
+  })
+  async updateTeacherInvitation(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateTeacherInvitationDto,
+  ) {
+    return this.service.updateTeacherInvitation(user.sub, id, dto);
+  }
+
+  @Patch(':id/granted-plan')
+  @Audited({
+    action: 'subscription.grant',
+    entityType: 'user',
+    entityIdParam: 'id',
+  })
+  @ApiOperation({
+    summary: 'Muda ou concede o plano dado pela equipe',
+    description:
+      'Troca Mentor ↔ Maestro e o vencimento (nulo: sem vencimento). Sem ' +
+      'plano concedido em vigor, concede um. Assinatura paga pelo Stripe é ' +
+      'recusada: ela muda pela própria assinatura.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'Usuário, com a assinatura atualizada' })
+  @ApiBadRequestResponse({
+    description:
+      'Vencimento no passado, plano ausente, ou conta paga pelo Stripe',
+    type: ErrorResponseDto,
+  })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async updateGrantedPlan(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id') id: string,
+    @Body() dto: UpdateGrantedPlanDto,
+  ) {
+    return this.service.updateGrantedPlan(user.sub, id, dto);
   }
 }

@@ -236,8 +236,68 @@ export function renewalReminder(
   };
 }
 
+function longDate(date: Date, language: EmailLanguage): string {
+  return date.toLocaleDateString(LOCALES[language], {
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'America/Sao_Paulo',
+  });
+}
+
+/** The trial began with the card accepted: when the first charge happens, and how much. */
+export function trialStarted(
+  data: {
+    firstName: string;
+    planType: PlanType;
+    chargeDate: Date;
+    amount: number;
+  },
+  { say, language, site }: TemplateContext,
+): EmailSpec {
+  const plan = PLAN_NAMES[language][data.planType];
+  const date = longDate(data.chargeDate, language);
+  const amount = formatBRL(data.amount, language);
+  return {
+    subject: say(
+      `Seu teste do ${plan} começou`,
+      `Your ${plan} trial has started`,
+    ),
+    preheader: say(
+      `Nada é cobrado até ${date}.`,
+      `Nothing is charged until ${date}.`,
+    ),
+    title: say('Teste grátis começou', 'Your free trial has started'),
+    paragraphs: [
+      say(
+        `Olá, ${data.firstName}. O plano ${plan} já está liberado. Nada é cobrado até ${date}; nesse dia, o cartão cadastrado paga ${amount} e a assinatura segue.`,
+        `Hi, ${data.firstName}. Your ${plan} plan is unlocked. Nothing is charged until ${date}; on that day, the card on file pays ${amount} and the subscription continues.`,
+      ),
+      say(
+        'Se não quiser continuar, cancele antes dessa data em Meu perfil → Configurações da Conta. Nada será cobrado.',
+        'If you do not want to continue, cancel before that date in My profile → Account settings. Nothing will be charged.',
+      ),
+    ],
+    emblem: 'recibo',
+    highlight: {
+      value: amount,
+      label: say(`primeira cobrança em ${date}`, `first charge on ${date}`),
+    },
+    action: {
+      label: say('Ver minha assinatura', 'See my subscription'),
+      url: `${site}/profile`,
+    },
+    footer: 'cobranca',
+  };
+}
+
 export function trialExpiring(
-  data: { firstName: string; planType: PlanType; daysRemaining: number },
+  data: {
+    firstName: string;
+    planType: PlanType;
+    daysRemaining: number;
+    chargeDate: Date;
+    amount: number;
+  },
   { say, language, site }: TemplateContext,
 ): EmailSpec {
   const one = data.daysRemaining === 1;
@@ -246,27 +306,123 @@ export function trialExpiring(
   const days = one
     ? say('1 dia', '1 day')
     : say(`${data.daysRemaining} dias`, `${data.daysRemaining} days`);
+  const date = longDate(data.chargeDate, language);
+  const amount = formatBRL(data.amount, language);
   return {
     subject: say(
       `Seu teste do ${plan} termina em ${days}`,
       `Your ${plan} trial ends in ${days}`,
     ),
     preheader: say(
-      'Assine para continuar com tudo o que você usa.',
-      'Subscribe to keep everything you use.',
+      `Em ${date}, o cartão cadastrado paga ${amount}.`,
+      `On ${date}, the card on file pays ${amount}.`,
     ),
     title: say('Seu período de teste está acabando', 'Your trial is ending'),
     paragraphs: [
       say(
-        `Olá, ${data.firstName}. O teste do plano ${plan} termina em ${days}. Assine para continuar com tudo o que você usa hoje.`,
-        `Hi, ${data.firstName}. Your ${plan} trial ends in ${days}. Subscribe to keep everything you use today.`,
+        `Olá, ${data.firstName}. O teste do plano ${plan} termina em ${days}. Em ${date}, o cartão cadastrado paga ${amount} e você continua com tudo o que usa hoje.`,
+        `Hi, ${data.firstName}. Your ${plan} trial ends in ${days}. On ${date}, the card on file pays ${amount} and you keep everything you use today.`,
+      ),
+      say(
+        'Se não quiser continuar, cancele antes em Meu perfil → Configurações da Conta. Nada será cobrado.',
+        'If you do not want to continue, cancel before then in My profile → Account settings. Nothing will be charged.',
       ),
     ],
     emblem: 'recibo',
     highlight: {
-      value: days,
-      label: say('até o fim do teste', 'until the trial ends'),
+      value: amount,
+      label: say(`em ${date}`, `on ${date}`),
     },
+    action: {
+      label: say('Ver minha assinatura', 'See my subscription'),
+      url: `${site}/profile`,
+    },
+    footer: 'cobranca',
+  };
+}
+
+/** A charge was declined: what happened, what to do and the deadline. */
+export function paymentFailed(
+  data: {
+    firstName: string;
+    planType: PlanType;
+    amount: number;
+    graceEndsAt: Date;
+    afterTrial: boolean;
+  },
+  { say, language, site }: TemplateContext,
+): EmailSpec {
+  const plan = PLAN_NAMES[language][data.planType];
+  const date = longDate(data.graceEndsAt, language);
+  const amount = formatBRL(data.amount, language);
+  return {
+    subject: say(
+      `Não conseguimos cobrar o plano ${plan}`,
+      `We could not charge your ${plan} plan`,
+    ),
+    preheader: say(
+      `Atualize o cartão até ${date} para continuar.`,
+      `Update your card by ${date} to keep going.`,
+    ),
+    title: say('O pagamento foi recusado', 'The payment was declined'),
+    paragraphs: [
+      data.afterTrial
+        ? say(
+            `Olá, ${data.firstName}. O teste do plano ${plan} terminou, mas o cartão cadastrado recusou a cobrança de ${amount}.`,
+            `Hi, ${data.firstName}. Your ${plan} trial has ended, but the card on file declined the ${amount} charge.`,
+          )
+        : say(
+            `Olá, ${data.firstName}. O cartão cadastrado recusou a renovação do plano ${plan} (${amount}).`,
+            `Hi, ${data.firstName}. The card on file declined the renewal of your ${plan} plan (${amount}).`,
+          ),
+      say(
+        `O plano continua liberado até ${date}. Atualize o cartão em Meu perfil → Configurações da Conta → Pagamento e faturas; a cobrança é feita de novo sozinha. Sem pagamento até lá, a assinatura é encerrada e a conta volta ao Free, com o seu histórico.`,
+        `The plan stays unlocked until ${date}. Update your card in My profile → Account settings → Payment and invoices; the charge is retried automatically. Without payment by then, the subscription ends and the account returns to Free, keeping your history.`,
+      ),
+    ],
+    emblem: 'recibo',
+    highlight: {
+      value: date,
+      label: say(
+        'prazo para atualizar o cartão',
+        'deadline to update your card',
+      ),
+    },
+    action: {
+      label: say('Atualizar o cartão', 'Update my card'),
+      url: `${site}/profile`,
+    },
+    footer: 'cobranca',
+  };
+}
+
+/** The grace period ended without payment: the subscription is over. */
+export function subscriptionEnded(
+  data: { firstName: string; planType: PlanType },
+  { say, language, site }: TemplateContext,
+): EmailSpec {
+  const plan = PLAN_NAMES[language][data.planType];
+  return {
+    subject: say(
+      `Sua assinatura do ${plan} foi encerrada`,
+      `Your ${plan} subscription has ended`,
+    ),
+    preheader: say(
+      'O pagamento não foi concluído no prazo.',
+      'The payment was not completed in time.',
+    ),
+    title: say('Assinatura encerrada', 'Subscription ended'),
+    paragraphs: [
+      say(
+        `Olá, ${data.firstName}. Como a cobrança do plano ${plan} não foi concluída no prazo, a assinatura foi encerrada e nada mais será cobrado.`,
+        `Hi, ${data.firstName}. Since the ${plan} charge was not completed in time, the subscription has ended and nothing else will be charged.`,
+      ),
+      say(
+        'A conta voltou ao Free, com favoritos, listas e anotações guardados. Para voltar ao plano, é só assinar de novo.',
+        'The account is back on Free, with your favorites, lists and notes kept. To return to the plan, just subscribe again.',
+      ),
+    ],
+    emblem: 'recibo',
     action: {
       label: say('Ver os planos', 'See the plans'),
       url: `${site}/pricing`,
