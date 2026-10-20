@@ -171,11 +171,18 @@ export const PLAN_FEATURES: Record<PlanType, PlanFeatureSet> = {
   },
 };
 
+/**
+ * Dias de teste grátis do Stripe: **7 para todos os planos pagos** (decisão do
+ * dono, 20/10/2026). Só vale para quem ainda não teve um plano pago
+ * (`SubscriptionsService`). A página de planos anuncia o número que a tabela
+ * de preços devolve (`trialDays`): mudar aqui exige o mesmo na tabela (o
+ * painel de "Planos e preços", ou a semente).
+ */
 export const TRIAL_PERIOD_DAYS: Record<PlanType, number> = {
   FREE: 0,
   PLUS: 7,
-  MENTOR: 14,
-  MAESTRO: 30,
+  MENTOR: 7,
+  MAESTRO: 7,
 };
 
 export function hasFeature(

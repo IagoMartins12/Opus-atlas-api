@@ -192,7 +192,7 @@ export const appConfiguration = () => ({
     },
     timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? 60_000),
     /** Chamadas de IA por dia para biografia (geração + tradução). */
-    bioDailyLimit: Number(process.env.AI_BIO_DAILY_LIMIT ?? 200),
+    bioDailyLimit: Number(process.env.AI_BIO_DAILY_LIMIT ?? 100),
   },
   /** Aviso de dado novo ao front — ver `RevalidationService`. */
   revalidation: {

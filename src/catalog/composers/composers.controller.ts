@@ -326,7 +326,7 @@ export class ComposersController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Traduz uma biografia do português para o inglês, sem gravar',
+    summary: 'Traduz uma biografia entre português e inglês, sem gravar',
     description:
       'O texto do formulário, como está (pode não estar salvo). Substitui ' +
       '`POST /api/composer/[id]/biography/translate`, que traduzia pelo ' +
@@ -344,7 +344,12 @@ export class ComposersController {
   async translateBiography(
     @Body() dto: TranslateBiographyDto,
   ): Promise<TranslatedBiographyDto> {
-    return { translatedText: await this.bioService.translateText(dto.text) };
+    return {
+      translatedText: await this.bioService.translateText(
+        dto.text,
+        dto.to ?? 'en',
+      ),
+    };
   }
 
   // POST, não GET: pode gerar texto por IA, que custa — e GET é o que robô e
