@@ -44,6 +44,8 @@ describe('StripeService', () => {
         cancel: jest.fn(),
         retrieve: jest.fn(),
       },
+      invoicePayments: { list: jest.fn() },
+      paymentIntents: { retrieve: jest.fn() },
     };
     let service: StripeService;
 
@@ -170,6 +172,75 @@ describe('StripeService', () => {
       await service.retrieveCheckoutSession('cs_1');
       expect(stripe.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_1', {
         expand: ['subscription', 'customer'],
+      });
+    });
+
+    describe('taxa cobrada pelo Stripe', () => {
+      const intent = (fee: number | null) => ({
+        latest_charge: {
+          balance_transaction: fee === null ? null : { fee },
+        },
+      });
+
+      it('fatura: a taxa vem da transação de saldo da cobrança', async () => {
+        stripe.invoicePayments.list.mockResolvedValue({
+          data: [{ payment: { payment_intent: 'pi_1' } }],
+        });
+        stripe.paymentIntents.retrieve.mockResolvedValue(intent(198));
+
+        expect(await service.feeCentsForInvoice('in_1')).toBe(198);
+        expect(stripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_1', {
+          expand: ['latest_charge.balance_transaction'],
+        });
+      });
+
+      it('mais de uma cobrança na fatura: soma as taxas', async () => {
+        stripe.invoicePayments.list.mockResolvedValue({
+          data: [
+            { payment: { payment_intent: 'pi_1' } },
+            { payment: { payment_intent: { id: 'pi_2' } } },
+          ],
+        });
+        stripe.paymentIntents.retrieve
+          .mockResolvedValueOnce(intent(100))
+          .mockResolvedValueOnce(intent(50));
+
+        expect(await service.feeCentsForInvoice('in_1')).toBe(150);
+      });
+
+      it('sem cobrança (fatura zerada) ou sem transação ainda: nulo, não zero', async () => {
+        stripe.invoicePayments.list.mockResolvedValue({ data: [] });
+        expect(await service.feeCentsForInvoice('in_0')).toBeNull();
+
+        stripe.invoicePayments.list.mockResolvedValue({
+          data: [{ payment: { payment_intent: 'pi_1' } }],
+        });
+        stripe.paymentIntents.retrieve.mockResolvedValue(intent(null));
+        expect(await service.feeCentsForInvoice('in_1')).toBeNull();
+      });
+
+      it('erro do Stripe não derruba quem chama', async () => {
+        stripe.invoicePayments.list.mockRejectedValue(new Error('rede'));
+
+        expect(await service.feeCentsForInvoice('in_1')).toBeNull();
+      });
+
+      it('sessão de assinatura vai pela fatura; a avulsa, pelo PaymentIntent', async () => {
+        stripe.checkout.sessions.retrieve.mockResolvedValueOnce({
+          invoice: 'in_9',
+        });
+        stripe.invoicePayments.list.mockResolvedValue({
+          data: [{ payment: { payment_intent: 'pi_9' } }],
+        });
+        stripe.paymentIntents.retrieve.mockResolvedValue(intent(77));
+        expect(await service.feeCentsForSession('cs_1')).toBe(77);
+
+        stripe.checkout.sessions.retrieve.mockResolvedValueOnce({
+          invoice: null,
+          payment_intent: 'pi_5',
+        });
+        stripe.paymentIntents.retrieve.mockResolvedValue(intent(33));
+        expect(await service.feeCentsForSession('cs_2')).toBe(33);
       });
     });
 

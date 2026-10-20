@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { errorMessage } from '../../common/utils/error.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
+import { MrrService } from './mrr.service';
 import { StripeService } from './stripe.service';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -40,6 +42,7 @@ export class SubscriptionsCronService {
     private readonly subscriptionsService: SubscriptionsService,
     private readonly mailService: MailService,
     private readonly stripeService: StripeService,
+    private readonly mrr: MrrService,
   ) {}
 
   async checkSubscriptions(): Promise<CronCheckResult> {
@@ -58,9 +61,19 @@ export class SubscriptionsCronService {
     await this.remindUpcomingRenewals(now, result);
     await this.expireSubscriptions(now, result);
     await this.expireAbandonedCheckouts(now, result);
+    // Por último: o retrato do MRR já enxerga o que o job acabou de expirar.
+    await this.snapshotMrr(result);
 
     this.logger.log(`Cron de assinaturas concluído: ${JSON.stringify(result)}`);
     return result;
+  }
+
+  private async snapshotMrr(result: CronCheckResult): Promise<void> {
+    try {
+      await this.mrr.takeSnapshot();
+    } catch (error: unknown) {
+      result.errors.push(`Retrato do MRR: ${errorMessage(error)}`);
+    }
   }
 
   private async notifyTrialsExpiringSoon(

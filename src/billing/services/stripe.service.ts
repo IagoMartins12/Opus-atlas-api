@@ -220,6 +220,71 @@ export class StripeService {
     };
   }
 
+  /**
+   * A taxa que o Stripe cobrou numa fatura, em centavos, lida da transação de
+   * saldo da cobrança. `null` quando não houve cobrança (fatura zerada, teste
+   * grátis) ou o Stripe ainda não a registrou. Nunca lança: a taxa é um
+   * dado de contabilidade, e não pode derrubar o pagamento que já aconteceu.
+   */
+  async feeCentsForInvoice(invoiceId: string): Promise<number | null> {
+    try {
+      const client = this.getClient();
+      const payments = await client.invoicePayments.list({
+        invoice: invoiceId,
+        limit: 5,
+      });
+
+      let total = 0;
+      let found = false;
+      for (const item of payments.data) {
+        const intent = item.payment.payment_intent;
+        const id = typeof intent === 'string' ? intent : intent?.id;
+        if (!id) continue;
+        const fee = await this.feeOfPaymentIntent(id);
+        if (fee === null) continue;
+        total += fee;
+        found = true;
+      }
+      return found ? total : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A taxa de uma sessão de checkout: pela fatura (assinatura) ou pelo PaymentIntent. */
+  async feeCentsForSession(sessionId: string): Promise<number | null> {
+    try {
+      const session =
+        await this.getClient().checkout.sessions.retrieve(sessionId);
+      const invoice =
+        typeof session.invoice === 'string'
+          ? session.invoice
+          : session.invoice?.id;
+      if (invoice) return await this.feeCentsForInvoice(invoice);
+
+      const intent =
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : session.payment_intent?.id;
+      return intent ? await this.feeOfPaymentIntent(intent) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async feeOfPaymentIntent(id: string): Promise<number | null> {
+    const intent = await this.getClient().paymentIntents.retrieve(id, {
+      expand: ['latest_charge.balance_transaction'],
+    });
+    const charge =
+      typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+    const balance =
+      charge && typeof charge.balance_transaction === 'object'
+        ? charge.balance_transaction
+        : null;
+    return balance ? balance.fee : null;
+  }
+
   async createBillingPortalSession(
     customerId: string,
     returnUrl: string,

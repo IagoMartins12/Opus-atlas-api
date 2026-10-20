@@ -2,6 +2,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinanceService } from './finance.service';
+import { MrrService } from '../../billing/services/mrr.service';
+import { StripeService } from '../../billing/services/stripe.service';
 import { FxService } from './fx.service';
 
 const entry = (over: Record<string, unknown> = {}) => ({
@@ -42,12 +44,21 @@ describe('FinanceService', () => {
       create: jest.Mock;
       delete: jest.Mock;
     };
-    payment: { findMany: jest.Mock };
+    payment: {
+      findMany: jest.Mock;
+      update: jest.Mock;
+      count: jest.Mock;
+    };
     subscription: { findMany: jest.Mock; count: jest.Mock };
     teacher: { count: jest.Mock };
   };
   let fx: { rateFor: jest.Mock };
   let cache: { get: jest.Mock; set: jest.Mock; del: jest.Mock };
+  let stripe: {
+    feeCentsForInvoice: jest.Mock;
+    feeCentsForSession: jest.Mock;
+  };
+  let mrr: { series: jest.Mock };
   let service: FinanceService;
 
   beforeEach(() => {
@@ -76,7 +87,12 @@ describe('FinanceService', () => {
         delete: jest.fn().mockResolvedValue(undefined),
       },
       payment: {
-        findMany: jest.fn().mockResolvedValue([{ finalAmount: 39.9 }]),
+        // R$ 39,90 pagos; o Stripe ficou com R$ 1,98.
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ finalAmount: 39.9, stripeFeeCents: 198 }]),
+        update: jest.fn().mockResolvedValue({}),
+        count: jest.fn().mockResolvedValue(0),
       },
       subscription: {
         findMany: jest.fn().mockResolvedValue([
@@ -93,10 +109,17 @@ describe('FinanceService', () => {
       set: jest.fn().mockResolvedValue(undefined),
       del: jest.fn().mockResolvedValue(undefined),
     };
+    stripe = {
+      feeCentsForInvoice: jest.fn().mockResolvedValue(150),
+      feeCentsForSession: jest.fn().mockResolvedValue(90),
+    };
+    mrr = { series: jest.fn().mockResolvedValue({ since: null, months: [] }) };
     service = new FinanceService(
       prisma as unknown as PrismaService,
       fx as unknown as FxService,
       cache as unknown as AppCacheService,
+      mrr as unknown as MrrService,
+      stripe as unknown as StripeService,
     );
   });
 
@@ -208,7 +231,14 @@ describe('FinanceService', () => {
     it('caixa do mês, MRR com a anual dividida por 12 e o equilíbrio', async () => {
       const result = (await service.summary('2026-11')) as {
         costs: { totalCents: number };
-        income: { subscriptionCashCents: number; manualCents: number };
+        income: {
+          subscriptionCashCents: number;
+          manualCents: number;
+          stripeFeeCents: number;
+          netCents: number;
+          feesPending: number;
+        };
+        resultCents: number;
         accrual: { mrrCents: number };
         breakEven: { mrrNeededCents: number };
         projection: unknown[];
@@ -226,6 +256,55 @@ describe('FinanceService', () => {
         trial: 1,
         teachers: 2,
       });
+    });
+
+    // Receita líquida: o que o Stripe ficou é custo de cobrar, e entra na conta.
+    it('desconta a taxa do Stripe: líquido e resultado', async () => {
+      prisma.financeEntry.findMany.mockResolvedValue([
+        entry({ kind: 'ONCE', amountCents: 1_000 }),
+        entry({
+          id: 'e2',
+          direction: 'INCOME',
+          category: 'edital',
+          kind: 'ONCE',
+          amountCents: 50_000,
+          startDate: new Date('2026-11-20T12:00:00Z'),
+        }),
+      ]);
+
+      const r = (await service.summary('2026-11')) as {
+        income: {
+          subscriptionCashCents: number;
+          manualCents: number;
+          stripeFeeCents: number;
+          netCents: number;
+          feesPending: number;
+        };
+        resultCents: number;
+      };
+
+      expect(r.income.subscriptionCashCents).toBe(3_990);
+      expect(r.income.stripeFeeCents).toBe(198);
+      // 39,90 − 1,98 + 500,00 de edital (sem taxa)
+      expect(r.income.netCents).toBe(3_990 - 198 + 50_000);
+      expect(r.income.feesPending).toBe(0);
+      expect(r.resultCents).toBe(3_990 - 198 + 50_000 - 1_000);
+    });
+
+    it('pagamento sem taxa lida ainda: conta e avisa quantos faltam', async () => {
+      prisma.payment.findMany.mockResolvedValue([
+        { finalAmount: 39.9, stripeFeeCents: null },
+        { finalAmount: 79.9, stripeFeeCents: 400 },
+        { finalAmount: 0, stripeFeeCents: null },
+      ]);
+
+      const r = (await service.summary('2026-11')) as {
+        income: { stripeFeeCents: number; feesPending: number };
+      };
+
+      expect(r.income.stripeFeeCents).toBe(400);
+      // O pagamento zerado (cupom, teste) não tem taxa a ler.
+      expect(r.income.feesPending).toBe(1);
     });
 
     it('é guardado em cache e o cache vale', async () => {
@@ -257,6 +336,59 @@ describe('FinanceService', () => {
         service.exportCsv('2027-01', '2026-01'),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+  });
+
+  describe('taxas do Stripe', () => {
+    it('lê a taxa de quem não a tem, pela fatura ou pela sessão, e conta o que falta', async () => {
+      prisma.payment.findMany.mockResolvedValue([
+        { id: 'p1', stripeInvoiceId: 'in_1', stripeSessionId: null },
+        { id: 'p2', stripeInvoiceId: null, stripeSessionId: 'cs_1' },
+        { id: 'p3', stripeInvoiceId: 'in_3', stripeSessionId: null },
+      ]);
+      stripe.feeCentsForInvoice
+        .mockResolvedValueOnce(150)
+        .mockResolvedValueOnce(null);
+      prisma.payment.count.mockResolvedValue(1);
+
+      const result = await service.syncStripeFees();
+
+      expect(result).toEqual({ checked: 3, updated: 2, pending: 1 });
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { stripeFeeCents: 150 },
+      });
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: 'p2' },
+        data: { stripeFeeCents: 90 },
+      });
+      expect(prisma.payment.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('só procura pagamento aprovado, com valor e sem taxa (inclusive campo ausente)', async () => {
+      prisma.payment.findMany.mockResolvedValue([]);
+
+      await service.syncStripeFees();
+
+      const [{ where }] = prisma.payment.findMany.mock.calls[0];
+      expect(where.status).toBe('APPROVED');
+      expect(where.finalAmount).toEqual({ gt: 0 });
+      expect(JSON.stringify(where)).toContain('"isSet":false');
+    });
+
+    it('nada para ler: nada é gravado nem o cache é limpo', async () => {
+      prisma.payment.findMany.mockResolvedValue([]);
+
+      await service.syncStripeFees();
+
+      expect(prisma.payment.update).not.toHaveBeenCalled();
+      expect(cache.del).not.toHaveBeenCalled();
+    });
+  });
+
+  it('a série de MRR vem do serviço de retratos', async () => {
+    await service.mrrSeries(6);
+
+    expect(mrr.series).toHaveBeenCalledWith(6);
   });
 
   describe('metas', () => {

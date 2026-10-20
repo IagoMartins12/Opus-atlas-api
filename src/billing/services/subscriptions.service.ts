@@ -22,6 +22,7 @@ import { CancelSubscriptionDto } from '../dto/cancel-subscription.dto';
 import { CreateSubscriptionDto } from '../dto/create-subscription.dto';
 import { CurrentSubscriptionResponseDto } from '../dto/current-subscription-response.dto';
 import { SubscriptionActionResponseDto } from '../dto/subscription-action-response.dto';
+import { errorMessage } from '../../common/utils/error.util';
 import { UpgradeSubscriptionDto } from '../dto/upgrade-subscription.dto';
 import { InvoicesService } from './invoices.service';
 import { PlanPricingService } from './plan-pricing.service';
@@ -476,6 +477,7 @@ export class SubscriptionsService {
         paidAt: now,
       },
     });
+    await this.recordStripeFee(payment.id, { sessionId: session.id });
 
     await this.prisma.subscriptionHistory.create({
       data: {
@@ -718,6 +720,7 @@ export class SubscriptionsService {
         paidAt: now,
       },
     });
+    await this.recordStripeFee(payment.id, { invoiceId: invoice.id });
 
     await this.prisma.subscriptionHistory.create({
       data: {
@@ -1030,6 +1033,31 @@ export class SubscriptionsService {
   }
 
   /**
+   * Lê no Stripe a taxa de um pagamento aprovado e a grava nele. Melhor
+   * esforço: sem a taxa o pagamento vale igual, e `FinanceService.syncStripeFees`
+   * a busca depois.
+   */
+  private async recordStripeFee(
+    paymentId: string,
+    ref: { invoiceId?: string; sessionId?: string },
+  ): Promise<void> {
+    const fee = ref.invoiceId
+      ? await this.stripeService.feeCentsForInvoice(ref.invoiceId)
+      : ref.sessionId
+        ? await this.stripeService.feeCentsForSession(ref.sessionId)
+        : null;
+    if (fee === null) return;
+
+    await this.prisma.payment
+      .update({ where: { id: paymentId }, data: { stripeFeeCents: fee } })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Taxa do Stripe do pagamento ${paymentId} não gravada: ${errorMessage(error)}`,
+        );
+      });
+  }
+
+  /**
    * O upgrade na própria assinatura do Stripe (ver `changePriceNow`). A
    * diferença é cobrada na hora; recusada, nada muda aqui nem lá.
    */
@@ -1076,6 +1104,7 @@ export class SubscriptionsService {
           paidAt: new Date(),
         },
       });
+      await this.recordStripeFee(payment.id, { invoiceId: charge.invoiceId });
       await this.invoicesService.createFromPayment(current.id, payment.id);
     }
 

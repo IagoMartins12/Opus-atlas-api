@@ -19,6 +19,8 @@ import {
   INCOME_CATEGORIES,
   UpdateFinanceEntryDto,
 } from './dto/finance.dto';
+import { MrrService } from '../../billing/services/mrr.service';
+import { StripeService } from '../../billing/services/stripe.service';
 import { FxService } from './fx.service';
 import {
   breakEven,
@@ -100,6 +102,8 @@ export class FinanceService {
     private readonly prisma: PrismaService,
     private readonly fx: FxService,
     private readonly cache: AppCacheService,
+    private readonly mrrService: MrrService,
+    private readonly stripe: StripeService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -282,7 +286,7 @@ export class FinanceService {
       await Promise.all([
         this.prisma.payment.findMany({
           where: { status: 'APPROVED', paidAt: { gte: from, lt: to } },
-          select: { finalAmount: true },
+          select: { finalAmount: true, stripeFeeCents: true },
         }),
         this.prisma.subscription.findMany({
           where: { status: 'ACTIVE', planType: { not: 'FREE' } },
@@ -297,6 +301,15 @@ export class FinanceService {
       (total, p) => total + Math.round(p.finalAmount * 100),
       0,
     );
+    // A taxa do Stripe: só a já lida. Pagamento com valor e sem taxa lida
+    // ainda não está descontado — a tela avisa, e a leitura se pede à parte.
+    const stripeFees = payments.reduce(
+      (total, p) => total + (p.stripeFeeCents ?? 0),
+      0,
+    );
+    const feesPending = payments.filter(
+      (p) => p.finalAmount > 0 && p.stripeFeeCents == null,
+    ).length;
     const mrr = subscriptions.reduce(
       (total, s) =>
         total + monthlyRevenueCents(s.price ?? 0, s.billingPeriod ?? null),
@@ -355,11 +368,13 @@ export class FinanceService {
         subscriptionCashCents: subscriptionCash,
         manualCents: manualIncome,
         grossCents: subscriptionCash + manualIncome,
-        // O Stripe cobra taxa sobre cada pagamento; ela ainda não é lida da
-        // transação de saldo, então o líquido não é calculado.
-        netCents: null as number | null,
+        stripeFeeCents: stripeFees,
+        /** Pagamentos do mês com valor e sem a taxa lida: o líquido ainda não os desconta. */
+        feesPending,
+        /** Receita menos a taxa do Stripe (as entradas manuais não têm taxa). */
+        netCents: subscriptionCash - stripeFees + manualIncome,
       },
-      resultCents: subscriptionCash + manualIncome - costTotal,
+      resultCents: subscriptionCash - stripeFees + manualIncome - costTotal,
       accrual: {
         // Competência: a assinatura anual vale 1/12 por mês. Só se conhece o
         // MRR de hoje, então vale para o mês atual.
@@ -379,6 +394,60 @@ export class FinanceService {
     };
     await this.cache.set(SUMMARY_KEY(key), result, SUMMARY_TTL_MS);
     return result;
+  }
+
+  /** O MRR dos últimos meses: o fim de cada um e o que entrou, cresceu, encolheu e saiu. */
+  async mrrSeries(months = 12) {
+    return this.mrrService.series(months);
+  }
+
+  /**
+   * Lê no Stripe a taxa dos pagamentos aprovados que ainda não a têm: os
+   * anteriores a esta função, ou os que o Stripe ainda não tinha registrado
+   * na hora. Em lotes, para uma chamada não demorar; chame de novo até
+   * `pending` zerar.
+   */
+  async syncStripeFees(batch = 25) {
+    const where: Prisma.PaymentWhereInput = {
+      status: 'APPROVED',
+      finalAmount: { gt: 0 },
+      AND: [
+        {
+          OR: [{ stripeFeeCents: { isSet: false } }, { stripeFeeCents: null }],
+        },
+        {
+          OR: [
+            { stripeInvoiceId: { not: null } },
+            { stripeSessionId: { not: null } },
+          ],
+        },
+      ],
+    };
+    const rows = await this.prisma.payment.findMany({
+      where,
+      select: { id: true, stripeInvoiceId: true, stripeSessionId: true },
+      orderBy: { createdAt: 'desc' },
+      take: batch,
+    });
+
+    let updated = 0;
+    for (const row of rows) {
+      const fee = row.stripeInvoiceId
+        ? await this.stripe.feeCentsForInvoice(row.stripeInvoiceId)
+        : row.stripeSessionId
+          ? await this.stripe.feeCentsForSession(row.stripeSessionId)
+          : null;
+      if (fee === null) continue;
+      await this.prisma.payment.update({
+        where: { id: row.id },
+        data: { stripeFeeCents: fee },
+      });
+      updated++;
+    }
+
+    if (updated > 0) await this.forgetSummaries();
+    const pending = await this.prisma.payment.count({ where });
+    return { checked: rows.length, updated, pending };
   }
 
   /** O CSV das cobranças e entradas manuais de um período, mês a mês. */

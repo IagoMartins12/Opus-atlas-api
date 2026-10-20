@@ -1,5 +1,6 @@
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MrrService } from './mrr.service';
 import { StripeService } from './stripe.service';
 import { SubscriptionsCronService } from './subscriptions-cron.service';
 import { SubscriptionsService } from './subscriptions.service';
@@ -22,6 +23,7 @@ describe('SubscriptionsCronService', () => {
     sendSubscriptionEndedEmail: jest.Mock;
   };
   let stripe: { cancelSubscriptionNow: jest.Mock };
+  let mrr: { takeSnapshot: jest.Mock };
   let service: SubscriptionsCronService;
 
   /** Cada etapa do cron faz um `findMany` com um filtro próprio. */
@@ -62,12 +64,26 @@ describe('SubscriptionsCronService', () => {
       sendSubscriptionEndedEmail: jest.fn().mockResolvedValue(undefined),
     };
     stripe = { cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined) };
+    mrr = { takeSnapshot: jest.fn().mockResolvedValue({}) };
     service = new SubscriptionsCronService(
       prisma as unknown as PrismaService,
       subscriptions as unknown as SubscriptionsService,
       mail as unknown as MailService,
       stripe as unknown as StripeService,
+      mrr as unknown as MrrService,
     );
+  });
+
+  // O MRR de cada dia é um retrato; o job diário tira o de hoje, depois de
+  // expirar o que venceu, para ele já refletir o dia.
+  it('tira o retrato do MRR ao fim do job; se falhar, só registra o erro', async () => {
+    const ok = await service.checkSubscriptions();
+    expect(mrr.takeSnapshot).toHaveBeenCalledTimes(1);
+    expect(ok.errors).toEqual([]);
+
+    mrr.takeSnapshot.mockRejectedValue(new Error('banco fora'));
+    const falhou = await service.checkSubscriptions();
+    expect(falhou.errors).toEqual(['Retrato do MRR: banco fora']);
   });
 
   it('avisa teste acabando, com data e valor da cobrança, uma vez por dia', async () => {

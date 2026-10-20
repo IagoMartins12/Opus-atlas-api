@@ -3321,6 +3321,10 @@ model Payment {
   currency        String       @default("BRL")
   discountAmount  Float?       @default(0) // Desconto aplicado
   finalAmount     Float // Valor final pago
+  /// A taxa que o Stripe cobrou por este pagamento, em centavos da moeda do
+  /// pagamento (lida da transação de saldo). Nulo: ainda não lida, ou não houve
+  /// cobrança (teste grátis, pagamento zerado).
+  stripeFeeCents  Int?
 
   // Status e método
   status        PaymentStatus
@@ -4258,4 +4262,27 @@ model FinanceGoal {
 
   @@index([deadline])
   @@map("finance_goals")
+}
+
+/// One photograph of the subscription revenue per day. MRR cannot be rebuilt
+/// from the past (a plan change rewrites the price in place), so it is
+/// recorded as it is: the total and, per subscription, what each one is worth
+/// per month. The month's new / expansion / contraction / churn come from
+/// comparing two photographs.
+model MrrSnapshot {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  /// `AAAA-MM-DD`, in UTC. One per day.
+  day       String   @unique
+  mrrCents  Int
+  active    Int
+  trial     Int
+  pastDue   Int
+  teachers  Int
+  /// `{ "PLUS": 2, "MENTOR": 1 }`.
+  byPlan    Json
+  /// `{ subscriptionId: cents per month }`: what makes the movements exact.
+  subs      Json
+  createdAt DateTime @default(now())
+
+  @@map("mrr_snapshots")
 }

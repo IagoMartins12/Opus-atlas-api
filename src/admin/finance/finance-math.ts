@@ -133,14 +133,7 @@ export function monthlyEquivalentCents(entry: EntryShape): number {
   return Math.round(toBrl(entry.amountCents, entry.fxRate) / step);
 }
 
-/** A receita mensal de uma assinatura: a anual vale 1/12 por mês. */
-export function monthlyRevenueCents(
-  priceReais: number,
-  period: 'MONTHLY' | 'YEARLY' | null,
-): number {
-  const cents = Math.round(priceReais * 100);
-  return period === 'YEARLY' ? Math.round(cents / 12) : cents;
-}
+export { monthlyRevenueCents } from '../../billing/services/mrr-math';
 
 /**
  * Ponto de equilíbrio: quanto de receita mensal cobre o custo fixo, e
