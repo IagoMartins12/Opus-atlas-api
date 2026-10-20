@@ -332,6 +332,16 @@ describe('AuthService — Google e reenvio da confirmação', () => {
       expect(result.session.accessToken).toBe('token');
     });
 
+    // O e-mail de boas-vindas segue o idioma do navegador de quem entrou.
+    it('conta nova nasce com o idioma do navegador; sem ele, sem idioma', async () => {
+      await service.loginWithGoogle(googleProfile(), 'en');
+      expect(prisma.user.create.mock.calls[0][0].data.language).toBe('en');
+
+      prisma.user.create.mockClear();
+      await service.loginWithGoogle(googleProfile());
+      expect(prisma.user.create.mock.calls[0][0].data.language).toBeUndefined();
+    });
+
     it('boas-vindas que falham não impedem a entrada', async () => {
       mail.sendWelcomeEmail.mockRejectedValue(new Error('smtp'));
 

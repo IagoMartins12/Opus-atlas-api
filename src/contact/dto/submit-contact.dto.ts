@@ -19,6 +19,15 @@ const CATEGORIES = [
 const PRIORITIES = ['baixa', 'normal', 'alta', 'urgente'] as const;
 
 export class SubmitContactDto {
+  @ApiPropertyOptional({
+    enum: ['pt', 'en'],
+    description:
+      'O idioma do site de quem escreve; a confirmação segue ele. Sem isso, vale o do navegador.',
+  })
+  @IsOptional()
+  @IsIn(['pt', 'en'])
+  language?: 'pt' | 'en';
+
   @ApiProperty({ example: 'Maria Silva' })
   @IsString()
   @MinLength(2)

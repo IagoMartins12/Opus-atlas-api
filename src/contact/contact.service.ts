@@ -23,7 +23,7 @@ export class ContactService {
 
   async submit(
     dto: SubmitContactDto,
-    context: { ipAddress: string; userAgent: string },
+    context: { ipAddress: string; userAgent: string; language: 'pt' | 'en' },
   ): Promise<ContactResponseDto> {
     const ticketId = this.generateTicketId();
 
@@ -35,6 +35,7 @@ export class ContactService {
           lastName: dto.name.split(' ').slice(1).join(' '),
           sourceUrl: 'contact_form',
           utmSource: 'contact',
+          language: context.language,
         });
       } catch (error) {
         this.logger.warn(
@@ -53,10 +54,11 @@ export class ContactService {
       priority: dto.priority,
     });
 
-    await this.mailService.sendContactConfirmationEmail(dto.email, {
-      firstName: dto.name.split(' ')[0],
-      ticketId,
-    });
+    await this.mailService.sendContactConfirmationEmail(
+      dto.email,
+      { firstName: dto.name.split(' ')[0], ticketId },
+      context.language,
+    );
 
     this.logger.log(
       `Contato recebido [${ticketId}] categoria=${dto.category} prioridade=${dto.priority} ip=${context.ipAddress}`,

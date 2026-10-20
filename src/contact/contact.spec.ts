@@ -37,6 +37,7 @@ describe('ContactService', () => {
     const result = await service.submit(dto, {
       ipAddress: '1.1.1.1',
       userAgent: 'x',
+      language: 'pt',
     });
 
     expect(result.ticketId).toMatch(/^CH-[0-9A-Z]+-[0-9A-Z]{1,4}$/);
@@ -52,8 +53,27 @@ describe('ContactService', () => {
         firstName: 'Ana',
         ticketId: result.ticketId,
       },
+      'pt',
     );
     expect(newsletter.subscribe).not.toHaveBeenCalled();
+  });
+
+  // Quem escreve pelo site em inglês pode nem ter conta: a confirmação segue o
+  // idioma do pedido, não o do cadastro.
+  it('a confirmação sai no idioma de quem escreveu, e a inscrição opcional também', async () => {
+    await service.submit(
+      { ...(dto as object), subscribeNewsletter: true } as never,
+      { ipAddress: '1', userAgent: 'x', language: 'en' },
+    );
+
+    expect(mail.sendContactConfirmationEmail).toHaveBeenCalledWith(
+      'ana@x.com',
+      expect.any(Object),
+      'en',
+    );
+    expect(newsletter.subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'en' }),
+    );
   });
 
   it('inscreve na newsletter por chamada direta, com nome e sobrenome', async () => {
@@ -62,6 +82,7 @@ describe('ContactService', () => {
       {
         ipAddress: '1',
         userAgent: 'x',
+        language: 'pt',
       },
     );
 
@@ -71,6 +92,7 @@ describe('ContactService', () => {
       lastName: 'Maria Lima',
       sourceUrl: 'contact_form',
       utmSource: 'contact',
+      language: 'pt',
     });
   });
 
@@ -84,6 +106,7 @@ describe('ContactService', () => {
         {
           ipAddress: '1',
           userAgent: 'x',
+          language: 'pt',
         },
       ),
     ).resolves.toMatchObject({ success: true });
@@ -110,6 +133,7 @@ describe('ContactController', () => {
     expect(submit).toHaveBeenCalledWith(dto, {
       ipAddress: '9.9.9.9',
       userAgent: 'UA',
+      language: 'pt',
     });
   });
 
@@ -118,12 +142,32 @@ describe('ContactController', () => {
     expect(submit).toHaveBeenLastCalledWith(dto, {
       ipAddress: '2.2.2.2',
       userAgent: 'unknown',
+      language: 'pt',
     });
 
     await controller.submit(dto, req({}));
     expect(submit).toHaveBeenLastCalledWith(dto, {
       ipAddress: 'unknown',
       userAgent: 'unknown',
+      language: 'pt',
     });
+  });
+
+  // O formulário manda o idioma do site; sem ele, vale o do navegador.
+  it('o idioma do pedido vem do corpo, e na falta dele do Accept-Language', async () => {
+    await controller.submit(
+      { ...(dto as object), language: 'en' } as never,
+      req({ 'accept-language': 'pt-BR,pt;q=0.9' }),
+    );
+    expect(submit.mock.calls[0][1].language).toBe('en');
+
+    await controller.submit(
+      dto,
+      req({ 'accept-language': 'en-US,en;q=0.9,pt;q=0.8' }),
+    );
+    expect(submit.mock.calls[1][1].language).toBe('en');
+
+    await controller.submit(dto, req({ 'accept-language': 'fr-FR,fr;q=0.9' }));
+    expect(submit.mock.calls[2][1].language).toBe('pt');
   });
 });

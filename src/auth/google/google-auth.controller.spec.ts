@@ -24,7 +24,7 @@ describe('GoogleAuthController', () => {
   let cookies: Record<string, jest.Mock>;
   let response: { redirect: jest.Mock };
   let controller: GoogleAuthController;
-  const request = {} as Request;
+  const request = { headers: {} } as unknown as Request;
   const res = () => response as unknown as Response;
 
   beforeEach(() => {
@@ -95,9 +95,24 @@ describe('GoogleAuthController', () => {
 
       expect(cookies.clearOAuthState).toHaveBeenCalledWith(res());
       expect(google.profileFromCode).toHaveBeenCalledWith('codigo', 'v');
-      expect(auth.loginWithGoogle).toHaveBeenCalledWith(profile);
+      // Sem Accept-Language, o padrão: português.
+      expect(auth.loginWithGoogle).toHaveBeenCalledWith(profile, 'pt');
       expect(cookies.applySession).toHaveBeenCalledWith(res(), session);
       expect(response.redirect).toHaveBeenCalledWith('http://front/works');
+    });
+
+    // O e-mail de boas-vindas da conta nova segue o idioma do navegador de quem entrou.
+    it('passa o idioma do navegador de quem entrou ao cadastro', async () => {
+      const english = {
+        headers: { 'accept-language': 'en-US,en;q=0.9,pt;q=0.8' },
+      } as unknown as Request;
+
+      await controller.callback('codigo', 's', undefined, english, res());
+
+      expect(auth.loginWithGoogle).toHaveBeenCalledWith(
+        expect.anything(),
+        'en',
+      );
     });
 
     it('conta criada agora volta marcada, para o front abrir as boas-vindas', async () => {
