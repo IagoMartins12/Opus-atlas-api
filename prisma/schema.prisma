@@ -1058,6 +1058,8 @@ model Work {
   epochId          String   @db.ObjectId
   videoUrl         String?
   imslpPermlink    String
+  /// Quando a ficha das edições das partituras foi relida no IMSLP (rotina de edições).
+  editionsCheckedAt DateTime?
   imslpId          String
   opOrCatalog      String?
   compositionYear  String?
@@ -4330,4 +4332,35 @@ model PaymentAdjustment {
   @@index([at])
   @@index([paymentId])
   @@map("payment_adjustments")
+}
+
+/// Uma execução de rotina do acervo disparada pelo painel (21/10/2026).
+/// O worker atualiza o progresso e o log enquanto roda; `heartbeatAt` parado
+/// por mais de dois minutos significa que o worker caiu no meio.
+model CatalogJobRun {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  job             String
+  jobName         String
+  /// queued | running | ok | failed | stopped | interrupted
+  status          String
+  apply           Boolean   @default(false)
+  args            Json?
+  requestedBy     String?   @db.ObjectId
+  stopRequested   Boolean   @default(false)
+  progressDone    Int       @default(0)
+  progressTotal   Int?
+  progressMessage String?
+  log             String[]  @default([])
+  summary         Json?
+  sample          String[]  @default([])
+  warnings        String[]  @default([])
+  error           String?
+  queuedAt        DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  heartbeatAt     DateTime?
+
+  @@index([job, queuedAt])
+  @@index([status])
+  @@map("catalog_job_runs")
 }

@@ -8,6 +8,7 @@ import { UploadsModule } from '../uploads/uploads.module';
 import { ContributionsModule } from '../library/contributions/contributions.module';
 import { QUEUE_NAMES } from '../common/queue/queue.constants';
 import { resolveQueueRole } from '../common/queue/queue-role';
+import { CatalogJobsProcessor } from './catalog-jobs.processor';
 import { MaintenanceProcessor } from './maintenance.processor';
 import { NewsletterProcessor } from './newsletter.processor';
 import { NotificationsProcessor } from './notifications.processor';
@@ -41,6 +42,7 @@ import { SchedulesKeeper } from './schedules-keeper';
   providers: [
     NewsletterProcessor,
     MaintenanceProcessor,
+    CatalogJobsProcessor,
     ScraperProcessor,
     NotificationsProcessor,
     ImslpScoresProcessor,

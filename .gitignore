@@ -60,4 +60,3 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Email previews (npm run mail:previews)
 /mail-previews
-.imslp-editions-progress.txt
