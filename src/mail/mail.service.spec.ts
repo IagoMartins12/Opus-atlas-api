@@ -37,6 +37,25 @@ describe('MailService — dado do usuário no HTML', () => {
     );
   });
 
+  // Quem escreve pelo formulário em inglês pode nem ter conta (ou tê-la em
+  // português): a confirmação segue o idioma em que a pessoa está vendo o site.
+  it('a confirmação do contato sai no idioma pedido, não no do cadastro', async () => {
+    const data = { firstName: 'Ana', ticketId: 'CH-1' };
+
+    await service.sendContactConfirmationEmail('ana@x.com', data, 'en');
+    await service.sendContactConfirmationEmail('ana@x.com', data, 'pt');
+    await service.sendContactConfirmationEmail('ana@x.com', data);
+
+    const [en, pt, semIdioma] = send.mock.calls.map(
+      ([mail]) => mail as { subject: string; html: string },
+    );
+    expect(en.subject).not.toBe(pt.subject);
+    expect(en.html).toContain('lang="en-US"');
+    expect(pt.html).toContain('lang="pt-BR"');
+    // Sem idioma pedido e sem cadastro, segue o padrão: português.
+    expect(semIdioma.subject).toBe(pt.subject);
+  });
+
   it('a mensagem do contato chega ao suporte como texto', async () => {
     await service.sendContactSupportNotification({
       ticketId: 'T-1',

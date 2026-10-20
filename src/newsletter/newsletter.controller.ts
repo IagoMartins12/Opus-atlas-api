@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import { localeFromHeader } from '../common/i18n/locale';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Put,
+} from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/api-key.decorator';
 import { NewsletterActionResponseDto } from './dto/newsletter-action-response.dto';
@@ -26,8 +35,12 @@ export class NewsletterController {
   @ApiOkResponse({ type: NewsletterActionResponseDto })
   async subscribe(
     @Body() dto: SubscribeNewsletterDto,
+    @Headers('accept-language') acceptLanguage?: string,
   ): Promise<NewsletterActionResponseDto> {
-    return this.newsletterService.subscribe(dto);
+    return this.newsletterService.subscribe({
+      ...dto,
+      language: dto.language ?? localeFromHeader(acceptLanguage),
+    });
   }
 
   @Public()

@@ -72,7 +72,12 @@ export class NewsletterService {
             message: 'Este e-mail foi bloqueado. Entre em contato conosco.',
           };
         case 'UNSUBSCRIBED':
-          return this.reactivate(existing.id, email, dto.firstName);
+          return this.reactivate(
+            existing.id,
+            email,
+            dto.firstName,
+            dto.language,
+          );
       }
     }
 
@@ -87,6 +92,8 @@ export class NewsletterService {
         firstName: dto.firstName?.trim() || existingUser?.firstName || null,
         lastName: dto.lastName?.trim() || existingUser?.lastName || null,
         userId: existingUser?.id ?? null,
+        // `pt-BR` ou `en`: os e-mails de confirmação e de boas-vindas seguem ele.
+        language: dto.language === 'en' ? 'en' : 'pt-BR',
         status: 'PENDING',
         preferences: dto.interests?.length
           ? { interests: dto.interests }
@@ -334,6 +341,7 @@ export class NewsletterService {
     subscriberId: string,
     email: string,
     firstName?: string,
+    language?: 'pt' | 'en',
   ): Promise<NewsletterActionResponseDto> {
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -348,6 +356,8 @@ export class NewsletterService {
         confirmedAt: null,
         unsubscribedAt: null,
         unsubscribeReason: null,
+        // Quem volta em outro idioma recebe a confirmação nele.
+        ...(language ? { language: language === 'en' ? 'en' : 'pt-BR' } : {}),
         firstName: existingUser?.firstName || firstName,
         lastName: existingUser?.lastName,
         userId: existingUser?.id,

@@ -142,6 +142,40 @@ describe('NewsletterService', () => {
       expect(prisma.newsletterSubscriber.create).not.toHaveBeenCalled();
     });
 
+    // Os e-mails de confirmação e de boas-vindas seguem o idioma da inscrição;
+    // sem ele gravado, saíam sempre em português.
+    it('grava o idioma do site na inscrição (en ou pt-BR)', async () => {
+      await service.subscribe({ email: 'a@x.com', language: 'en' } as never);
+      expect(
+        prisma.newsletterSubscriber.create.mock.calls[0][0].data.language,
+      ).toBe('en');
+
+      prisma.newsletterSubscriber.create.mockClear();
+      await service.subscribe({ email: 'b@x.com', language: 'pt' } as never);
+      expect(
+        prisma.newsletterSubscriber.create.mock.calls[0][0].data.language,
+      ).toBe('pt-BR');
+
+      prisma.newsletterSubscriber.create.mockClear();
+      await service.subscribe({ email: 'c@x.com' } as never);
+      expect(
+        prisma.newsletterSubscriber.create.mock.calls[0][0].data.language,
+      ).toBe('pt-BR');
+    });
+
+    it('quem volta em outro idioma recebe a confirmação nele', async () => {
+      prisma.newsletterSubscriber.findUnique.mockResolvedValue(
+        subscriber({ status: 'UNSUBSCRIBED' }),
+      );
+
+      await service.subscribe({ email: 'ana@x.com', language: 'en' } as never);
+
+      expect(prisma.newsletterSubscriber.update).toHaveBeenCalledWith({
+        where: { id: 'sub-1' },
+        data: expect.objectContaining({ language: 'en' }),
+      });
+    });
+
     it('quem saiu volta como pendente', async () => {
       prisma.newsletterSubscriber.findUnique.mockResolvedValue(
         subscriber({ status: 'UNSUBSCRIBED' }),

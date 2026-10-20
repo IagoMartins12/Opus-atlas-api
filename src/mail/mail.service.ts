@@ -215,8 +215,11 @@ export class MailService {
     to: string,
     build: (ctx: TemplateContext) => EmailSpec,
     extra: Pick<SendMailInput, 'replyTo' | 'headers'> = {},
+    forced?: EmailLanguage,
   ): Promise<SendMailInput> {
-    const language = await this.languageOf(to);
+    // `forced`: quem escreveu agora, na língua em que está vendo o site, e
+    // pode nem ter conta (o formulário de contato) — vale mais que o cadastro.
+    const language = forced ?? (await this.languageOf(to));
     const say: Say = (pt, en) => (language === 'en' ? en : pt);
     const { subject, html, text } = renderEmail(
       {
@@ -369,9 +372,15 @@ export class MailService {
   async sendContactConfirmationEmail(
     to: string,
     data: { firstName: string; ticketId: string },
+    language?: EmailLanguage,
   ): Promise<void> {
     await this.send(
-      await this.compose(to, (ctx) => templates.contactConfirmation(data, ctx)),
+      await this.compose(
+        to,
+        (ctx) => templates.contactConfirmation(data, ctx),
+        {},
+        language,
+      ),
     );
   }
 

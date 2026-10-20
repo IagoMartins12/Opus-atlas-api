@@ -1,3 +1,4 @@
+import { localeFromHeader } from '../../common/i18n/locale';
 import { Controller, Get, Logger, Query, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -106,7 +107,10 @@ export class GoogleAuthController {
         return back(pending.redirect, 'google_unverified');
       }
 
-      const { session, isNewUser } = await this.auth.loginWithGoogle(profile);
+      const { session, isNewUser } = await this.auth.loginWithGoogle(
+        profile,
+        localeFromHeader(request.headers['accept-language']),
+      );
 
       this.cookies.applySession(response, session);
 

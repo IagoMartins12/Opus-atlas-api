@@ -667,6 +667,7 @@ export class AuthService {
    */
   async loginWithGoogle(
     profile: GoogleProfile,
+    language?: 'pt' | 'en',
   ): Promise<{ session: IssuedSession; isNewUser: boolean }> {
     if (!profile.emailVerified || !profile.email) {
       throw new UnauthorizedException('O Google não confirmou este e-mail');
@@ -716,7 +717,7 @@ export class AuthService {
       return { session: await this.issueSession(existing), isNewUser: false };
     }
 
-    const user = await this.createGoogleUser(email, profile);
+    const user = await this.createGoogleUser(email, profile, language);
 
     return { session: await this.issueSession(user), isNewUser: true };
   }
@@ -724,6 +725,7 @@ export class AuthService {
   private async createGoogleUser(
     email: string,
     profile: GoogleProfile,
+    language?: 'pt' | 'en',
   ): Promise<AuthUser> {
     const username = await this.generateUniqueUsername(
       profile.givenName ?? email.split('@')[0],
@@ -739,6 +741,8 @@ export class AuthService {
           firstName: profile.givenName,
           lastName: profile.familyName,
           image: profile.picture,
+          // O idioma do navegador de quem entrou: o e-mail de boas-vindas segue ele.
+          language,
           emailVerified: new Date(),
           accounts: {
             create: {

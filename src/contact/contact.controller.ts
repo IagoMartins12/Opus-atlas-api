@@ -1,3 +1,4 @@
+import { localeFromHeader } from '../common/i18n/locale';
 import { Body, Controller, Post, Req } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -38,6 +39,9 @@ export class ContactController {
     return this.contactService.submit(dto, {
       ipAddress: extractIp(req),
       userAgent: req.headers['user-agent'] ?? 'unknown',
+      // O idioma do site, e sem ele o do navegador de quem escreveu.
+      language:
+        dto.language ?? localeFromHeader(req.headers['accept-language']),
     });
   }
 }

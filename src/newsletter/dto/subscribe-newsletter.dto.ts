@@ -2,6 +2,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class SubscribeNewsletterDto {
+  @ApiPropertyOptional({
+    enum: ['pt', 'en'],
+    description:
+      'O idioma do site de quem se inscreve; os e-mails seguem ele. Sem isso, vale o do navegador.',
+  })
+  @IsOptional()
+  @IsIn(['pt', 'en'])
+  language?: 'pt' | 'en';
+
   @ApiProperty({ example: 'visitante@example.com' })
   @IsEmail()
   email: string;
