@@ -4,21 +4,36 @@ import { WorkCountFiltersService } from './work-count-filters.service';
 
 describe('WorkCountFiltersService', () => {
   let service: WorkCountFiltersService;
+  // Por coleção: o que a agregação devolve (ids de obra).
+  let porColecao: Record<string, string[]>;
   let prisma: {
+    $runCommandRaw: jest.Mock;
     favoriteWork: { groupBy: jest.Mock };
     wantToLearn: { groupBy: jest.Mock };
     learned: { groupBy: jest.Mock };
-    workScore: { groupBy: jest.Mock };
   };
 
-  const ids = (...values: string[]) => values.map((workId) => ({ workId }));
+  const colecoesConsultadas = () =>
+    prisma.$runCommandRaw.mock.calls.map(
+      ([cmd]: [{ aggregate: string }]) => cmd.aggregate,
+    );
 
   beforeEach(async () => {
+    porColecao = {};
     prisma = {
+      $runCommandRaw: jest.fn((cmd: { aggregate: string }) =>
+        Promise.resolve({
+          cursor: {
+            firstBatch: (porColecao[cmd.aggregate] ?? []).map((id, i) => ({
+              _id: { $oid: id },
+              n: 100 - i,
+            })),
+          },
+        }),
+      ),
       favoriteWork: { groupBy: jest.fn().mockResolvedValue([]) },
       wantToLearn: { groupBy: jest.fn().mockResolvedValue([]) },
       learned: { groupBy: jest.fn().mockResolvedValue([]) },
-      workScore: { groupBy: jest.fn().mockResolvedValue([]) },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -35,25 +50,27 @@ describe('WorkCountFiltersService', () => {
     const result = await service.resolve({});
 
     expect(result.workIds).toBeNull();
-    expect(prisma.favoriteWork.groupBy).not.toHaveBeenCalled();
+    expect(prisma.$runCommandRaw).not.toHaveBeenCalled();
   });
 
-  // O legado fazia `groupBy` sem `where` sobre a coleção inteira — 92 mil
-  // partituras em até 207 mil grupos — e aplicava o `>= N` com `.filter()` no
-  // Node.
-  it('o corte por contagem vai no `having`, não em memória', async () => {
+  // O `groupBy` do Prisma com `orderBy` por contagem e `take` devolve grupos
+  // quaisquer no MongoDB: o corte, a ordem e o teto vão na agregação.
+  it('mínimo, ordem e teto vão na agregação, dentro do banco', async () => {
     await service.resolve({ minFavorites: 5 });
 
-    const args = prisma.favoriteWork.groupBy.mock.calls[0][0];
-
-    expect(args.having).toEqual({ workId: { _count: { gte: 5 } } });
-    expect(args.take).toBe(1000);
-    expect(args.orderBy).toEqual({ _count: { workId: 'desc' } });
+    const [cmd] = prisma.$runCommandRaw.mock.calls[0];
+    expect(cmd.aggregate).toBe('FavoriteWork');
+    expect(cmd.pipeline).toEqual([
+      { $group: { _id: '$workId', n: { $sum: 1 } } },
+      { $match: { n: { $gte: 5 } } },
+      { $sort: { n: -1, _id: 1 } },
+      { $limit: 1000 },
+    ]);
   });
 
   it('cruza os critérios pedidos', async () => {
-    prisma.favoriteWork.groupBy.mockResolvedValue(ids('a', 'b', 'c'));
-    prisma.workScore.groupBy.mockResolvedValue(ids('b', 'c', 'd'));
+    porColecao.FavoriteWork = ['a', 'b', 'c'];
+    porColecao.work_scores = ['b', 'c', 'd'];
 
     const result = await service.resolve({ minFavorites: 1, minScores: 1 });
 
@@ -61,8 +78,8 @@ describe('WorkCountFiltersService', () => {
   });
 
   it('interseção vazia devolve lista vazia, não nula', async () => {
-    prisma.favoriteWork.groupBy.mockResolvedValue(ids('a'));
-    prisma.workScore.groupBy.mockResolvedValue(ids('z'));
+    porColecao.FavoriteWork = ['a'];
+    porColecao.work_scores = ['z'];
 
     const result = await service.resolve({ minFavorites: 1, minScores: 1 });
 
@@ -72,9 +89,7 @@ describe('WorkCountFiltersService', () => {
   // O resultado vira um `IN` na consulta seguinte; um `IN` com dezenas de
   // milhares de ids é patológico no Mongo.
   it('avisa quando o critério bate no teto de candidatos', async () => {
-    prisma.favoriteWork.groupBy.mockResolvedValue(
-      Array.from({ length: 1000 }, (_, index) => ({ workId: `w${index}` })),
-    );
+    porColecao.FavoriteWork = Array.from({ length: 1000 }, (_, i) => `w${i}`);
 
     const result = await service.resolve({ minFavorites: 1 });
 
@@ -82,7 +97,7 @@ describe('WorkCountFiltersService', () => {
   });
 
   it('abaixo do teto, não avisa', async () => {
-    prisma.favoriteWork.groupBy.mockResolvedValue(ids('a', 'b'));
+    porColecao.FavoriteWork = ['a', 'b'];
 
     const result = await service.resolve({ minFavorites: 1 });
 
@@ -92,8 +107,18 @@ describe('WorkCountFiltersService', () => {
   it('consulta só os critérios pedidos', async () => {
     await service.resolve({ minLearned: 2 });
 
-    expect(prisma.learned.groupBy).toHaveBeenCalledTimes(1);
-    expect(prisma.favoriteWork.groupBy).not.toHaveBeenCalled();
-    expect(prisma.workScore.groupBy).not.toHaveBeenCalled();
+    expect(colecoesConsultadas()).toEqual(['Learned']);
+  });
+
+  it('máximo vira exclusão: as obras que passam dele', async () => {
+    prisma.favoriteWork.groupBy.mockResolvedValue([{ workId: 'popular' }]);
+
+    const result = await service.resolve({ maxFavorites: 3 });
+
+    expect(prisma.favoriteWork.groupBy.mock.calls[0][0].having).toEqual({
+      workId: { _count: { gt: 3 } },
+    });
+    expect(result.excludeIds).toEqual(['popular']);
+    expect(result.workIds).toBeNull();
   });
 });

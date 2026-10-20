@@ -31,6 +31,7 @@ function makePrisma() {
       ),
       delete: jest.fn().mockResolvedValue({}),
       count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     blogArticleCategory: { count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn(),
@@ -248,6 +249,30 @@ describe('CategoriesAdminService', () => {
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(prisma.blogCategory.update).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('seções do início', () => {
+    it('as listadas ganham a posição da lista; as outras saem do início', async () => {
+      prisma.blogCategory.count.mockResolvedValue(2);
+
+      await service.setHomeSections([B, A]);
+
+      expect(prisma.blogCategory.updateMany).toHaveBeenCalledWith({
+        where: { id: { notIn: [B, A] } },
+        data: { showOnHome: false, homeOrder: null },
+      });
+      expect(prisma.blogCategory.update.mock.calls.map((c) => c[0])).toEqual([
+        { where: { id: B }, data: { showOnHome: true, homeOrder: 0 } },
+        { where: { id: A }, data: { showOnHome: true, homeOrder: 1 } },
+      ]);
+    });
+
+    it('recusa id inexistente', async () => {
+      prisma.blogCategory.count.mockResolvedValue(1);
+      await expect(service.setHomeSections([A, B])).rejects.toThrow(
+        /inexistente/,
+      );
     });
   });
 

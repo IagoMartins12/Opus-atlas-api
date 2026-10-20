@@ -33,15 +33,10 @@ describe('PlanPricingService', () => {
     const { data } = await service.getPricing();
 
     expect(data.PLUS.monthly).toBe(30);
-    expect(data.PLUS.quarterly).toEqual({
-      price: 81,
-      discount: 10,
-      monthlyEquivalent: 27,
-      savings: 9,
-    });
     expect(data.PLUS.yearly.savings).toBe(60);
-    // Preço de período não cadastrado vira 0, não NaN.
-    expect(data.PLUS.biannual.price).toBe(0);
+    // Só mensal e anual: são os períodos que o Stripe vende.
+    expect(Object.keys(data.PLUS)).not.toContain('quarterly');
+    expect(Object.keys(data.PLUS)).not.toContain('biannual');
   });
 
   describe('preço final', () => {

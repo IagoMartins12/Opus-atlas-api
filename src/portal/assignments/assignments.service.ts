@@ -45,6 +45,9 @@ const MAX_SUBMISSIONS = 10;
 
 const MAX_MILESTONES = 30;
 
+/** Ajustes seguidos do andamento, dentro desta janela, viram uma linha só no histórico. */
+const PROGRESS_COLLAPSE_MS = 30 * 60_000;
+
 const ASSIGNMENT_SELECT = {
   id: true,
   title: true,
@@ -482,6 +485,24 @@ export class AssignmentsService {
       select: ASSIGNMENT_FULL_SELECT,
     });
 
+    if (dto.progress !== undefined || dto.milestone) {
+      const progress = dto.progress ?? assignment.progress ?? 0;
+      await this.activities.recordCollapsing(
+        {
+          userId: studentUserId,
+          userType: 'student',
+          action: SchoolActivityAction.ASSIGNMENT_PROGRESS_UPDATED,
+          entityType: 'assignment',
+          entityId: assignmentId,
+          entityName: assignment.title,
+          title: `Atualizou o andamento da tarefa para ${progress}%`,
+          description: dto.milestone ?? assignment.title,
+          metadata: { progress },
+        },
+        PROGRESS_COLLAPSE_MS,
+      );
+    }
+
     return this.toView(updated);
   }
 
@@ -609,6 +630,17 @@ export class AssignmentsService {
       where: { id: assignmentId },
       data: { submissions: writeSubmissions(submissions) },
       select: ASSIGNMENT_FULL_SELECT,
+    });
+
+    await this.activities.record({
+      userId: studentUserId,
+      userType: 'student',
+      action: SchoolActivityAction.ASSIGNMENT_SUBMISSION_REMOVED,
+      entityType: 'assignment',
+      entityId: assignmentId,
+      entityName: assignment.title,
+      title: 'Apagou um envio da tarefa',
+      description: assignment.title,
     });
 
     return this.toView(updated);
@@ -818,6 +850,10 @@ export class AssignmentsService {
         return { isCompleted: false, status: AssignmentStatus.PENDING };
       case 'IN_PROGRESS':
         return { isCompleted: false, status: AssignmentStatus.IN_PROGRESS };
+      case 'AWAITING_FEEDBACK':
+        return { isCompleted: true, teacherFeedback: null };
+      case 'OPEN':
+        return { isCompleted: false };
       default:
         return {};
     }
@@ -826,36 +862,40 @@ export class AssignmentsService {
   private async computeStats(baseWhere: Prisma.AssignmentWhereInput) {
     const now = new Date();
 
-    const [total, pending, inProgress, completed, overdue] = await Promise.all([
-      this.prisma.assignment.count({ where: baseWhere }),
-      this.prisma.assignment.count({
-        where: {
-          ...baseWhere,
-          isCompleted: false,
-          status: AssignmentStatus.PENDING,
-        },
-      }),
-      this.prisma.assignment.count({
-        where: {
-          ...baseWhere,
-          isCompleted: false,
-          status: AssignmentStatus.IN_PROGRESS,
-        },
-      }),
-      this.prisma.assignment.count({
-        where: { ...baseWhere, isCompleted: true },
-      }),
-      this.prisma.assignment.count({
-        // Sem prazo não é atrasada (ver `statusCondition`).
-        where: {
-          ...baseWhere,
-          isCompleted: false,
-          dueDate: { lt: now, not: null },
-        },
-      }),
-    ]);
+    const [total, pending, inProgress, completed, overdue, awaitingFeedback] =
+      await Promise.all([
+        this.prisma.assignment.count({ where: baseWhere }),
+        this.prisma.assignment.count({
+          where: {
+            ...baseWhere,
+            isCompleted: false,
+            status: AssignmentStatus.PENDING,
+          },
+        }),
+        this.prisma.assignment.count({
+          where: {
+            ...baseWhere,
+            isCompleted: false,
+            status: AssignmentStatus.IN_PROGRESS,
+          },
+        }),
+        this.prisma.assignment.count({
+          where: { ...baseWhere, isCompleted: true },
+        }),
+        this.prisma.assignment.count({
+          // Sem prazo não é atrasada (ver `statusCondition`).
+          where: {
+            ...baseWhere,
+            isCompleted: false,
+            dueDate: { lt: now, not: null },
+          },
+        }),
+        this.prisma.assignment.count({
+          where: { ...baseWhere, isCompleted: true, teacherFeedback: null },
+        }),
+      ]);
 
-    return { total, pending, inProgress, completed, overdue };
+    return { total, pending, inProgress, completed, overdue, awaitingFeedback };
   }
 
   // -------------------------------------------------------------------

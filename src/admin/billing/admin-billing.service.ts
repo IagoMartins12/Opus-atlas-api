@@ -7,6 +7,12 @@ import {
 import { CouponType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  PLANOS_PAGOS,
+  StripeCatalogService,
+  type EspelhoDePreco,
+  type PlanoPago,
+} from '../../billing/services/stripe-catalog.service';
+import {
   CreateCouponDto,
   ListCouponsQueryDto,
   SetPlanPricingDto,
@@ -39,13 +45,40 @@ const COUPON_SELECT = {
   extraTrialDays: true,
   isActive: true,
   description: true,
+  stripeCouponId: true,
+  stripeSyncedAt: true,
+  stripeSyncError: true,
   createdAt: true,
   updatedAt: true,
 } as const;
 
+/** Os campos que definem o desconto no Stripe; mudar um deles troca o espelho. */
+const CAMPOS_DO_ESPELHO = [
+  'type',
+  'discountValue',
+  'validUntil',
+  'maxUses',
+] as const;
+
+const ehPlanoPago = (plano: string): plano is PlanoPago =>
+  (PLANOS_PAGOS as readonly string[]).includes(plano);
+
 @Injectable()
 export class AdminBillingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stripeCatalog: StripeCatalogService,
+  ) {}
+
+  /** O cupom como está no banco agora, com o estado do espelho. */
+  private async readCoupon(couponId: string) {
+    const coupon = await this.prisma.coupon.findUniqueOrThrow({
+      where: { id: couponId },
+      select: COUPON_SELECT,
+    });
+
+    return this.withState(coupon, new Date());
+  }
 
   // -------------------------------------------------------------------
   // Cupons
@@ -162,7 +195,11 @@ export class AdminBillingService {
         select: COUPON_SELECT,
       });
 
-      return this.withState(coupon, new Date());
+      // O cupom nasce também no Stripe. Se o Stripe recusar, ele fica salvo
+      // com o motivo em `stripeSyncError` — e o checkout tenta de novo.
+      await this.stripeCatalog.syncCoupon(coupon);
+
+      return this.readCoupon(coupon.id);
     } catch (error: unknown) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -223,7 +260,32 @@ export class AdminBillingService {
       select: COUPON_SELECT,
     });
 
-    return this.withState(coupon, new Date());
+    // Cupom do Stripe não se edita: mudou o desconto, a validade ou o
+    // limite, o espelho é trocado por outro.
+    const mudouODesconto = CAMPOS_DO_ESPELHO.some(
+      (campo) => dto[campo] !== undefined,
+    );
+    if (mudouODesconto || !coupon.stripeCouponId) {
+      await this.stripeCatalog.syncCoupon(coupon, { recriar: mudouODesconto });
+    }
+
+    return this.readCoupon(coupon.id);
+  }
+
+  /** Cria (ou refaz) o espelho do cupom no Stripe, a pedido do painel. */
+  async syncCoupon(couponId: string) {
+    const coupon = await this.prisma.coupon.findUnique({
+      where: { id: couponId },
+      select: COUPON_SELECT,
+    });
+
+    if (!coupon) {
+      throw new NotFoundException('Cupom não encontrado');
+    }
+
+    await this.stripeCatalog.syncCoupon(coupon, { recriar: true });
+
+    return this.readCoupon(couponId);
   }
 
   async toggleCoupon(couponId: string) {
@@ -260,7 +322,7 @@ export class AdminBillingService {
   async deleteCoupon(couponId: string): Promise<void> {
     const coupon = await this.prisma.coupon.findUnique({
       where: { id: couponId },
-      select: { id: true, usedCount: true },
+      select: { id: true, usedCount: true, stripeCouponId: true },
     });
 
     if (!coupon) {
@@ -278,7 +340,15 @@ export class AdminBillingService {
       );
     }
 
+    // O banco primeiro: o `coupon.deleted` que volta pelo webhook não acha
+    // mais o dono e não tenta desativar nada.
     await this.prisma.coupon.delete({ where: { id: couponId } });
+
+    if (coupon.stripeCouponId) {
+      await this.stripeCatalog
+        .deleteCoupon(coupon.stripeCouponId)
+        .catch(() => undefined);
+    }
   }
 
   /**
@@ -329,13 +399,30 @@ export class AdminBillingService {
    *
    * Os preços derivados são arredondados a centavos. Sem isso,
    * `29,90 × 3 × 0,9` grava `80.72999999999999` na tabela.
+   *
+   * **E o preço chega ao Stripe.** Antes, a versão nova mudava a página de
+   * preços e o Stripe seguia cobrando o Price ID do `.env`. Agora o valor
+   * novo vira um Price novo (o antigo é arquivado; quem já assina continua
+   * nele) e a versão guarda os ids que o checkout usa.
    */
   async setPricing(dto: SetPlanPricingDto) {
-    const quarterlyDiscount = dto.quarterlyDiscount ?? 10;
-    const biannualDiscount = dto.biannualDiscount ?? 15;
     const yearlyDiscount = dto.yearlyDiscount ?? 20;
 
     const monthly = toCents(dto.monthlyPrice);
+    const yearly = toCents(monthly * 12 * (1 - yearlyDiscount / 100));
+
+    // **O Stripe primeiro.** Se ele recusar, nada é gravado: painel dizendo
+    // um preço e Stripe cobrando outro é o defeito que a sincronização
+    // conserta. Sem Stripe configurado (ambiente local), grava só aqui e diz.
+    const paraOStripe =
+      ehPlanoPago(dto.planType) && this.stripeCatalog.isConfigured();
+    const espelho: EspelhoDePreco | null =
+      paraOStripe && ehPlanoPago(dto.planType)
+        ? await this.stripeCatalog.pushPricing(dto.planType, {
+            monthly,
+            yearly,
+          })
+        : null;
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.planPricing.findFirst({
@@ -352,18 +439,69 @@ export class AdminBillingService {
         data: {
           planType: dto.planType,
           monthlyPrice: monthly,
-          quarterlyPrice: toCents(monthly * 3 * (1 - quarterlyDiscount / 100)),
-          biannualPrice: toCents(monthly * 6 * (1 - biannualDiscount / 100)),
-          yearlyPrice: toCents(monthly * 12 * (1 - yearlyDiscount / 100)),
-          quarterlyDiscount,
-          biannualDiscount,
+          // Trimestral e semestral saíram (01/10): o Stripe só vende mensal e
+          // anual, e esses dois nunca puderam ser comprados.
+          quarterlyPrice: null,
+          biannualPrice: null,
+          quarterlyDiscount: 0,
+          biannualDiscount: 0,
+          yearlyPrice: yearly,
           yearlyDiscount,
           trialDays: dto.trialDays ?? 0,
           description: dto.description,
           isActive: true,
           displayOrder: dto.displayOrder ?? current?.displayOrder ?? 0,
+          origin: 'painel',
+          ...(espelho
+            ? { ...espelho, stripeSyncedAt: new Date() }
+            : {
+                stripeSyncError:
+                  dto.planType === 'FREE'
+                    ? null
+                    : 'Stripe não configurado neste ambiente.',
+              }),
         },
       });
+    });
+  }
+
+  /** Painel e Stripe lado a lado, plano a plano. */
+  async pricingStripeStatus() {
+    return this.stripeCatalog.status();
+  }
+
+  /**
+   * Leva ao Stripe o preço que o painel já tem — para a versão gravada antes
+   * da sincronização, ou quando o Stripe foi mexido e o painel é que vale.
+   */
+  async pushPricing(planType: PlanoPago) {
+    const current = await this.prisma.planPricing.findFirst({
+      where: { planType, isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!current) {
+      throw new NotFoundException(
+        `O plano ${planType} não tem preço vigente para enviar`,
+      );
+    }
+
+    const espelho = await this.stripeCatalog.pushPricing(planType, {
+      monthly: current.monthlyPrice,
+      yearly: current.yearlyPrice ?? toCents(current.monthlyPrice * 12),
+    });
+
+    return this.prisma.planPricing.update({
+      where: { id: current.id },
+      data: { ...espelho, stripeSyncedAt: new Date(), stripeSyncError: null },
+    });
+  }
+
+  /** Traz para o painel o preço que está valendo no Stripe. */
+  async pullPricing(planType: PlanoPago, actorId: string) {
+    return this.stripeCatalog.adoptFromStripe(planType, {
+      ignorarEco: true,
+      actorId,
     });
   }
 

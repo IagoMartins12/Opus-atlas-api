@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { WebhookService } from './webhook.service';
 
@@ -34,7 +35,10 @@ describe('WebhookService', () => {
   let subscriptions: {
     confirmCheckoutSession: jest.Mock;
     registerRenewal: jest.Mock;
+    registerPaymentFailure: jest.Mock;
+    updateUserPlanCache: jest.Mock;
   };
+  let catalog: { handleEvent: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -53,13 +57,18 @@ describe('WebhookService', () => {
     subscriptions = {
       confirmCheckoutSession: jest.fn().mockResolvedValue({}),
       registerRenewal: jest.fn().mockResolvedValue(undefined),
+      registerPaymentFailure: jest.fn().mockResolvedValue(undefined),
+      updateUserPlanCache: jest.fn().mockResolvedValue(undefined),
     };
+
+    catalog = { handleEvent: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WebhookService,
         { provide: PrismaService, useValue: prisma },
         { provide: SubscriptionsService, useValue: subscriptions },
+        { provide: StripeCatalogService, useValue: catalog },
       ],
     }).compile();
 
@@ -100,26 +109,24 @@ describe('WebhookService', () => {
       expect(subscriptions.confirmCheckoutSession).not.toHaveBeenCalled();
     });
 
-    it('não duplica linha de pagamento quando o Stripe reentrega uma falha', async () => {
+    it('não registra duas vezes a falha quando o Stripe reentrega o evento', async () => {
       const event = makeEvent('invoice.payment_failed', {
         subscription: 'sub_1',
         amount_due: 2500,
         currency: 'brl',
       });
 
-      prisma.subscription.findFirst.mockResolvedValue({ id: 'local_sub_1' });
-
-      // Primeira entrega: processa e grava o pagamento.
+      // Primeira entrega: processa e registra a recusa.
       await service.handleEvent(event);
-      expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+      expect(subscriptions.registerPaymentFailure).toHaveBeenCalledTimes(1);
 
-      // Reentrega: a trava de idempotência barra antes de gravar de novo.
+      // Reentrega: a trava de idempotência barra antes de registrar de novo.
       prisma.processedWebhookEvent.create.mockRejectedValueOnce(
         uniqueViolation(),
       );
       await service.handleEvent(event);
 
-      expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+      expect(subscriptions.registerPaymentFailure).toHaveBeenCalledTimes(1);
     });
 
     it('libera a trava quando o processamento falha, para o Stripe poder reentregar', async () => {
@@ -153,11 +160,7 @@ describe('WebhookService', () => {
   });
 
   describe('invoice.payment_failed', () => {
-    beforeEach(() => {
-      prisma.subscription.findFirst.mockResolvedValue({ id: 'local_sub_1' });
-    });
-
-    it('grava o pagamento como REJECTED e marca a assinatura como PAST_DUE', async () => {
+    it('passa a recusa, com valor e moeda, para o serviço de assinaturas', async () => {
       await service.handleEvent(
         makeEvent('invoice.payment_failed', {
           subscription: 'sub_1',
@@ -166,19 +169,10 @@ describe('WebhookService', () => {
         }),
       );
 
-      expect(prisma.payment.create).toHaveBeenCalledWith({
-        data: {
-          subscriptionId: 'local_sub_1',
-          amount: 49.9,
-          finalAmount: 49.9,
-          currency: 'USD',
-          status: 'REJECTED',
-        },
-      });
-
-      expect(prisma.subscription.update).toHaveBeenCalledWith({
-        where: { id: 'local_sub_1' },
-        data: { status: 'PAST_DUE' },
+      expect(subscriptions.registerPaymentFailure).toHaveBeenCalledWith({
+        stripeSubscriptionId: 'sub_1',
+        amountDue: 49.9,
+        currency: 'usd',
       });
     });
 
@@ -191,9 +185,9 @@ describe('WebhookService', () => {
         }),
       );
 
-      expect(prisma.subscription.findFirst).toHaveBeenCalledWith({
-        where: { stripeSubscriptionId: 'sub_expandido' },
-      });
+      expect(subscriptions.registerPaymentFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ stripeSubscriptionId: 'sub_expandido' }),
+      );
     });
 
     /**
@@ -213,36 +207,17 @@ describe('WebhookService', () => {
         }),
       );
 
-      expect(prisma.subscription.findFirst).toHaveBeenCalledWith({
-        where: { stripeSubscriptionId: 'sub_novo' },
-      });
-      expect(prisma.subscription.update).toHaveBeenCalledWith({
-        where: { id: 'local_sub_1' },
-        data: { status: 'PAST_DUE' },
-      });
+      expect(subscriptions.registerPaymentFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ stripeSubscriptionId: 'sub_novo' }),
+      );
     });
 
-    it('não grava nada quando a fatura não tem assinatura associada', async () => {
+    it('não registra nada quando a fatura não tem assinatura associada', async () => {
       await service.handleEvent(
         makeEvent('invoice.payment_failed', { amount_due: 1000 }),
       );
 
-      expect(prisma.payment.create).not.toHaveBeenCalled();
-    });
-
-    it('não grava nada quando a assinatura não existe localmente', async () => {
-      prisma.subscription.findFirst.mockResolvedValue(null);
-
-      await service.handleEvent(
-        makeEvent('invoice.payment_failed', {
-          subscription: 'sub_desconhecida',
-          amount_due: 1000,
-          currency: 'brl',
-        }),
-      );
-
-      expect(prisma.payment.create).not.toHaveBeenCalled();
-      expect(prisma.subscription.update).not.toHaveBeenCalled();
+      expect(subscriptions.registerPaymentFailure).not.toHaveBeenCalled();
     });
   });
 
@@ -338,17 +313,23 @@ describe('WebhookService', () => {
   });
 
   describe('outros eventos', () => {
-    it('cancela a assinatura em customer.subscription.deleted', async () => {
+    it('cancela a assinatura que ainda valia em customer.subscription.deleted', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({ userId: 'u1' });
+
       await service.handleEvent(
         makeEvent('customer.subscription.deleted', { id: 'sub_1' }),
       );
 
       expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { stripeSubscriptionId: 'sub_1' },
+          where: {
+            stripeSubscriptionId: 'sub_1',
+            status: { in: ['TRIAL', 'ACTIVE', 'PAST_DUE'] },
+          },
           data: expect.objectContaining({ status: 'CANCELLED' }),
         }),
       );
+      expect(subscriptions.updateUserPlanCache).toHaveBeenCalledWith('u1');
     });
 
     it('ignora checkout que não seja de assinatura', async () => {

@@ -3,6 +3,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -102,9 +103,14 @@ export class BlogMediaService {
     articleId?: string;
     sessionId?: string;
     userId: string;
+    /** Professor (não administrador) só envia para artigo próprio. */
+    soDoAutor?: boolean;
   }) {
     if (input.articleId) {
-      await this.requireArticle(input.articleId);
+      const artigo = await this.requireArticle(input.articleId);
+      if (input.soDoAutor && artigo.authorId !== input.userId) {
+        throw new ForbiddenException('Este artigo é de outra pessoa');
+      }
     }
 
     const folder = input.folder ?? 'images';
@@ -595,7 +601,7 @@ export class BlogMediaService {
 
     const article = await this.prisma.blogArticle.findUnique({
       where: { id },
-      select: { id: true, status: true, publishedAt: true },
+      select: { id: true, status: true, publishedAt: true, authorId: true },
     });
 
     if (!article) {

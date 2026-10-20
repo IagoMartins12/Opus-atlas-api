@@ -101,6 +101,16 @@ export class AdminDatabaseService {
         isProtected: field.isSecret,
         isWritable:
           !field.isSecret && !field.isId && !this.isManaged(field.name),
+        // Os valores possíveis de um enum, para a tela oferecer a lista em
+        // vez de pedir que se digite o nome certo.
+        ...(field.kind === 'enum'
+          ? {
+              enumValues:
+                Prisma.dmmf.datamodel.enums
+                  .find((e) => e.name === field.type)
+                  ?.values.map((v) => v.name) ?? [],
+            }
+          : {}),
       })),
     };
   }

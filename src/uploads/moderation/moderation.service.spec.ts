@@ -8,11 +8,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { CollectionsService } from '../../library/collections/collections.service';
+import { ContributionsService } from '../../library/contributions/contributions.service';
 import { ModerationService } from './moderation.service';
 
 describe('ModerationService', () => {
   let service: ModerationService;
   let prisma: {
+    $runCommandRaw: jest.Mock;
     uploadModeration: {
       create: jest.Mock;
       findFirst: jest.Mock;
@@ -44,8 +47,19 @@ describe('ModerationService', () => {
       update: jest.Mock;
       updateMany: jest.Mock;
     };
+    workAnnotation: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+      delete: jest.Mock;
+    };
   };
   let notifications: { notify: jest.Mock; notifyMany: jest.Mock };
+  let contributions: {
+    revert: jest.Mock;
+    reapply: jest.Mock;
+    deleteCuriosity: jest.Mock;
+  };
   let storage: { deleteByEntity: jest.Mock };
   let cache: { invalidateMany: jest.Mock };
 
@@ -60,6 +74,9 @@ describe('ModerationService', () => {
 
   beforeEach(async () => {
     prisma = {
+      $runCommandRaw: jest
+        .fn()
+        .mockResolvedValue({ cursor: { firstBatch: [] } }),
       uploadModeration: {
         create: jest.fn().mockResolvedValue({ id: 'mod-1' }),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -100,10 +117,26 @@ describe('ModerationService', () => {
         update: jest.fn().mockResolvedValue({}),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      workAnnotation: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'note-1',
+          userId: 'anotador-1',
+          workId: 'work-1',
+        }),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        delete: jest.fn().mockResolvedValue({ workId: 'work-1' }),
+      },
     };
 
     storage = { deleteByEntity: jest.fn().mockResolvedValue(0) };
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
+
+    contributions = {
+      revert: jest.fn().mockResolvedValue(undefined),
+      reapply: jest.fn().mockResolvedValue(undefined),
+      deleteCuriosity: jest.fn().mockResolvedValue(undefined),
+    };
 
     notifications = {
       notify: jest.fn().mockResolvedValue(undefined),
@@ -117,6 +150,11 @@ describe('ModerationService', () => {
         { provide: StorageService, useValue: storage },
         { provide: AppCacheService, useValue: cache },
         { provide: NotificationsService, useValue: notifications },
+        { provide: ContributionsService, useValue: contributions },
+        {
+          provide: CollectionsService,
+          useValue: { delete: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -147,16 +185,50 @@ describe('ModerationService', () => {
     });
 
     // Sem isso, uma pessoa sozinha afunda a fila com o mesmo item repetido.
-    it('recusa denúncia repetida do mesmo usuário sobre o mesmo item', async () => {
-      prisma.uploadModeration.findFirst.mockResolvedValue({ id: 'mod-antiga' });
+    it('recusa denúncia enquanto a anterior do mesmo usuário está aberta', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'pending', category: 'OTHER' },
+      ]);
 
       await expect(service.report('user-1', dto, context)).rejects.toThrow(
         ConflictException,
       );
     });
 
+    it('recusa o mesmo motivo depois de decidido', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: dto.category },
+      ]);
+
+      await expect(service.report('user-1', dto, context)).rejects.toThrow(
+        'por esse motivo',
+      );
+    });
+
+    it('para em três denúncias do mesmo usuário sobre o mesmo item', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: 'A' },
+        { status: 'resolved', category: 'B' },
+        { status: 'approved', category: 'C' },
+      ]);
+
+      await expect(service.report('user-1', dto, context)).rejects.toThrow(
+        'limite',
+      );
+    });
+
+    it('permite outro motivo depois de decidido o primeiro', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([
+        { status: 'resolved', category: 'OUTRO_MOTIVO' },
+      ]);
+
+      await expect(
+        service.report('user-1', dto, context),
+      ).resolves.toBeDefined();
+    });
+
     it('permite denúncia de outro usuário sobre o mesmo item', async () => {
-      prisma.uploadModeration.findFirst.mockResolvedValue(null);
+      prisma.uploadModeration.findMany.mockResolvedValueOnce([]);
 
       await expect(
         service.report('user-2', dto, context),
@@ -421,6 +493,9 @@ describe('ModerationService', () => {
 
   describe('list', () => {
     it('pagina e resolve o conteúdo denunciado de cada linha', async () => {
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: { firstBatch: [{ _id: { $oid: 'mod-1' } }] },
+      });
       prisma.uploadModeration.findMany.mockResolvedValue([
         {
           id: 'mod-1',
@@ -446,6 +521,55 @@ describe('ModerationService', () => {
         createdBy: 'autor-1',
       });
       expect(result.pagination.totalPages).toBe(1);
+    });
+
+    // Ordenar `priority` como texto punha as urgentes (24 h) por último.
+    it('a fila aberta vem na ordem do prazo, calculada no banco', async () => {
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: {
+          firstBatch: [
+            { _id: { $oid: 'urgente' } },
+            { _id: { $oid: 'comum' } },
+          ],
+        },
+      });
+      // O banco devolve na ordem que quiser; a lista respeita a do prazo.
+      prisma.uploadModeration.findMany.mockResolvedValue([
+        {
+          id: 'comum',
+          entityType: 'work',
+          entityId: 'w',
+          priority: 'normal',
+          createdAt: new Date(),
+        },
+        {
+          id: 'urgente',
+          entityType: 'work',
+          entityId: 'w',
+          priority: 'urgent',
+          createdAt: new Date(),
+        },
+      ]);
+
+      const result = await service.list({
+        page: 1,
+        limit: 20,
+        status: 'pending',
+      });
+
+      expect(result.reports.map((r) => r.id)).toEqual(['urgente', 'comum']);
+      const pipeline = prisma.$runCommandRaw.mock.calls[0][0].pipeline;
+      expect(pipeline[0]).toEqual({ $match: { status: 'pending' } });
+      expect(pipeline[2]).toEqual({ $sort: { vence: 1, _id: 1 } });
+    });
+
+    it('o histórico vem do mais recente, sem passar pela agregação', async () => {
+      await service.list({ page: 1, limit: 20, status: 'all' });
+
+      expect(prisma.$runCommandRaw).not.toHaveBeenCalled();
+      expect(prisma.uploadModeration.findMany.mock.calls[0][0].orderBy).toEqual(
+        [{ createdAt: 'desc' }, { id: 'desc' }],
+      );
     });
   });
 
@@ -603,6 +727,124 @@ describe('ModerationService', () => {
           resolution: 'delete',
           moderatedBy: 'moderador-1',
         }),
+      });
+    });
+  });
+
+  // A report has to come back with an answer, or people stop sending them.
+  describe('retorno a quem denunciou', () => {
+    const pending = {
+      id: 'mod-1',
+      entityType: 'work',
+      entityId: 'work-1',
+      reportedBy: 'denunciante-1',
+      status: 'pending',
+    };
+
+    it('avisa que o conteúdo saiu do ar quando é removido', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'delete',
+        notes: 'Dados inventados',
+      });
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'denunciante-1',
+          title: 'O que você denunciou saiu do ar',
+          uniqueHash: 'moderation-result:mod-1',
+        }),
+      );
+    });
+
+    it('avisa que foi analisada quando o conteúdo fica, sem expor as notas', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'approve',
+        notes: 'Autor é reincidente, ficar de olho',
+      });
+
+      const sent = notifications.notify.mock.calls[0][0];
+      expect(sent.title).toBe('Sua denúncia foi analisada');
+      expect(sent.message).not.toContain('reincidente');
+    });
+
+    it('avisa também quando a decisão veio por outro painel', async () => {
+      prisma.uploadModeration.findMany.mockResolvedValue([pending]);
+
+      await service.closePendingFor({
+        entityType: 'work',
+        entityId: 'work-1',
+        moderatorId: 'moderador',
+        resolution: 'delete',
+        notes: null,
+      });
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'denunciante-1' }),
+      );
+    });
+  });
+
+  describe('anotação', () => {
+    const noteReport = (category: 'illegal' | 'offensive') => ({
+      entityType: 'annotation' as const,
+      entityId: 'note-1',
+      category,
+      reason: 'Texto ofensivo numa anotação pública',
+    });
+    const pending = {
+      id: 'mod-1',
+      entityType: 'annotation',
+      entityId: 'note-1',
+      reportedBy: 'denunciante-1',
+      status: 'pending',
+    };
+
+    it('denúncia grave esconde a anotação e avisa quem escreveu', async () => {
+      await service.report('user-1', noteReport('illegal'), context);
+
+      expect(prisma.workAnnotation.update).toHaveBeenCalledWith({
+        where: { id: 'note-1' },
+        data: { isHidden: true },
+      });
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'anotador-1',
+          title: 'Sua anotação saiu do ar para análise',
+        }),
+      );
+    });
+
+    it('remover apaga a anotação e corrige a contagem da obra', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', {
+        action: 'delete',
+        notes: 'Ofensa',
+      });
+
+      expect(prisma.workAnnotation.delete).toHaveBeenCalledWith({
+        where: { id: 'note-1' },
+        select: { workId: true },
+      });
+      expect(prisma.work.updateMany).toHaveBeenCalledWith({
+        where: { id: 'work-1', annotationsCount: { gt: 0 } },
+        data: { annotationsCount: { decrement: 1 } },
+      });
+      expect(storage.deleteByEntity).not.toHaveBeenCalled();
+    });
+
+    it('arquivar a denúncia devolve a anotação ao ar', async () => {
+      prisma.uploadModeration.findUnique.mockResolvedValue(pending);
+
+      await service.resolve('moderador', 'mod-1', { action: 'reject' });
+
+      expect(prisma.workAnnotation.updateMany).toHaveBeenCalledWith({
+        where: { id: 'note-1', isHidden: true },
+        data: { isHidden: false },
       });
     });
   });

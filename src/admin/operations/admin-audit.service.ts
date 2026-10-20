@@ -1,17 +1,53 @@
 import { escapeRegex } from '../../common/utils/regex.util';
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  runAggregate,
+  toObjectId,
+  topPorContagem,
+} from '../metrics/raw-aggregate';
 import { PrismaService } from '../../prisma/prisma.service';
 import { nextCursorOf, pageArgs } from '../../common/pagination/cursor';
 import { toCsv } from '../../common/utils/csv.util';
 import {
   AuditSummaryQueryDto,
   ListAuditQueryDto,
+  PurgeAuditDto,
 } from './dto/admin-operations.dto';
+import { AuditService } from '../../common/audit/audit.service';
+
+/** A ação que registra uma limpeza. Ela mesma nunca é apagada. */
+export const ACAO_LIMPEZA_DA_AUDITORIA = 'audit.purge';
 
 const MAX_EXPORT_ROWS = 20_000;
 
+/** Teto de registros achados por alvo ou campo (vira um `IN`). */
+const MAX_JSON_MATCHES = 2000;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function metadataField(metadata: Prisma.JsonValue, campo: string) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const valor = (metadata as Record<string, unknown>)[campo];
+  return typeof valor === 'string' ? valor : null;
+}
+
+/** "campo: antes → depois; …", para a planilha ler numa célula. */
+function describeChanges(metadata: Prisma.JsonValue): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const mudancas = (metadata as { mudancas?: unknown }).mudancas;
+  if (!Array.isArray(mudancas)) return null;
+  return mudancas
+    .map(
+      (m: { campo?: string; antes?: unknown; depois?: unknown }) =>
+        `${m.campo}: ${JSON.stringify(m.antes ?? null)} → ${JSON.stringify(m.depois ?? null)}`,
+    )
+    .join('; ');
+}
 
 const AUDIT_SELECT = {
   id: true,
@@ -32,7 +68,63 @@ type AuditRow = Prisma.AdminAuditLogGetPayload<{ select: typeof AUDIT_SELECT }>;
 
 @Injectable()
 export class AdminAuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditoria: AuditService,
+  ) {}
+
+  /**
+   * Apaga registros da trilha — os escolhidos ou os que casam com os filtros.
+   *
+   * **Toda limpeza deixa rastro que não se apaga.** Um registro
+   * `audit.purge` diz quem apagou, quantos e com que critério, e nenhuma
+   * limpeza o alcança. Sem isso, apagar a auditoria seria o jeito de apagar
+   * o que se fez.
+   */
+  async purge(dto: PurgeAuditDto, actorId: string) {
+    const porId = !!dto.ids?.length;
+    const temFiltro =
+      !!dto.filtros &&
+      Object.entries(dto.filtros).some(
+        ([chave, valor]) =>
+          !['cursor', 'page', 'limit'].includes(chave) &&
+          valor !== undefined &&
+          valor !== '' &&
+          valor !== false,
+      );
+
+    if (!porId && !temFiltro) {
+      throw new BadRequestException(
+        'Escolha os registros ou use ao menos um filtro para apagar.',
+      );
+    }
+
+    const criterio: Prisma.AdminAuditLogWhereInput = porId
+      ? { id: { in: dto.ids } }
+      : await this.buildWhere(dto.filtros!);
+
+    const { count } = await this.prisma.adminAuditLog.deleteMany({
+      where: {
+        AND: [criterio, { action: { not: ACAO_LIMPEZA_DA_AUDITORIA } }],
+      },
+    });
+
+    await this.auditoria.record({
+      actorId,
+      action: ACAO_LIMPEZA_DA_AUDITORIA,
+      entityType: 'audit',
+      success: true,
+      metadata: {
+        alvo: `${count} registros`,
+        apagados: count,
+        criterio: porId
+          ? { ids: dto.ids!.length }
+          : (JSON.parse(JSON.stringify(dto.filtros)) as Prisma.InputJsonValue),
+      },
+    });
+
+    return { apagados: count };
+  }
 
   /**
    * Consulta a trilha de auditoria administrativa.
@@ -48,7 +140,7 @@ export class AdminAuditService {
   async list(query: ListAuditQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
-    const where = this.buildWhere(query);
+    const where = await this.buildWhere(query);
 
     const paging = pageArgs({ cursor: query.cursor, page, limit });
 
@@ -93,20 +185,26 @@ export class AdminAuditService {
     const [total, falhas, porAcao, porAtor] = await Promise.all([
       this.prisma.adminAuditLog.count({ where }),
       this.prisma.adminAuditLog.count({ where: { ...where, success: false } }),
-      this.prisma.adminAuditLog.groupBy({
-        by: ['action'],
-        where,
-        _count: { _all: true },
-        orderBy: { _count: { action: 'desc' } },
-        take: 20,
-      }),
-      this.prisma.adminAuditLog.groupBy({
-        by: ['actorId'],
-        where,
-        _count: { _all: true },
-        orderBy: { _count: { actorId: 'desc' } },
-        take: 10,
-      }),
+      // Contados e cortados no banco (ver `topPorContagem`).
+      topPorContagem(this.prisma, 'admin_audit_logs', 'action', {
+        limite: 20,
+        match: { createdAt: { $gte: { $date: since.toISOString() } } },
+      }).then((l) => l.map((r) => ({ action: r.id, _count: { _all: r.n } }))),
+      runAggregate<{ _id: unknown; n: number }>(
+        this.prisma,
+        'admin_audit_logs',
+        [
+          { $match: { createdAt: { $gte: { $date: since.toISOString() } } } },
+          { $group: { _id: '$actorId', n: { $sum: 1 } } },
+          { $sort: { n: -1 } },
+          { $limit: 10 },
+        ],
+      ).then((l) =>
+        l.map((r) => ({
+          actorId: r._id === null ? null : (toObjectId(r._id) ?? String(r._id)),
+          _count: { _all: r.n },
+        })),
+      ),
     ]);
 
     const actorIds = porAtor
@@ -133,9 +231,67 @@ export class AdminAuditService {
     };
   }
 
+  /**
+   * O que existe para filtrar: todas as ações, tipos e pessoas que já
+   * aparecem na trilha, com a contagem de cada um.
+   *
+   * A tela monta os filtros daqui em vez de uma lista escrita à mão — ação
+   * nova no código aparece no filtro no mesmo dia, sem ninguém lembrar.
+   */
+  async facets() {
+    const [acoes, tipos, atores] = await Promise.all([
+      this.prisma.adminAuditLog.groupBy({
+        by: ['action'],
+        _count: { _all: true },
+        orderBy: { _count: { action: 'desc' } },
+      }),
+      this.prisma.adminAuditLog.groupBy({
+        by: ['entityType'],
+        _count: { _all: true },
+        orderBy: { _count: { entityType: 'desc' } },
+      }),
+      runAggregate<{ _id: unknown; n: number }>(
+        this.prisma,
+        'admin_audit_logs',
+        [
+          { $group: { _id: '$actorId', n: { $sum: 1 } } },
+          { $sort: { n: -1 } },
+          { $limit: 100 },
+        ],
+      ).then((l) =>
+        l.map((r) => ({
+          actorId: r._id === null ? null : (toObjectId(r._id) ?? String(r._id)),
+          _count: { _all: r.n },
+        })),
+      ),
+    ]);
+    // O `orderBy` por contagem do groupBy não ordena no MongoDB.
+    acoes.sort((x, y) => y._count._all - x._count._all);
+    tipos.sort((x, y) => y._count._all - x._count._all);
+
+    const nomes = await this.loadActors(
+      atores.map((row) => row.actorId).filter((id): id is string => !!id),
+    );
+
+    return {
+      actions: acoes.map((row) => ({
+        action: row.action,
+        count: row._count._all,
+      })),
+      entityTypes: tipos
+        .filter((row) => row.entityType)
+        .map((row) => ({ entityType: row.entityType, count: row._count._all })),
+      actors: atores.map((row) => ({
+        actorId: row.actorId,
+        name: row.actorId ? (nomes.get(row.actorId) ?? null) : null,
+        count: row._count._all,
+      })),
+    };
+  }
+
   async export(query: ListAuditQueryDto) {
     const entries = await this.prisma.adminAuditLog.findMany({
-      where: this.buildWhere(query),
+      where: await this.buildWhere(query),
       select: AUDIT_SELECT,
       orderBy: { createdAt: 'desc' },
       take: MAX_EXPORT_ROWS,
@@ -161,6 +317,8 @@ export class AdminAuditService {
         'Papel',
         'Entidade',
         'Id da entidade',
+        'Alvo',
+        'Mudanças',
         'IP',
         'Requisição',
       ],
@@ -172,6 +330,8 @@ export class AdminAuditService {
         entry.actorRole,
         entry.entityType,
         entry.entityId,
+        metadataField(entry.metadata, 'alvo'),
+        describeChanges(entry.metadata),
         entry.ipAddress,
         entry.requestId,
       ]),
@@ -224,13 +384,85 @@ export class AdminAuditService {
     );
   }
 
-  private buildWhere(query: ListAuditQueryDto): Prisma.AdminAuditLogWhereInput {
+  private async buildWhere(
+    query: ListAuditQueryDto,
+  ): Promise<Prisma.AdminAuditLogWhereInput> {
+    const and: Prisma.AdminAuditLogWhereInput[] = [];
+
+    if (query.verb === 'create') {
+      and.push({ action: { endsWith: '.create' } });
+    } else if (query.verb === 'delete') {
+      and.push({
+        OR: [
+          { action: { endsWith: '.delete' } },
+          { action: { contains: '.delete' } },
+          { action: { endsWith: '.clear' } },
+        ],
+      });
+    } else if (query.verb === 'update') {
+      and.push({
+        OR: [
+          { action: { endsWith: '.update' } },
+          { action: { contains: '.verify' } },
+          { action: { contains: 'Bulk' } },
+          { action: { endsWith: '.set' } },
+        ],
+      });
+    } else if (query.verb === 'other') {
+      and.push({
+        NOT: [
+          { action: { endsWith: '.create' } },
+          { action: { endsWith: '.update' } },
+          { action: { endsWith: '.delete' } },
+        ],
+      });
+    }
+
+    if (query.ip?.trim()) {
+      and.push({ ipAddress: { contains: escapeRegex(query.ip.trim()) } });
+    }
+
+    // Alvo e campo moram no `metadata` (JSON), que o Prisma não filtra no
+    // Mongo: os ids saem de uma consulta crua, com teto.
+    if (query.target?.trim() || query.field?.trim()) {
+      const filtro: Record<string, unknown> = {};
+      if (query.target?.trim()) {
+        filtro['metadata.alvo'] = {
+          $regex: escapeRegex(query.target.trim()),
+          $options: 'i',
+        };
+      }
+      if (query.field?.trim()) {
+        filtro['metadata.mudancas.campo'] = query.field.trim();
+      }
+      const linhas = await runAggregate<{ _id: unknown }>(
+        this.prisma,
+        'admin_audit_logs',
+        [
+          { $match: filtro },
+          { $sort: { createdAt: -1 } },
+          { $limit: MAX_JSON_MATCHES },
+          { $project: { _id: 1 } },
+        ],
+      );
+      and.push({
+        id: {
+          in: linhas
+            .map((l) => toObjectId(l._id))
+            .filter((x): x is string => !!x),
+        },
+      });
+    }
+
     return {
       ...(query.action ? { action: query.action } : {}),
       ...(query.actionPrefix
         ? { action: { startsWith: escapeRegex(query.actionPrefix) } }
         : {}),
       ...(query.actorId ? { actorId: query.actorId } : {}),
+      ...(query.actorRole !== undefined
+        ? { actorRole: String(query.actorRole) }
+        : {}),
       ...(query.entityType ? { entityType: query.entityType } : {}),
       ...(query.entityId ? { entityId: query.entityId } : {}),
       ...(query.onlyFailures ? { success: false } : {}),
@@ -242,6 +474,7 @@ export class AdminAuditService {
             },
           }
         : {}),
+      ...(and.length ? { AND: and } : {}),
     };
   }
 }

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildInsight, Insight, percent } from './insight';
 import { runAggregate, toObjectId } from './raw-aggregate';
+import { dueAt } from '../../uploads/moderation/moderation-sla';
+import { ReportPriority } from '../../uploads/moderation/report-categories';
 
 /** Quantas obras examinar por critério antes de cruzar com a oferta. */
 const CANDIDATES = 200;
@@ -24,14 +26,15 @@ export class CatalogInsightsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async collect(): Promise<Insight[]> {
-    const [gap, unverifiedDemand, orphans, coverage] = await Promise.all([
+    const [gap, unverifiedDemand, orphans, coverage, sla] = await Promise.all([
       this.demandWithoutSupply(),
       this.popularButUnverified(),
       this.unplayableWorks(),
       this.verificationCoverage(),
+      this.moderationSla(),
     ]);
 
-    return [gap, unverifiedDemand, orphans, coverage];
+    return [gap, unverifiedDemand, orphans, coverage, sla];
   }
 
   /**
@@ -300,5 +303,73 @@ export class CatalogInsightsService {
         { id: work.id, title: work.title, composer: work.composer.name },
       ]),
     );
+  }
+
+  /**
+   * Denúncias resolvidas dentro do prazo (RN-4), nos últimos 30 dias.
+   *
+   * O prazo depende da prioridade (24 h a 30 dias); a medida é a fração das
+   * resolvidas que fecharam antes do vencimento. As abertas que já venceram
+   * vão como evidência — são as que pesam na próxima leitura.
+   */
+  private async moderationSla(): Promise<Insight> {
+    const agora = new Date();
+    const desde = new Date(agora.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [resolvidas, abertas] = await Promise.all([
+      this.prisma.uploadModeration.findMany({
+        where: { resolvedAt: { gte: desde } },
+        select: { createdAt: true, resolvedAt: true, priority: true },
+        take: 5_000,
+      }),
+      this.prisma.uploadModeration.findMany({
+        where: { status: 'pending' },
+        select: {
+          id: true,
+          reason: true,
+          priority: true,
+          createdAt: true,
+          entityType: true,
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 200,
+      }),
+    ]);
+
+    const prioridade = (p: string) =>
+      (['urgent', 'high', 'normal', 'low'].includes(p)
+        ? p
+        : 'normal') as ReportPriority;
+
+    const noPrazo = resolvidas.filter(
+      (r) =>
+        r.resolvedAt &&
+        r.resolvedAt <= dueAt(r.createdAt, prioridade(r.priority)),
+    ).length;
+    const vencidas = abertas.filter(
+      (r) => dueAt(r.createdAt, prioridade(r.priority)) < agora,
+    );
+    const taxa = percent(noPrazo, resolvidas.length);
+
+    return buildInsight({
+      code: 'catalog.moderation_sla',
+      title: 'Denúncias resolvidas no prazo',
+      severity:
+        vencidas.length > 0 && (taxa === null || taxa < 80)
+          ? 'warning'
+          : taxa !== null && taxa < 90
+            ? 'opportunity'
+            : 'healthy',
+      detail: `${noPrazo} de ${resolvidas.length} denúncia(s) resolvida(s) nos últimos 30 dias fecharam no prazo. ${vencidas.length} aberta(s) já passaram do prazo.`,
+      value: taxa,
+      unit: 'percent',
+      sampleSize: resolvidas.length,
+      minimumSample: 5,
+      action:
+        vencidas.length > 0
+          ? 'Comece pelas denúncias vencidas: a fila de Denúncias já ordena pelo prazo.'
+          : undefined,
+      evidence: vencidas.slice(0, EVIDENCE),
+    });
   }
 }

@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { composerDateParts } from '../../common/dates/loose-date';
 import {
   BadRequestException,
   ForbiddenException,
@@ -25,6 +26,7 @@ import { ComposerDuplicateResponseDto } from './dto/composer-duplicate-response.
 import { CreateComposerContributionDto } from './dto/create-composer-contribution.dto';
 import { UpdateComposerContributionDto } from './dto/update-composer-contribution.dto';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { ContributionLimitService } from '../shared/contribution-limit.service';
 
 /** Campos que entram no cálculo de completude do cadastro. */
 const COMPLETENESS_FIELDS = [
@@ -63,6 +65,7 @@ export class ComposerUploadsService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly activity: ActivityTracker,
+    private readonly limit: ContributionLimitService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -74,6 +77,7 @@ export class ComposerUploadsService {
     dto: CreateComposerContributionDto,
     context: RequestContext,
   ) {
+    await this.limit.assertWithinLimit(userId);
     await this.assertReferencesExist(dto.epochId, dto.primaryRoleId);
 
     const composer = await this.prisma.composer.create({
@@ -83,6 +87,10 @@ export class ComposerUploadsService {
         alternativeNames: dto.alternativeNames ?? null,
         birthDate: dto.birthDate ?? null,
         deathDate: dto.deathDate ?? null,
+        ...composerDateParts({
+          birthDate: dto.birthDate ?? null,
+          deathDate: dto.deathDate ?? null,
+        }),
         portraitUrl: dto.portraitUrl ?? null,
         epochId: dto.epochId,
         epochName: dto.epochName ?? null,
@@ -215,6 +223,11 @@ export class ComposerUploadsService {
       data.bioGeneratedBy = null;
       data.bioGeneratedAt = null;
     }
+
+    Object.assign(
+      data,
+      composerDateParts({ birthDate: dto.birthDate, deathDate: dto.deathDate }),
+    );
 
     data.dataCompleteness = this.calculateCompleteness({
       ...existing,

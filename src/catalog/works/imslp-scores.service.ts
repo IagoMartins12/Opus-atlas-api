@@ -1,7 +1,14 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma, ScoreSource } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { isMongoId } from 'class-validator';
 import { AppCacheService } from '../../common/cache/cache.service';
+import { buildIdempotencyKey, envelope } from '../../common/queue/job-contract';
+import {
+  JOB_IMSLP_SCORES,
+  QUEUE_IMSLP,
+} from '../../common/queue/queue.constants';
 import { errorMessage } from '../../common/utils/error.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExternalPageFetcher } from '../../scrapers/imslp/external-page.fetcher';
@@ -11,82 +18,249 @@ import {
 } from '../../scrapers/imslp/imslp-scores.parser';
 
 /**
- * Obra já tentada não é raspada de novo por um dia — nem a que não tem arquivo
- * nenhum no IMSLP, que de outro modo seria buscada a cada visita.
+ * Situação das partituras do IMSLP de uma obra, como a página da obra a vê.
+ *
+ * - `stored`: já estão no banco (ou a obra tem partitura de outra fonte);
+ * - `pending`: a busca está na fila ou rodando — a tela mostra o aviso e
+ *   pergunta de novo em `GET /works/:id/scores/imslp-status`;
+ * - `none`: o IMSLP não tem arquivo para a obra (ou ela não tem página lá);
+ * - `unavailable`: não deu para buscar agora (IMSLP fora, fila cheia, robô).
  */
+export type ImslpStatus = 'stored' | 'pending' | 'none' | 'unavailable';
+
+/** Obra lida não é lida de novo por um dia — nem a que não tem arquivo. */
 const TRIED_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Falha (IMSLP fora, página mudou) tenta de novo mais cedo. */
 const FAILED_TTL_MS = 60 * 60 * 1000;
 
-/** Raspagens simultâneas por processo. A rota é pública; o IMSLP é de terceiros. */
-const MAX_CONCURRENT = 3;
+/**
+ * Teto da fila. Com o limitador abaixo, 300 obras esperando são ~8 minutos de
+ * trabalho; acima disso é pico (ou robô que escapou do filtro), e enfileirar
+ * mais só faz a pessoa esperar por nada. Quem chega com a fila cheia vê
+ * "indisponível agora" e a próxima visita tenta.
+ */
+const MAX_BACKLOG = 300;
+
+/** Falhas seguidas que abrem o disjuntor, e por quanto tempo ele fica aberto. */
+const BREAKER_THRESHOLD = 5;
+const BREAKER_WINDOW_MS = 5 * 60 * 1000;
+const BREAKER_OPEN_MS = 10 * 60 * 1000;
+
+/** Trava por obra: a busca da fila e o "reler" do admin não rodam juntos. */
+const LOCK_TTL_MS = 60 * 1000;
 
 // Fora dos namespaces de cache de propósito: uma escrita no catálogo limpa
 // `works:*`, e a marca de tentativa não deve sumir junto.
+/**
+ * O `jobId` da leitura de uma obra: um por obra, e **sem `:`**.
+ *
+ * O BullMQ recusa `:` num `jobId` ("Custom Id cannot contain :"). Aqui ele
+ * estava escrito à mão como `imslp-scores:<id>` — fora do contrato de jobs
+ * (`buildIdempotencyKey`, que usa pontos) — e **toda** leitura lançava, o
+ * erro era engolido como "indisponível" e nenhuma partitura do IMSLP chegava
+ * a ser buscada. Os testes usavam fila simulada e não viam: ver o teste que
+ * valida o id com a regra de verdade do BullMQ.
+ */
+export const imslpScoresJobId = (workId: string) =>
+  buildIdempotencyKey('imslp.scores', workId);
+
 const triedKey = (workId: string) => `imslp-scores:tried:${workId}`;
+const lockKey = (workId: string) => `imslp-scores:lock:${workId}`;
+const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
+const BREAKER_OPEN = 'imslp-scores:breaker:open';
+
+/** O que a marca de tentativa guarda: deu certo (com ou sem arquivo) ou falhou. */
+type TriedMark = 'done' | 'failed';
+
+export interface ImslpScoresJobPayload {
+  workId: string;
+}
+
+/** O mínimo do cliente Redis que este serviço usa (o do BullMQ, ioredis). */
+interface RedisLike {
+  set(
+    key: string,
+    value: string,
+    px: 'PX',
+    ttl: number,
+    nx: 'NX',
+  ): Promise<'OK' | null>;
+  get(key: string): Promise<string | null>;
+  del(...keys: string[]): Promise<number>;
+  incr(key: string): Promise<number>;
+  pexpire(key: string, ttl: number): Promise<number>;
+}
 
 /**
- * Partituras do IMSLP sob demanda — o substituto do `imslp-scores` do legado.
+ * Partituras do IMSLP sob demanda.
  *
- * **Por que é preciso.** Das 207 mil obras, só 23 mil (11%) têm partitura
- * guardada. O legado raspava o IMSLP na hora, na página da obra; sem isto, a
- * API mostraria a página de 89% das obras sem partitura nenhuma.
+ * **Por que existe.** Das 207 mil obras, só 11% têm partitura guardada; as
+ * outras são lidas do IMSLP na primeira visita e gravadas.
  *
- * **Como.** Na primeira visita a uma obra sem partitura do IMSLP, a página da
- * obra é lida uma vez, todos os arquivos são gravados, e a obra é marcada por
- * um dia — visitas seguintes leem do banco. Duas visitas simultâneas à mesma
- * obra esperam a mesma raspagem; e há um teto de raspagens em paralelo, porque
- * a rota é pública e cada chamada vira uma requisição a um site de terceiros.
+ * **Por que numa fila (01/10).** Até aqui a leitura acontecia dentro da
+ * requisição da página: a pessoa esperava o IMSLP, a trava era só em memória
+ * (N réplicas = N vezes o teto), e um robô varrendo obras disparava uma
+ * raspagem por página. Agora:
+ *
+ * - a rota só **pede** (`request`) e responde na hora com a situação;
+ * - o pedido vira um job com `jobId` por obra — o BullMQ não aceita dois jobs
+ *   com o mesmo id, então mil visitas simultâneas à mesma obra, em qualquer
+ *   réplica, viram uma raspagem só;
+ * - quem raspa é o worker (`ImslpScoresProcessor`), com um limitador **da
+ *   fila** (vale somando todos os workers) — o IMSLP é de terceiros e público;
+ * - um disjuntor no Redis para de tentar quando o IMSLP falha seguidamente;
+ * - robô não pede: lê o que já está guardado.
  */
 @Injectable()
 export class ImslpScoresService {
   private readonly logger = new Logger(ImslpScoresService.name);
-  private readonly inFlight = new Map<string, Promise<number>>();
-  private running = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly fetcher: ExternalPageFetcher,
     private readonly cache: AppCacheService,
+    @InjectQueue(QUEUE_IMSLP) private readonly queue: Queue,
   ) {}
 
   /**
-   * Garante as partituras do IMSLP de uma obra; devolve quantas foram gravadas
-   * agora. Nunca lança: falha do IMSLP não pode derrubar a página da obra.
+   * Situação das partituras da obra; se ainda não foram lidas e a visita é de
+   * uma pessoa, enfileira a leitura. Nunca lança: o IMSLP (ou o Redis) fora
+   * não pode derrubar a página da obra.
    */
-  async ensure(workId: string): Promise<number> {
-    if (!isMongoId(workId)) return 0;
+  async request(
+    workId: string,
+    options: { robot?: boolean } = {},
+  ): Promise<ImslpStatus> {
+    try {
+      const known = await this.knownStatus(workId);
+      if (known) return known;
 
-    // Registrado antes de qualquer `await`: a segunda visita simultânea
-    // encontra a tarefa da primeira em vez de passar pelas mesmas conferências.
-    const pending = this.inFlight.get(workId);
-    if (pending) return pending;
+      if (options.robot) return 'unavailable';
+      if (await this.breakerOpen()) return 'unavailable';
+      if ((await this.queue.getWaitingCount()) >= MAX_BACKLOG) {
+        return 'unavailable';
+      }
 
-    const job = this.ensureNow(workId).finally(() => {
-      this.inFlight.delete(workId);
-    });
-    this.inFlight.set(workId, job);
-    return job;
+      // `jobId` fixo por obra: se já existe um job com ele, o `add` não cria
+      // outro — é a trava global contra a mesma obra raspada duas vezes.
+      // Concluído ou falho, o job sai da fila (`removeOn*`), e quem impede uma
+      // nova leitura no mesmo dia é a marca de tentativa.
+      await this.queue.add(
+        JOB_IMSLP_SCORES,
+        envelope<ImslpScoresJobPayload>({
+          idempotencyKey: imslpScoresJobId(workId),
+          payload: { workId },
+        }),
+        {
+          jobId: imslpScoresJobId(workId),
+          attempts: 1,
+          removeOnComplete: true,
+          removeOnFail: true,
+        },
+      );
+      return 'pending';
+    } catch (error: unknown) {
+      this.logger.warn(
+        `IMSLP: não foi possível pedir as partituras da obra ${workId}: ${errorMessage(error)}`,
+      );
+      return 'unavailable';
+    }
   }
 
-  private async ensureNow(workId: string): Promise<number> {
-    const stored = await this.prisma.workScore.count({
-      where: { workId, source: ScoreSource.IMSLP },
-    });
-    if (stored > 0) return 0;
+  /**
+   * Só a situação, sem enfileirar — é o que a página pergunta enquanto mostra
+   * "buscando partituras". Barata: uma contagem e duas leituras no Redis.
+   */
+  async status(workId: string): Promise<ImslpStatus> {
+    try {
+      const known = await this.knownStatus(workId);
+      if (known) return known;
 
-    if (await this.cache.get<boolean>(triedKey(workId))) return 0;
+      const job = await this.queue.getJob(imslpScoresJobId(workId));
+      return job ? 'pending' : 'unavailable';
+    } catch {
+      return 'unavailable';
+    }
+  }
 
-    // Sem vaga agora: a próxima visita tenta. Não marca, para não perder a obra.
-    if (this.running >= MAX_CONCURRENT) return 0;
+  /**
+   * Lê a página da obra no IMSLP e grava as partituras. Chamado pelo worker;
+   * devolve quantas gravou. Falha de rede conta para o disjuntor e marca a obra
+   * por uma hora; nada aqui é retentado pela fila (uma tentativa só).
+   */
+  async scrape(workId: string): Promise<number> {
+    if (!isMongoId(workId)) return 0;
 
-    return this.scrapeAndStore(workId);
+    const redis = await this.redis();
+    const locked = await redis.set(
+      lockKey(workId),
+      '1',
+      'PX',
+      LOCK_TTL_MS,
+      'NX',
+    );
+    if (!locked) return 0;
+
+    try {
+      if ((await this.storedCount(workId)) > 0) {
+        await this.mark(workId, 'done', TRIED_TTL_MS);
+        return 0;
+      }
+
+      if (await this.breakerOpen()) {
+        await this.mark(workId, 'failed', FAILED_TTL_MS);
+        return 0;
+      }
+
+      const permlink = await this.permlinkOf(workId);
+      if (!permlink) {
+        await this.mark(workId, 'done', TRIED_TTL_MS);
+        return 0;
+      }
+
+      const parsed = await this.fetchScores(permlink);
+      const totals = JSON.stringify(parsed.totals);
+
+      if (parsed.scores.length > 0) {
+        try {
+          await this.prisma.workScore.createMany({
+            data: parsed.scores.map((score) => ({
+              workId,
+              ...this.fields(score, totals),
+            })),
+          });
+        } catch (error: unknown) {
+          // Outra gravação chegou primeiro (índice único): o resultado é o mesmo.
+          if (
+            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+            error.code !== 'P2002'
+          ) {
+            throw error;
+          }
+        }
+      }
+
+      await this.mark(workId, 'done', TRIED_TTL_MS);
+      this.logger.log(
+        `IMSLP: ${parsed.scores.length} partitura(s) gravadas para a obra ${workId}`,
+      );
+      return parsed.scores.length;
+    } catch (error: unknown) {
+      await this.mark(workId, 'failed', FAILED_TTL_MS);
+      this.logger.warn(
+        `IMSLP: falha ao ler as partituras da obra ${workId}: ${errorMessage(error)}`,
+      );
+      return 0;
+    } finally {
+      await redis.del(lockKey(workId)).catch(() => undefined);
+    }
   }
 
   /**
    * Relê a página e atualiza o que mudou — para quando o IMSLP ganha arquivo
-   * novo numa obra que já tinha partitura guardada. Uso administrativo.
+   * novo numa obra que já tinha partitura guardada. Uso administrativo, na
+   * hora (o admin espera o resultado).
    */
   async refresh(
     workId: string,
@@ -97,8 +271,7 @@ export class ImslpScoresService {
       throw new NotFoundException('Obra sem página no IMSLP');
     }
 
-    const { $ } = await this.fetcher.load(permlink, 'imslp');
-    const parsed = parseImslpScores($);
+    const parsed = await this.fetchScores(permlink);
     const totals = JSON.stringify(parsed.totals);
     let created = 0;
     let updated = 0;
@@ -130,60 +303,77 @@ export class ImslpScoresService {
       }
     }
 
-    await this.cache.set(triedKey(workId), true, TRIED_TTL_MS);
+    await this.mark(workId, 'done', TRIED_TTL_MS);
     return { created, updated, total: parsed.scores.length };
   }
 
   // -------------------------------------------------------------------
 
-  private async scrapeAndStore(workId: string): Promise<number> {
-    this.running++;
+  /** O que já se sabe sem enfileirar nada; `null` quando é preciso buscar. */
+  private async knownStatus(workId: string): Promise<ImslpStatus | null> {
+    if (!isMongoId(workId)) return 'none';
+    if ((await this.storedCount(workId)) > 0) return 'stored';
 
+    const mark = await this.cache.get<TriedMark | boolean>(triedKey(workId));
+    // `true` é a marca gravada antes da fila existir: tentativa feita.
+    if (mark === 'done' || mark === true) return 'none';
+    if (mark === 'failed') return 'unavailable';
+    return null;
+  }
+
+  private storedCount(workId: string): Promise<number> {
+    return this.prisma.workScore.count({
+      where: { workId, source: ScoreSource.IMSLP },
+    });
+  }
+
+  private mark(workId: string, value: TriedMark, ttlMs: number) {
+    return this.cache.set(triedKey(workId), value, ttlMs);
+  }
+
+  /** Lê e interpreta a página; o resultado alimenta o disjuntor. */
+  private async fetchScores(permlink: string) {
     try {
-      const permlink = await this.permlinkOf(workId);
-
-      if (!permlink) {
-        await this.cache.set(triedKey(workId), true, TRIED_TTL_MS);
-        return 0;
-      }
-
       const { $ } = await this.fetcher.load(permlink, 'imslp');
       const parsed = parseImslpScores($);
-      const totals = JSON.stringify(parsed.totals);
-
-      if (parsed.scores.length > 0) {
-        try {
-          await this.prisma.workScore.createMany({
-            data: parsed.scores.map((score) => ({
-              workId,
-              ...this.fields(score, totals),
-            })),
-          });
-        } catch (error: unknown) {
-          // Outra instância gravou primeiro (índice único): o resultado é o mesmo.
-          if (
-            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-            error.code !== 'P2002'
-          ) {
-            throw error;
-          }
-        }
-      }
-
-      await this.cache.set(triedKey(workId), true, TRIED_TTL_MS);
-      this.logger.log(
-        `IMSLP: ${parsed.scores.length} partitura(s) gravadas para a obra ${workId}`,
-      );
-      return parsed.scores.length;
+      await this.breakerSuccess();
+      return parsed;
     } catch (error: unknown) {
-      await this.cache.set(triedKey(workId), true, FAILED_TTL_MS);
-      this.logger.warn(
-        `IMSLP: falha ao ler as partituras da obra ${workId}: ${errorMessage(error)}`,
-      );
-      return 0;
-    } finally {
-      this.running--;
+      await this.breakerFailure();
+      throw error;
     }
+  }
+
+  private async breakerOpen(): Promise<boolean> {
+    return (await (await this.redis()).get(BREAKER_OPEN)) !== null;
+  }
+
+  private async breakerSuccess(): Promise<void> {
+    await (await this.redis()).del(BREAKER_FAILURES);
+  }
+
+  /**
+   * Conta a falha numa janela de 5 minutos; na quinta seguida, abre o
+   * disjuntor por 10 — ninguém pede ao IMSLP até lá, e as obras pedidas nesse
+   * meio-tempo ficam "indisponível agora" em vez de entupirem a fila.
+   */
+  private async breakerFailure(): Promise<void> {
+    const redis = await this.redis();
+    const failures = await redis.incr(BREAKER_FAILURES);
+    if (failures === 1)
+      await redis.pexpire(BREAKER_FAILURES, BREAKER_WINDOW_MS);
+    if (failures >= BREAKER_THRESHOLD) {
+      await redis.set(BREAKER_OPEN, '1', 'PX', BREAKER_OPEN_MS, 'NX');
+      await redis.del(BREAKER_FAILURES);
+      this.logger.warn(
+        `IMSLP: ${failures} falhas seguidas — pausa de ${BREAKER_OPEN_MS / 60_000} min`,
+      );
+    }
+  }
+
+  /** O cliente Redis da própria fila: atômico e sem conexão a mais. */
+  private async redis(): Promise<RedisLike> {
+    return (await this.queue.client) as unknown as RedisLike;
   }
 
   private async permlinkOf(workId: string): Promise<string | null> {

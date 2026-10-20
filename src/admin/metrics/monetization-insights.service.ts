@@ -11,20 +11,24 @@ import { PLAN_FEATURES } from '../../billing/constants/plan-features.constants';
 import { buildInsight, Insight, percent } from './insight';
 
 const EVIDENCE = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class MonetizationInsightsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async collect(): Promise<Insight[]> {
-    const [distribution, trial, atLimit, expiring] = await Promise.all([
-      this.planDistribution(),
-      this.trialConversion(),
-      this.usersAtPlanLimit(),
-      this.expiringTrials(),
-    ]);
+    const [distribution, trial, atLimit, expiring, churn, abandono] =
+      await Promise.all([
+        this.planDistribution(),
+        this.trialConversion(),
+        this.usersAtPlanLimit(),
+        this.expiringTrials(),
+        this.churn(),
+        this.checkoutAbandonment(),
+      ]);
 
-    return [distribution, trial, atLimit, expiring];
+    return [distribution, trial, atLimit, expiring, churn, abandono];
   }
 
   /** Distribuição de assinaturas por plano, com a fatia paga destacada. */
@@ -258,6 +262,131 @@ export class MonetizationInsightsService {
           ? 'Janela de contato mais útil do funil — o produto ainda está em uso.'
           : undefined,
       evidence: expirando,
+    });
+  }
+
+  /**
+   * Cancelamentos nos últimos 30 dias sobre quem pagava no começo da janela.
+   *
+   * A base é quem **já tinha** plano pago vivo há 30 dias — contar quem entrou
+   * durante a janela no denominador faria um mês de muita venda esconder um
+   * mês de muita saída.
+   */
+  private async churn(): Promise<Insight> {
+    const agora = new Date();
+    const desde = new Date(agora.getTime() - 30 * DAY_MS);
+    const pagas = { planType: { not: PlanType.FREE } };
+
+    const [base, cancelaram, recentes] = await Promise.all([
+      this.prisma.subscription.count({
+        where: {
+          ...pagas,
+          status: { not: SubscriptionPlanStatus.PENDING },
+          startDate: { lt: desde },
+          AND: [
+            { OR: [{ cancelledAt: null }, { cancelledAt: { gte: desde } }] },
+            { OR: [{ endDate: null }, { endDate: { gte: desde } }] },
+          ],
+        },
+      }),
+      this.prisma.subscription.count({
+        where: { ...pagas, cancelledAt: { gte: desde } },
+      }),
+      this.prisma.subscription.findMany({
+        where: { ...pagas, cancelledAt: { gte: desde } },
+        select: {
+          userId: true,
+          planType: true,
+          billingPeriod: true,
+          cancelledAt: true,
+        },
+        orderBy: { cancelledAt: 'desc' },
+        take: EVIDENCE,
+      }),
+    ]);
+
+    const taxa = percent(cancelaram, base);
+
+    return buildInsight({
+      code: 'monetization.churn',
+      title: 'Cancelamentos nos últimos 30 dias',
+      severity:
+        taxa === null
+          ? 'healthy'
+          : taxa >= 10
+            ? 'critical'
+            : taxa >= 5
+              ? 'warning'
+              : 'healthy',
+      detail: `${cancelaram} cancelamento(s) entre ${base} assinatura(s) paga(s) que existiam há 30 dias.`,
+      value: taxa,
+      unit: 'percent',
+      sampleSize: base,
+      minimumSample: 10,
+      action:
+        taxa !== null && taxa >= 5
+          ? 'Leia os motivos no histórico das assinaturas canceladas e fale com quem saiu nesta semana.'
+          : undefined,
+      evidence: recentes,
+    });
+  }
+
+  /**
+   * Checkouts abertos e nunca pagos (mais de um dia sem pagamento).
+   *
+   * É o funil que o Stripe não mostra: a pessoa escolheu o plano, chegou ao
+   * cartão e desistiu. Taxa alta costuma ser preço, método de pagamento que
+   * falta ou erro no próprio checkout.
+   */
+  private async checkoutAbandonment(): Promise<Insight> {
+    const agora = new Date();
+    const desde = new Date(agora.getTime() - 30 * DAY_MS);
+    const umDia = new Date(agora.getTime() - DAY_MS);
+    const janela = { gte: desde, lt: umDia };
+
+    const [abandonados, iniciados, exemplos] = await Promise.all([
+      this.prisma.subscription.count({
+        where: { status: SubscriptionPlanStatus.PENDING, createdAt: janela },
+      }),
+      this.prisma.subscription.count({
+        where: { planType: { not: PlanType.FREE }, createdAt: janela },
+      }),
+      this.prisma.subscription.findMany({
+        where: { status: SubscriptionPlanStatus.PENDING, createdAt: janela },
+        select: {
+          userId: true,
+          planType: true,
+          billingPeriod: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: EVIDENCE,
+      }),
+    ]);
+
+    const taxa = percent(abandonados, iniciados);
+
+    return buildInsight({
+      code: 'monetization.checkout_abandonment',
+      title: 'Checkouts abandonados',
+      severity:
+        taxa === null
+          ? 'healthy'
+          : taxa >= 60
+            ? 'warning'
+            : taxa >= 35
+              ? 'opportunity'
+              : 'healthy',
+      detail: `${abandonados} de ${iniciados} checkout(s) abertos nos últimos 30 dias nunca foram pagos.`,
+      value: taxa,
+      unit: 'percent',
+      sampleSize: iniciados,
+      minimumSample: 10,
+      action:
+        taxa !== null && taxa >= 35
+          ? 'Confira o checkout de ponta a ponta e se o PIX aparece; um lembrete por e-mail no dia seguinte recupera parte.'
+          : undefined,
+      evidence: exemplos,
     });
   }
 }

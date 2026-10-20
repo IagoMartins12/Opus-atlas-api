@@ -24,9 +24,7 @@ describe('watchRefusal', () => {
     expect(watchRefusal(professor, { requestedBy: 'prof-1' })).toMatch(
       /permissão/,
     );
-    expect(watchRefusal(professor, { requestedBy: null })).toMatch(
-      /permissão/,
-    );
+    expect(watchRefusal(professor, { requestedBy: null })).toMatch(/permissão/);
   });
 
   it('usuário comum não acompanha nada', () => {

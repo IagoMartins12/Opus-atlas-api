@@ -1,6 +1,7 @@
 import {
   CampaignVariables,
   ensureUnsubscribe,
+  personalize,
   render,
   resolveContent,
   unknownVariables,
@@ -158,5 +159,42 @@ describe('ensureUnsubscribe', () => {
     const result = ensureUnsubscribe(html, 'sair', variables.unsubscribeUrl);
 
     expect(result.html).toBe(html);
+  });
+});
+
+describe('personalize', () => {
+  const content = (html: string) => ({
+    subject: 'Novidades para {{firstName}}',
+    html,
+    text: 'Olá, {{firstName}}.',
+    source: 'template' as const,
+  });
+
+  it('puts the body inside the Opus letter, unsubscribe in the footer', () => {
+    const email = personalize(
+      content('<h1>Olá, {{firstName}}</h1><p>Obras novas.</p>'),
+      variables,
+      'https://opusatlas.com',
+    );
+
+    expect(email.subject).toBe('Novidades para Ana');
+    expect(email.html).toContain('https://opusatlas.com/email/selo.png');
+    expect(email.html).toMatch(/<h1 class="oa-h1 oa-t"[^>]*>Olá, Ana<\/h1>/);
+    expect(email.html).toMatch(/<p class="oa-s"[^>]*>Obras novas.<\/p>/);
+    expect(email.html).toContain(variables.unsubscribeUrl);
+    expect(email.text).toContain('Olá, Ana.');
+    expect(email.text).toContain(variables.unsubscribeUrl);
+  });
+
+  it('sends a legacy full document as written', () => {
+    const email = personalize(
+      content('<html><body><p>Antigo</p></body></html>'),
+      variables,
+      'https://opusatlas.com',
+    );
+
+    expect(email.html).not.toContain('selo.png');
+    expect(email.html).toContain('<p>Antigo</p>');
+    expect(email.html).toContain(variables.unsubscribeUrl);
   });
 });

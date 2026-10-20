@@ -61,6 +61,14 @@ describe('ArticlesService — cache', () => {
     );
   });
 
+  it('a lista não traz o texto dos artigos', async () => {
+    await service.findAll({ page: 1 });
+
+    expect(prisma.blogArticle.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ omit: { content: true } }),
+    );
+  });
+
   it('a lista pública vem do cache na segunda vez', async () => {
     await service.findAll({ page: 1 });
     await service.findAll({ page: 1 });
@@ -83,8 +91,8 @@ describe('ArticlesService — cache', () => {
 
   // A de administrador mostra todos os estados.
   it('a lista de administrador nunca entra no cache', async () => {
-    await service.findAll({ page: 1 }, { sub: 'a', role: 1 });
-    await service.findAll({ page: 1 }, { sub: 'a', role: 1 });
+    await service.findAll({ page: 1 }, { sub: 'a', role: 2 });
+    await service.findAll({ page: 1 }, { sub: 'a', role: 2 });
 
     expect(prisma.blogArticle.findMany).toHaveBeenCalledTimes(2);
     expect(cache.set).not.toHaveBeenCalled();

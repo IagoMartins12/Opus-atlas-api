@@ -4,6 +4,13 @@ import { ValidateCouponDto } from '../dto/validate-coupon.dto';
 import { CouponValidationResponseDto } from '../dto/coupon-validation-response.dto';
 import { PlanPricingService } from './plan-pricing.service';
 
+/**
+ * Toda recusa de cupom diz a mesma coisa. Dizer "já usado", "esgotado" ou
+ * "de outro plano" confirmava que o código existe — quem chuta códigos
+ * aprendia quais são de verdade.
+ */
+const COUPON_INVALID = 'Cupom inválido ou expirado';
+
 @Injectable()
 export class CouponsService {
   constructor(
@@ -28,7 +35,7 @@ export class CouponsService {
     });
 
     if (!coupon) {
-      return { valid: false, error: 'Cupom inválido ou expirado' };
+      return { valid: false, error: COUPON_INVALID };
     }
 
     const usage = await this.prisma.couponUsage.findUnique({
@@ -36,18 +43,18 @@ export class CouponsService {
     });
 
     if (usage) {
-      return { valid: false, error: 'Você já utilizou este cupom' };
+      return { valid: false, error: COUPON_INVALID };
     }
 
     if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) {
-      return { valid: false, error: 'Cupom esgotado' };
+      return { valid: false, error: COUPON_INVALID };
     }
 
     if (
       coupon.applicablePlans.length > 0 &&
       !coupon.applicablePlans.includes(dto.planType)
     ) {
-      return { valid: false, error: 'Cupom não aplicável a este plano' };
+      return { valid: false, error: COUPON_INVALID };
     }
 
     const { originalPrice, discount, finalPrice } =

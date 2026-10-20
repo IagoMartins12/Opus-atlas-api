@@ -7,12 +7,15 @@ import {
 } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { runAggregate, toObjectId } from '../../admin/metrics/raw-aggregate';
 import { errorMessage } from '../../common/utils/error.util';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
 import { StorageService } from '../../common/storage/storage.service';
 import { RequestContext } from '../shared/upload-history.service';
 import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { CollectionsService } from '../../library/collections/collections.service';
+import { ContributionsService } from '../../library/contributions/contributions.service';
 import {
   CommentStatus,
   NotificationPriority,
@@ -82,6 +85,55 @@ const ENTITY_HANDLERS = {
       createdAt: true,
     },
   },
+  annotation: {
+    // Annotations have no files either.
+    storageEntity: 'annotation',
+    select: {
+      id: true,
+      title: true,
+      content: true,
+      userId: true,
+      workId: true,
+      createdAt: true,
+    },
+  },
+  curiosity: {
+    storageEntity: 'curiosity',
+    select: {
+      id: true,
+      text: true,
+      userId: true,
+      composerId: true,
+      createdAt: true,
+    },
+  },
+  contribution: {
+    // A field someone changed on a composer or work; `after` is what they wrote.
+    storageEntity: 'contribution',
+    select: {
+      id: true,
+      kind: true,
+      field: true,
+      after: true,
+      source: true,
+      userId: true,
+      entityType: true,
+      entityId: true,
+      createdAt: true,
+    },
+  },
+  collection: {
+    storageEntity: 'collection',
+    // `ownerId` stands for the author when the hold is announced.
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      kind: true,
+      ownerId: true,
+      createdAt: true,
+    },
+  },
 } as const;
 
 /** As categorias que disparam providência imediata. */
@@ -96,6 +148,22 @@ function reportPriority(value: string | null): ReportPriority {
     : 'normal';
 }
 
+const MODERATION_INCLUDE = {
+  reporter: {
+    select: { id: true, firstName: true, lastName: true, email: true },
+  },
+  moderator: {
+    select: { id: true, firstName: true, lastName: true },
+  },
+} satisfies Prisma.UploadModerationInclude;
+
+type ModerationRow = Prisma.UploadModerationGetPayload<{
+  include: typeof MODERATION_INCLUDE;
+}>;
+
+/** Reports one person may make about the same item, across subjects. */
+const MAX_REPORTS_PER_ITEM = 3;
+
 @Injectable()
 export class ModerationService {
   private readonly logger = new Logger(ModerationService.name);
@@ -105,6 +173,8 @@ export class ModerationService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly notifications: NotificationsService,
+    private readonly contributions: ContributionsService,
+    private readonly collections: CollectionsService,
   ) {}
 
   /**
@@ -121,19 +191,31 @@ export class ModerationService {
       throw new NotFoundException('Conteúdo denunciado não encontrado');
     }
 
-    const existing = await this.prisma.uploadModeration.findFirst({
+    // One person, one item: a report open at a time, the same subject
+    // (category) only once, and a ceiling overall. Without it, one account
+    // can sink the queue with the same item, decision after decision.
+    const anteriores = await this.prisma.uploadModeration.findMany({
       where: {
         entityType: dto.entityType,
         entityId: dto.entityId,
         reportedBy: userId,
-        status: 'pending',
       },
-      select: { id: true },
+      select: { status: true, category: true },
     });
 
-    if (existing) {
+    if (anteriores.some((r) => r.status === 'pending')) {
       throw new ConflictException(
         'Você já denunciou este item. Aguarde a análise.',
+      );
+    }
+    if (anteriores.some((r) => r.category === dto.category)) {
+      throw new ConflictException(
+        'Você já denunciou este item por esse motivo, e a equipe já decidiu.',
+      );
+    }
+    if (anteriores.length >= MAX_REPORTS_PER_ITEM) {
+      throw new ConflictException(
+        'Você chegou ao limite de denúncias para este item.',
       );
     }
 
@@ -183,6 +265,7 @@ export class ModerationService {
       createdBy?: string | null;
       uploadedBy?: string | null;
       userId?: string | null;
+      ownerId?: string | null;
     } | null,
   ): Promise<void> {
     if (entityType === 'score') {
@@ -199,6 +282,25 @@ export class ModerationService {
       await this.prisma.composer.update({
         where: { id: entityId },
         data: { verificationStatus: 'disputed' },
+      });
+    } else if (entityType === 'annotation') {
+      // Out of sight for everyone but its author until the team decides.
+      await this.prisma.workAnnotation.update({
+        where: { id: entityId },
+        data: { isHidden: true },
+      });
+    } else if (entityType === 'curiosity') {
+      await this.prisma.composerCuriosity.update({
+        where: { id: entityId },
+        data: { isHidden: true },
+      });
+    } else if (entityType === 'contribution') {
+      // The old value comes back while the team decides; the XP waits.
+      await this.contributions.revert(entityId, false);
+    } else if (entityType === 'collection') {
+      await this.prisma.collection.update({
+        where: { id: entityId },
+        data: { isHidden: true, featuredOnHome: false },
       });
     } else {
       // Comentário é o próprio conteúdo, como a partitura é o próprio arquivo:
@@ -228,9 +330,14 @@ export class ModerationService {
       createdBy?: string | null;
       uploadedBy?: string | null;
       userId?: string | null;
+      ownerId?: string | null;
     } | null,
   ): Promise<void> {
-    const authorId = entity?.uploadedBy ?? entity?.createdBy ?? entity?.userId;
+    const authorId =
+      entity?.uploadedBy ??
+      entity?.createdBy ??
+      entity?.userId ??
+      entity?.ownerId;
 
     if (!authorId) {
       return;
@@ -347,6 +454,75 @@ export class ModerationService {
     };
   }
 
+  /**
+   * A fila aberta, na ordem do prazo: quem vence primeiro vem primeiro.
+   *
+   * **Corrige 29/09/2026.** A fila era ordenada por `priority` como texto,
+   * crescente — `high`, `low`, `normal`, `urgent`: as denúncias urgentes (24 h)
+   * vinham por último, o contrário da RN-4. O vencimento é `createdAt` mais o
+   * prazo da prioridade, e só existe calculado; o Prisma tipado não ordena
+   * por expressão, então a ordem sai de uma agregação (só os ids) e os
+   * registros completos vêm numa segunda consulta, reordenados.
+   */
+  private async pendingByDeadline(
+    query: ListModerationQueryDto,
+    page: number,
+    limit: number,
+  ): Promise<ModerationRow[]> {
+    const HOUR_MS = 60 * 60 * 1000;
+    const match: Record<string, unknown> = { status: 'pending' };
+    if (query.entityType) match.entityType = query.entityType;
+    if (query.entityId) match.entityId = { $oid: query.entityId };
+
+    const ordem = await runAggregate<{ _id: unknown }>(
+      this.prisma,
+      'upload_moderation',
+      [
+        { $match: match },
+        {
+          $addFields: {
+            vence: {
+              $add: [
+                '$createdAt',
+                {
+                  $switch: {
+                    branches: Object.entries(SLA_HOURS).map(
+                      ([priority, horas]) => ({
+                        case: { $eq: ['$priority', priority] },
+                        then: horas * HOUR_MS,
+                      }),
+                    ),
+                    default: SLA_HOURS.normal * HOUR_MS,
+                  },
+                },
+              ],
+            },
+          },
+        },
+        { $sort: { vence: 1, _id: 1 } },
+        { $skip: (page - 1) * limit },
+        { $limit: limit },
+        { $project: { _id: 1 } },
+      ],
+    );
+
+    const ids = ordem
+      .map((row) => toObjectId(row._id))
+      .filter((id): id is string => id !== null);
+
+    if (ids.length === 0) return [];
+
+    const rows = await this.prisma.uploadModeration.findMany({
+      where: { id: { in: ids } },
+      include: MODERATION_INCLUDE,
+    });
+
+    const posicao = new Map(ids.map((id, i) => [id, i]));
+    return rows.sort(
+      (a, b) => (posicao.get(a.id) ?? 0) - (posicao.get(b.id) ?? 0),
+    );
+  }
+
   async list(query: ListModerationQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -358,23 +534,16 @@ export class ModerationService {
     };
 
     const [reports, total] = await Promise.all([
-      this.prisma.uploadModeration.findMany({
-        where,
-        include: {
-          reporter: {
-            select: { id: true, firstName: true, lastName: true, email: true },
-          },
-          moderator: {
-            select: { id: true, firstName: true, lastName: true },
-          },
-        },
-        // **Ordenada por prioridade e depois por idade.** Ordenar só por data
-        // punha uma denúncia comum de hoje na frente de uma urgente de ontem,
-        // que é o oposto do que um prazo serve para fazer.
-        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
+      status === 'pending'
+        ? this.pendingByDeadline(query, page, limit)
+        : this.prisma.uploadModeration.findMany({
+            where,
+            include: MODERATION_INCLUDE,
+            // Histórico: o que foi resolvido por último vem primeiro.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            skip: (page - 1) * limit,
+            take: limit,
+          }),
       this.prisma.uploadModeration.count({ where }),
     ]);
 
@@ -461,7 +630,7 @@ export class ModerationService {
       await this.releaseHold(entityType, moderation.entityId);
     }
 
-    return this.prisma.uploadModeration.update({
+    const resolved = await this.prisma.uploadModeration.update({
       where: { id: moderationId },
       data: {
         status: dto.action === 'reject' ? 'rejected' : 'approved',
@@ -470,6 +639,38 @@ export class ModerationService {
         resolution: dto.action,
         resolvedAt: new Date(),
       },
+    });
+
+    await this.notifyReporter(moderation, dto.action === 'delete');
+
+    return resolved;
+  }
+
+  /**
+   * Tells whoever reported how it ended. A report that disappears into a
+   * queue teaches people not to report; one that comes back with an answer
+   * is what makes the next one worth sending. The moderator's notes stay
+   * internal: they may name the author or discuss evidence.
+   */
+  private async notifyReporter(
+    moderation: {
+      id: string;
+      reportedBy: string;
+      entityType: string;
+      entityId: string;
+    },
+    removed: boolean,
+  ): Promise<void> {
+    const { title, message } = reportOutcome(removed);
+    await this.notifications.notify({
+      userId: moderation.reportedBy,
+      type: NotificationType.GENERAL_ANNOUNCEMENT,
+      priority: NotificationPriority.MEDIUM,
+      title,
+      message,
+      relatedEntityType: moderation.entityType,
+      relatedEntityId: moderation.entityId,
+      uniqueHash: `moderation-result:${moderation.id}`,
     });
   }
 
@@ -547,12 +748,18 @@ export class ModerationService {
     resolution: 'approve' | 'delete';
     notes: string | null;
   }): Promise<number> {
+    const where = {
+      entityType: input.entityType,
+      entityId: input.entityId,
+      status: 'pending',
+    };
+    // Read before closing: the reporters hear the outcome either way.
+    const pending = await this.prisma.uploadModeration.findMany({
+      where,
+      select: { id: true, reportedBy: true, entityType: true, entityId: true },
+    });
     const { count } = await this.prisma.uploadModeration.updateMany({
-      where: {
-        entityType: input.entityType,
-        entityId: input.entityId,
-        status: 'pending',
-      },
+      where,
       data: {
         // Mesmo significado de `resolve`: fechada, com a decisão em `resolution`.
         status: 'approved',
@@ -562,6 +769,12 @@ export class ModerationService {
         resolvedAt: new Date(),
       },
     });
+
+    await Promise.all(
+      pending.map((moderation) =>
+        this.notifyReporter(moderation, input.resolution === 'delete'),
+      ),
+    );
 
     return count;
   }
@@ -590,6 +803,26 @@ export class ModerationService {
           where: { id: entityId },
           select: ENTITY_HANDLERS['blog-comment'].select,
         });
+      case 'annotation':
+        return this.prisma.workAnnotation.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.annotation.select,
+        });
+      case 'curiosity':
+        return this.prisma.composerCuriosity.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.curiosity.select,
+        });
+      case 'contribution':
+        return this.prisma.contribution.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.contribution.select,
+        });
+      case 'collection':
+        return this.prisma.collection.findUnique({
+          where: { id: entityId },
+          select: ENTITY_HANDLERS.collection.select,
+        });
     }
   }
 
@@ -609,6 +842,35 @@ export class ModerationService {
           isFlagged: false,
           moderatedAt: new Date(),
         },
+      });
+      return;
+    }
+
+    // Contributions undo themselves: the old value returns and the XP they
+    // paid goes back.
+    if (entityType === 'curiosity') {
+      await this.contributions.deleteCuriosity(entityId);
+      return;
+    }
+    if (entityType === 'contribution') {
+      await this.contributions.revert(entityId, true);
+      return;
+    }
+    if (entityType === 'collection') {
+      await this.collections.delete(entityId);
+      return;
+    }
+
+    // An annotation is text, like a comment, but the person wrote it on a
+    // work: removing it takes it away and fixes the work's count.
+    if (entityType === 'annotation') {
+      const removed = await this.prisma.workAnnotation.delete({
+        where: { id: entityId },
+        select: { workId: true },
+      });
+      await this.prisma.work.updateMany({
+        where: { id: removed.workId, annotationsCount: { gt: 0 } },
+        data: { annotationsCount: { decrement: 1 } },
       });
       return;
     }
@@ -666,6 +928,23 @@ export class ModerationService {
         where: { id: entityId, verificationStatus: 'disputed' },
         data: { verificationStatus: 'pending' },
       });
+    } else if (entityType === 'annotation') {
+      await this.prisma.workAnnotation.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
+    } else if (entityType === 'curiosity') {
+      await this.prisma.composerCuriosity.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
+    } else if (entityType === 'contribution') {
+      await this.contributions.reapply(entityId);
+    } else if (entityType === 'collection') {
+      await this.prisma.collection.updateMany({
+        where: { id: entityId, isHidden: true },
+        data: { isHidden: false },
+      });
     } else {
       await this.prisma.blogComment.updateMany({
         where: { id: entityId, status: CommentStatus.FLAGGED },
@@ -681,6 +960,24 @@ export class ModerationService {
   }
 }
 
+/** What the reporter hears once the team decided. */
+export function reportOutcome(removed: boolean): {
+  title: string;
+  message: string;
+} {
+  return removed
+    ? {
+        title: 'O que você denunciou saiu do ar',
+        message:
+          'A equipe analisou a sua denúncia e retirou o conteúdo. Obrigado por avisar.',
+      }
+    : {
+        title: 'Sua denúncia foi analisada',
+        message:
+          'A equipe olhou com cuidado e o conteúdo continua no ar. Obrigado por avisar mesmo assim.',
+      };
+}
+
 /** O aviso a quem teve conteúdo retido por denúncia grave. */
 function holdNotice(entityType: ReportableEntity): {
   title: string;
@@ -692,6 +989,46 @@ function holdNotice(entityType: ReportableEntity): {
       message:
         'Recebemos uma denúncia grave sobre um comentário seu, e ele saiu do ' +
         'ar enquanto a equipe analisa. Você será avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'curiosity') {
+    return {
+      title: 'Sua curiosidade saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma curiosidade que você ' +
+        'escreveu, e ela saiu do ar enquanto a equipe analisa. Você será ' +
+        'avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'collection') {
+    return {
+      title: 'Sua coleção saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma coleção sua, e ela saiu do ar ' +
+        'enquanto a equipe analisa. Você continua vendo a coleção e será ' +
+        'avisado do resultado.',
+    };
+  }
+
+  if (entityType === 'contribution') {
+    return {
+      title: 'Sua contribuição foi desfeita para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma contribuição sua, e o texto ' +
+        'anterior voltou enquanto a equipe analisa. Você será avisado do ' +
+        'resultado.',
+    };
+  }
+
+  if (entityType === 'annotation') {
+    return {
+      title: 'Sua anotação saiu do ar para análise',
+      message:
+        'Recebemos uma denúncia grave sobre uma anotação sua, e ela saiu do ' +
+        'ar enquanto a equipe analisa. Você continua vendo a anotação e será ' +
+        'avisado do resultado.',
     };
   }
 

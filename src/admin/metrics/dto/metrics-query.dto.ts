@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsArray, IsIn, IsOptional } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsArray, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { INSIGHT_AREAS, InsightArea } from '../admin-metrics.service';
 
 const toArray = ({ value }: { value: unknown }): unknown =>
@@ -20,4 +20,14 @@ export class InsightsQueryDto {
   @IsArray()
   @IsIn(INSIGHT_AREAS, { each: true })
   areas?: InsightArea[];
+}
+
+export class ActivityQueryDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 365, default: 30 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  days?: number = 30;
 }

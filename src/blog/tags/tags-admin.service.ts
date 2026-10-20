@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   BadRequestException,
   ConflictException,
@@ -57,6 +58,9 @@ export class TagsAdminService {
         slug,
         description: dto.description?.trim() || null,
         color: dto.color ?? null,
+        ...(dto.translation !== undefined
+          ? { translation: tagTranslation(dto.translation) }
+          : {}),
       },
     });
 
@@ -73,6 +77,7 @@ export class TagsAdminService {
       slug?: string;
       description?: string | null;
       color?: string | null;
+      translation?: Prisma.InputJsonValue | null;
     } = {};
 
     if (dto.name !== undefined) {
@@ -90,6 +95,9 @@ export class TagsAdminService {
       data.description = dto.description?.trim() || null;
     }
     if (dto.color !== undefined) data.color = dto.color;
+    if (dto.translation !== undefined) {
+      data.translation = tagTranslation(dto.translation);
+    }
 
     await this.assertFree({ name: data.name, slug: data.slug }, id);
 
@@ -175,4 +183,17 @@ export class TagsAdminService {
       CacheNamespace.BLOG_ARTICLES,
     ]);
   }
+}
+
+/** Tradução sem campos vazios; nada preenchido vira `null` no banco. */
+function tagTranslation(
+  value: { name?: string | null; description?: string | null } | null,
+): Prisma.InputJsonValue | null {
+  const name = value?.name?.trim();
+  const description = value?.description?.trim();
+  if (!name && !description) return null;
+  return {
+    ...(name ? { name } : {}),
+    ...(description ? { description } : {}),
+  };
 }

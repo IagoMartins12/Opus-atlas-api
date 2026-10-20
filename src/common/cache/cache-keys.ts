@@ -16,6 +16,7 @@ export const CacheNamespace = {
   BLOG_TAGS: 'blog:tags',
   BLOG_CALENDAR: 'blog:calendar',
   TEACHERS: 'teachers',
+  COLLECTIONS: 'collections',
 } as const;
 
 export type CacheNamespaceValue =

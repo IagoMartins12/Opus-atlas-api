@@ -165,6 +165,16 @@ export class CalendarService {
             : (event.program ?? undefined),
         ticketUrl: event.ticketUrl ?? undefined,
         isFree: event.isFree,
+        subtitle: event.subtitle ?? undefined,
+        room: event.room ?? undefined,
+        conductor: event.conductor ?? undefined,
+        ensemble: event.ensemble ?? undefined,
+        ticketInfo: event.ticketInfo ?? undefined,
+        // Destaque do mês: posição (1-3) e tamanho no mosaico da agenda.
+        isFeatured: event.isFeatured,
+        featuredOrder: event.featuredOrder ?? undefined,
+        featuredSize: event.featuredSize ?? undefined,
+        showOnMainHome: event.showOnMainHome,
         ...colorsFor(event.type, event.isFree),
       };
     });

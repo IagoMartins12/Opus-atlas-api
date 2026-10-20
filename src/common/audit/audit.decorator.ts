@@ -9,6 +9,12 @@ export interface AuditOptions {
   entityType?: string;
   /** Nome do parâmetro de rota que carrega o id da entidade, ex.: `id`. */
   entityIdParam?: string;
+  /**
+   * Só registra quando quem age é administrador. Para rotas que servem a
+   * qualquer dono (editar o próprio envio): o que interessa à trilha é o
+   * administrador mexendo no conteúdo de outra pessoa.
+   */
+  apenasAdmin?: boolean;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { ReportVisibility } from '@prisma/client';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -15,6 +16,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  IsEnum,
 } from 'class-validator';
 import { REPORT_PERIODS, ReportPeriod } from '../report-period';
 import { REPORT_SECTIONS, ReportSection } from './report-query.dto';
@@ -83,6 +85,16 @@ export class ShareReportDto {
   @IsOptional()
   @IsBoolean()
   allowComments?: boolean;
+
+  @ApiPropertyOptional({
+    enum: ReportVisibility,
+    default: ReportVisibility.SHARED,
+    description:
+      'TEACHER_ONLY: só o professor vê (acompanhamento); dá para compartilhar depois.',
+  })
+  @IsOptional()
+  @IsEnum(ReportVisibility)
+  visibility?: ReportVisibility;
 
   @ApiPropertyOptional({
     description: 'Validade em dias. Sem valor, o relatório não expira.',
@@ -174,4 +186,22 @@ export class ListSharedReportsQueryDto {
   @IsOptional()
   @IsMongoId()
   studentId?: string;
+
+  @ApiPropertyOptional({
+    enum: ReportVisibility,
+    description: 'Só para o professor.',
+  })
+  @IsOptional()
+  @IsEnum(ReportVisibility)
+  visibility?: ReportVisibility;
+
+  @ApiPropertyOptional({ description: 'Criados a partir de (inclusive).' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ description: 'Criados até (exclusive).' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }

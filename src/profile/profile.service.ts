@@ -14,6 +14,7 @@ import {
   StorageAssetKind,
   StudentInviteStatus,
   TokenType,
+  TeacherStatus,
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as bcrypt from 'bcryptjs';
@@ -69,7 +70,8 @@ const TEXT_FIELDS = [
 /**
  * A conta, como `GET /profile` a devolve: os campos que a sessão do NextAuth
  * carregava, mais forma de login e plano. `hashedPassword`, `accounts` e
- * `teacherProfile` entram só para calcular `login` e `teacherVerified`, e
+ * `teacherProfile` entram só para calcular `login`, `teacherVerified` e
+ * `teacherPortal`, e
  * saem da resposta.
  */
 const ACCOUNT_SELECT = {
@@ -100,13 +102,16 @@ const ACCOUNT_SELECT = {
   practiceTimePerWeek: true,
   profilePublic: true,
   showLocation: true,
+  listView: true,
+  language: true,
+  studyHorizon: true,
   currentPlan: true,
   planExpiresAt: true,
   isTrialActive: true,
   totalXP: true,
   hashedPassword: true,
   accounts: { select: { provider: true } },
-  teacherProfile: { select: { isVerified: true } },
+  teacherProfile: { select: { status: true, isVerified: true } },
 } as const;
 
 type AccountRow = Prisma.UserGetPayload<{ select: typeof ACCOUNT_SELECT }>;
@@ -127,8 +132,15 @@ function toAccount(
   return {
     ...fields,
     name: [fields.firstName, fields.lastName].filter(Boolean).join(' '),
+    // The team's approval of the credentials (badge, catalog editing).
     teacherVerified: fields.isTeacher
       ? (teacherProfile?.isVerified ?? false)
+      : null,
+    // The teacher portal opens with an active profile: right away for a
+    // Mentor or Maestro subscriber, after accepting for someone invited. It
+    // never waits for the team's approval above.
+    teacherPortal: fields.isTeacher
+      ? teacherProfile?.status === TeacherStatus.ACTIVE
       : null,
     studentInviteStatus,
     login: {
@@ -174,9 +186,17 @@ export class ProfileService {
     private readonly portal: PortalProfileService,
   ) {}
 
-  /** O diretório público de professores mostra estes dados, e tem cache. */
+  /**
+   * Nome, foto e bio aparecem em páginas públicas com cache: o diretório de
+   * professores e o blog (autor do artigo, página do autor). Sem derrubar o
+   * do blog, a bio nova não aparecia e o blog seguia com o texto de reserva
+   * ("Escreve no Blog do Opus Atlas").
+   */
   private async refreshTeacherDirectory(): Promise<void> {
-    await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    await this.cache.invalidateMany([
+      CacheNamespace.TEACHERS,
+      CacheNamespace.BLOG_ARTICLES,
+    ]);
   }
 
   // -------------------------------------------------------------------
@@ -315,6 +335,14 @@ export class ProfileService {
    * perfil para quem não o tem. Os papéis são lidos do banco, não do token:
    * o token vive 15 minutos e o admin pode ter mudado o papel nesse meio.
    */
+  /** The site language the person picked; `MailService` reads it. */
+  async setLanguage(userId: string, language: 'pt' | 'en'): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { language },
+    });
+  }
+
   async update(userId: string, dto: UpdateProfileDto): Promise<ProfileView> {
     if (!dto.account && !dto.instruments && !dto.teacher && !dto.student) {
       throw new BadRequestException('Nada para atualizar');
@@ -482,6 +510,8 @@ export class ProfileService {
     }
     if (dto.profilePublic !== undefined) data.profilePublic = dto.profilePublic;
     if (dto.showLocation !== undefined) data.showLocation = dto.showLocation;
+    if (dto.listView !== undefined) data.listView = dto.listView;
+    if (dto.studyHorizon !== undefined) data.studyHorizon = dto.studyHorizon;
 
     return data;
   }

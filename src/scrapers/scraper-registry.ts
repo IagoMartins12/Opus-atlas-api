@@ -20,6 +20,15 @@ export const SCRAPER_IDS = [
 
 export type ScraperId = (typeof SCRAPER_IDS)[number];
 
+/**
+ * Casas fora do ar, com o motivo que a tela mostra. A rodada é recusada e
+ * "Buscar em todas" pula a casa — antes ela falhava toda vez na fila.
+ */
+const DESATIVADOS: Partial<Record<ScraperId, string>> = {
+  'auditorio-ibirapuera':
+    'O domínio auditorioibirapuera.com.br foi tomado por outro site (lista artigos sobre linguagens de programação). Falta o endereço novo da programação.',
+};
+
 export function isScraperId(value: string): value is ScraperId {
   return (SCRAPER_IDS as readonly string[]).includes(value);
 }
@@ -65,8 +74,26 @@ export class ScraperRegistry {
         venueName: config.venueName,
         venueSlug: config.venueSlug,
         baseUrl: config.baseUrl,
+        desativado: DESATIVADOS[id] ?? null,
       };
     });
+  }
+
+  /** Por que a casa está fora, ou `null` se roda. */
+  motivoDesativado(id: ScraperId): string | null {
+    return DESATIVADOS[id] ?? null;
+  }
+
+  /** Como `requireId`, e recusa a casa desativada com o motivo. */
+  requireAtivo(id: string): ScraperId {
+    const scraperId = this.requireId(id);
+    const motivo = this.motivoDesativado(scraperId);
+
+    if (motivo) {
+      throw new BadRequestException(`Esta casa está desativada: ${motivo}`);
+    }
+
+    return scraperId;
   }
 
   /** Valida o identificador e o estreita para a união. */

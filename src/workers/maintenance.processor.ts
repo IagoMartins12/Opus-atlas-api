@@ -8,7 +8,11 @@ import {
 import { JobEnvelope } from '../common/queue/job-contract';
 import { MaintenanceJobPayload } from '../admin/maintenance/admin-maintenance.service';
 import { MaintenanceTasksService } from '../admin/maintenance/maintenance-tasks.service';
-import { isMaintenanceTaskId } from '../admin/maintenance/maintenance-catalog';
+import {
+  findTask,
+  isMaintenanceTaskId,
+} from '../admin/maintenance/maintenance-catalog';
+import { TaskRunsService } from '../common/queue/task-runs.service';
 
 type MaintenanceJob = Job<JobEnvelope<MaintenanceJobPayload>>;
 
@@ -24,7 +28,10 @@ type MaintenanceJob = Job<JobEnvelope<MaintenanceJobPayload>>;
 export class MaintenanceProcessor extends WorkerHost {
   private readonly logger = new Logger(MaintenanceProcessor.name);
 
-  constructor(private readonly tasks: MaintenanceTasksService) {
+  constructor(
+    private readonly tasks: MaintenanceTasksService,
+    private readonly runs: TaskRunsService,
+  ) {
     super();
   }
 
@@ -45,7 +52,23 @@ export class MaintenanceProcessor extends WorkerHost {
       );
     }
 
-    return this.tasks.run(taskId, { dryRun, retentionDays });
+    // Toda execução de manutenção fica no histórico, com quem disparou e o
+    // que mudou — simulação inclusive, marcada como tal.
+    return this.runs.rastrear(
+      job,
+      {
+        queue: QUEUE_MAINTENANCE,
+        task: taskId,
+        taskName: findTask(taskId).name,
+        relato: (r) => ({
+          summary: r.summary,
+          sample: r.sample,
+          warnings: r.warnings,
+          dryRun: r.dryRun,
+        }),
+      },
+      () => this.tasks.run(taskId, { dryRun, retentionDays }),
+    );
   }
 
   @OnWorkerEvent('failed')

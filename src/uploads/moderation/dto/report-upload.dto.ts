@@ -26,6 +26,10 @@ export const REPORTABLE_ENTITIES = [
   'work',
   'score',
   'blog-comment',
+  'annotation',
+  'curiosity',
+  'contribution',
+  'collection',
 ] as const;
 export type ReportableEntity = (typeof REPORTABLE_ENTITIES)[number];
 

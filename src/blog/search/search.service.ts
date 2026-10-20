@@ -1,3 +1,4 @@
+import { isAdmin } from '../../common/auth/roles';
 import { escapeRegex } from '../../common/utils/regex.util';
 import { Injectable } from '@nestjs/common';
 import { ArticleStatus, Prisma } from '@prisma/client';
@@ -33,7 +34,7 @@ export class SearchService {
     query: SearchArticlesQueryDto,
     user?: CurrentUserContext,
   ) {
-    if (user && user.role >= 1) {
+    if (user && isAdmin(user.role)) {
       return this.loadSearch(query, user);
     }
 
@@ -65,7 +66,7 @@ export class SearchService {
   ) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 12;
-    const isAdmin = !!user && user.role >= 1;
+    const isAdminViewer = !!user && isAdmin(user.role);
 
     const where: Prisma.BlogArticleWhereInput = {
       OR: [
@@ -77,7 +78,7 @@ export class SearchService {
       ],
     };
 
-    if (!isAdmin) {
+    if (!isAdminViewer) {
       where.status = ArticleStatus.PUBLISHED;
       where.publishedAt = { lte: new Date() };
     }

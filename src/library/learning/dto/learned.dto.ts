@@ -98,10 +98,10 @@ export class UpdateLearnedDto {
   enjoyment?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() technicalChallenges?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() musicalInsights?: string;
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsMongoId()
-  selectedWorkScoreId?: string;
+  selectedWorkScoreId?: string | null;
 
   @ApiPropertyOptional({ description: VIDEO_ASSET_DESCRIPTION })
   @IsOptional()

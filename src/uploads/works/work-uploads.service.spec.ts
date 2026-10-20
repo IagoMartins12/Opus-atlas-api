@@ -8,6 +8,7 @@ import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadHistoryService } from '../shared/upload-history.service';
+import { ContributionLimitService } from '../shared/contribution-limit.service';
 import { WorkUploadsService } from './work-uploads.service';
 
 const context = { ipAddress: '203.0.113.10', userAgent: 'jest' };
@@ -102,6 +103,9 @@ describe('WorkUploadsService', () => {
       storage as unknown as StorageService,
       cache as unknown as AppCacheService,
       activity as unknown as ActivityTracker,
+      {
+        assertWithinLimit: jest.fn(),
+      } as unknown as ContributionLimitService,
     );
   });
 

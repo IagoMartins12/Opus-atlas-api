@@ -14,4 +14,6 @@ export const CATEGORY_REF_SELECT = {
   slug: true,
   color: true,
   icon: true,
+  // O nome em inglês, para o blog em /en.
+  translation: true,
 } as const;

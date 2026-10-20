@@ -5,9 +5,12 @@ import { AdminAdsController } from './ads/admin-ads.controller';
 import { AdminAdsService } from './ads/admin-ads.service';
 import { AdminBillingController } from './billing/admin-billing.controller';
 import { AdminBillingService } from './billing/admin-billing.service';
+import { AdminSubscriptionsController } from './billing/admin-subscriptions.controller';
+import { AdminSubscriptionsService } from './billing/admin-subscriptions.service';
 import { AdminCatalogMetricsService } from './catalog/admin-catalog-metrics.service';
 import { AdminMetricsController } from './metrics/admin-metrics.controller';
 import { AdminMetricsService } from './metrics/admin-metrics.service';
+import { AttentionService } from './metrics/attention.service';
 import { AudienceInsightsService } from './metrics/audience-insights.service';
 import { CatalogInsightsService } from './metrics/catalog-insights.service';
 import { LearningInsightsService } from './metrics/learning-insights.service';
@@ -25,6 +28,9 @@ import { ModelRegistry } from './database/model-registry';
 import { AdminMaintenanceController } from './maintenance/admin-maintenance.controller';
 import { AdminMaintenanceService } from './maintenance/admin-maintenance.service';
 import { MaintenanceTasksService } from './maintenance/maintenance-tasks.service';
+import { OrphanFilesService } from './maintenance/orphan-files.service';
+import { AdminPortalController } from './portal/admin-portal.controller';
+import { AdminPortalService } from './portal/admin-portal.service';
 import { AdminBackupController } from './backup/admin-backup.controller';
 import { BackupService } from './backup/backup.service';
 import { BackupSettingsService } from './backup/backup-settings.service';
@@ -40,6 +46,8 @@ import { EmailEventsController } from './newsletter/events/email-events.controll
 import { EmailEventsService } from './newsletter/events/email-events.service';
 import { NewsletterDispatchService } from './newsletter/newsletter-dispatch.service';
 import { AdminCatalogController } from './catalog/admin-catalog.controller';
+import { BioReviewController } from './catalog/bio-review.controller';
+import { BioReviewService } from './catalog/bio-review.service';
 import { AdminCatalogService } from './catalog/admin-catalog.service';
 import { WorkCountFiltersService } from './catalog/work-count-filters.service';
 import { AdminUploadsController } from './uploads/admin-uploads.controller';
@@ -47,6 +55,8 @@ import { AdminUploadsService } from './uploads/admin-uploads.service';
 import { AdminUsersController } from './users/admin-users.controller';
 import { AdminUsersService } from './users/admin-users.service';
 import { TeacherInvitationService } from './users/teacher-invitation.service';
+import { BillingModule } from '../billing/billing.module';
+import { AdminMailController } from './mail/admin-mail.controller';
 import { TeacherInvitationsController } from './users/teacher-invitations.controller';
 
 /**
@@ -63,17 +73,21 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
 @Module({
   // `MailModule` entra pelo envio de prévia e pelo disparo de campanha;
   // `AuthModule` pelo `UserTokenService`, que emite o link de descadastro.
-  imports: [MailModule, AuthModule],
+  imports: [MailModule, AuthModule, BillingModule],
   controllers: [
+    AdminPortalController,
     EmailEventsController,
     AdminUsersController,
     TeacherInvitationsController,
     AdminCatalogController,
+    BioReviewController,
     AdminUploadsController,
     AdminAdsController,
     AdminBillingController,
+    AdminSubscriptionsController,
     AdminNewsletterController,
     AdminTemplatesController,
+    AdminMailController,
     AdminMetricsController,
     AdminReportsController,
     AdminOperationsController,
@@ -86,16 +100,19 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminUsersService,
     TeacherInvitationService,
     AdminCatalogService,
+    BioReviewService,
     AdminCatalogMetricsService,
     WorkCountFiltersService,
     AdminUploadsService,
     AdminAdsService,
     AdminBillingService,
+    AdminSubscriptionsService,
     AdminNewsletterService,
     EmailEventsService,
     NewsletterDispatchService,
     AdminTemplatesService,
     AdminMetricsService,
+    AttentionService,
     PlatformOverviewService,
     CatalogInsightsService,
     LearningInsightsService,
@@ -107,6 +124,8 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminAuditService,
     AdminMaintenanceService,
     MaintenanceTasksService,
+    OrphanFilesService,
+    AdminPortalService,
     BackupService,
     BackupSettingsService,
     BackupHistoryService,

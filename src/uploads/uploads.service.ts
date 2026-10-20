@@ -17,6 +17,7 @@ import {
 import { CreateSignedUploadDto } from './dto/create-signed-upload.dto';
 import { SignedUploadResponseDto } from './dto/signed-upload-response.dto';
 import { StoredAssetDto } from './dto/stored-asset.dto';
+import { assertEmailVerified } from './shared/verified-email';
 
 /**
  * Que tipo de arquivo conta contra qual limite de plano.
@@ -153,10 +154,15 @@ export class UploadsService {
       return;
     }
 
+    // Score files and performance videos are contributions to the library.
+    await assertEmailVerified(this.prisma, userId);
+
     const access = await this.subscriptions.checkFeatureAccess(userId, feature);
 
-    if (access.limit === undefined) {
-      // Sem limite numérico definido para o plano — ilimitado.
+    // `-1` é ilimitado (a matriz de planos usa -1), e sem número também.
+    // Antes só `undefined` passava: o -1 dos planos pagos caía em
+    // `used >= -1`, sempre verdadeiro, e barrava justamente quem paga.
+    if (access.limit === undefined || access.limit < 0) {
       return;
     }
 

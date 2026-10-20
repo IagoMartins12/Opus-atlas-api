@@ -30,6 +30,25 @@ class SitemapArticleDto {
   lastModified: Date;
 }
 
+class SitemapSlugDto {
+  @ApiProperty({ example: 'historia' })
+  slug: string;
+
+  @ApiProperty({ description: 'Data do artigo mais recente da página' })
+  lastModified: Date;
+}
+
+class SitemapAuthorDto {
+  @ApiProperty({
+    example: 'helena-prado',
+    description: 'Nome de usuário; o id quando a conta não tem um.',
+  })
+  id: string;
+
+  @ApiProperty({ description: 'Data do artigo mais recente do autor' })
+  lastModified: Date;
+}
+
 class SitemapTeacherDto {
   @ApiProperty({
     example: '685d591c1e3db0c5aaa893e4',
@@ -57,6 +76,24 @@ export class SitemapEntriesDto {
 
   @ApiProperty({ type: [SitemapArticleDto] })
   articles: SitemapArticleDto[];
+
+  @ApiProperty({
+    type: [SitemapSlugDto],
+    description: 'Categorias do blog ativas e com artigo publicado',
+  })
+  blogCategories: SitemapSlugDto[];
+
+  @ApiProperty({
+    type: [SitemapSlugDto],
+    description: 'Tags do blog com artigo publicado',
+  })
+  blogTags: SitemapSlugDto[];
+
+  @ApiProperty({
+    type: [SitemapAuthorDto],
+    description: 'Autores com artigo publicado',
+  })
+  blogAuthors: SitemapAuthorDto[];
 
   @ApiProperty({ type: [SitemapTeacherDto] })
   teachers: SitemapTeacherDto[];

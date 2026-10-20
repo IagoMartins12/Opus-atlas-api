@@ -16,6 +16,7 @@ import { BackupStorageService } from '../backup/backup-storage.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { TextIndexService } from '../../common/search/text-index.service';
 import { findTask, MaintenanceTaskId } from './maintenance-catalog';
+import { idsQueExistem, OWNER_TYPES } from './orphan-owners';
 
 /** Assinantes por página na varredura de órfãos. */
 const SWEEP_PAGE = 500;
@@ -25,26 +26,8 @@ const SAMPLE_SIZE = 20;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Entidades donas de arquivo.
- *
- * Espelha o `entityTypeFor` de `UploadsService`. É lista fechada de propósito:
- * um `entityType` novo aparecendo aqui sem par no `switch` seria um arquivo
- * cuja orfandade ninguém consegue verificar — e o silêncio pareceria "não há
- * órfãos".
- */
-const OWNER_TYPES = [
-  'user',
-  'composer',
-  'work',
-  'workScore',
-  'assignment',
-  'blogArticle',
-  'blogCategory',
-  'advertisement',
-] as const;
-
-type OwnerType = (typeof OWNER_TYPES)[number];
+// Os tipos de dono e a checagem de quem ainda existe moram em
+// `orphan-owners.ts`, compartilhados com a tela de arquivos órfãos.
 
 export interface MaintenanceRunResult {
   taskId: MaintenanceTaskId;
@@ -273,7 +256,7 @@ export class MaintenanceTasksService {
           ),
         ];
 
-        const alive = await this.existingIds(ownerType, ids);
+        const alive = await idsQueExistem(this.prisma, ownerType, ids);
 
         for (const asset of page) {
           if (asset.entityId && !alive.has(asset.entityId)) {
@@ -315,54 +298,6 @@ export class MaintenanceTasksService {
       sample,
       warnings,
     };
-  }
-
-  /** Ids que ainda existem, por tipo de dono. `switch` fechado, sem model dinâmico. */
-  private async existingIds(
-    ownerType: OwnerType,
-    ids: string[],
-  ): Promise<Set<string>> {
-    if (ids.length === 0) {
-      return new Set();
-    }
-
-    const where = { id: { in: ids } };
-    const select = { id: true };
-
-    switch (ownerType) {
-      case 'user':
-        return this.toSet(await this.prisma.user.findMany({ where, select }));
-      case 'composer':
-        return this.toSet(
-          await this.prisma.composer.findMany({ where, select }),
-        );
-      case 'work':
-        return this.toSet(await this.prisma.work.findMany({ where, select }));
-      case 'workScore':
-        return this.toSet(
-          await this.prisma.workScore.findMany({ where, select }),
-        );
-      case 'assignment':
-        return this.toSet(
-          await this.prisma.assignment.findMany({ where, select }),
-        );
-      case 'blogArticle':
-        return this.toSet(
-          await this.prisma.blogArticle.findMany({ where, select }),
-        );
-      case 'blogCategory':
-        return this.toSet(
-          await this.prisma.blogCategory.findMany({ where, select }),
-        );
-      case 'advertisement':
-        return this.toSet(
-          await this.prisma.advertisement.findMany({ where, select }),
-        );
-    }
-  }
-
-  private toSet(rows: { id: string }[]): Set<string> {
-    return new Set(rows.map((row) => row.id));
   }
 
   /**

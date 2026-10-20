@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { topPorContagem } from '../metrics/raw-aggregate';
 import { ListWorksQueryDto } from './dto/admin-catalog.dto';
 
 /**
@@ -12,14 +13,31 @@ import { ListWorksQueryDto } from './dto/admin-catalog.dto';
  */
 const MAX_CANDIDATES = 1000;
 
+/** A coleção de cada relação contada (nome no Mongo). */
+const COLECAO = {
+  favoriteWork: 'FavoriteWork',
+  wantToLearn: 'WantToLearn',
+  learned: 'Learned',
+  workScore: 'work_scores',
+} as const;
+
 type CountedRelation = 'favoriteWork' | 'wantToLearn' | 'learned' | 'workScore';
 
 export interface CountFilterResult {
-  /** `null` quando nenhum filtro de contagem foi pedido. */
+  /** `null` quando nenhum filtro de mínimo foi pedido. */
   workIds: string[] | null;
+  /**
+   * Obras que passam de algum máximo pedido. Máximo vira exclusão: a obra
+   * com zero favoritos nem aparece no agrupamento, então "até 3" é "todas,
+   * menos as que têm mais de 3".
+   */
+  excludeIds: string[];
   /** Verdadeiro quando algum critério bateu no teto de candidatos. */
   capped: boolean;
 }
+
+/** Teto da lista de exclusão (um `NOT IN` maior que isso pesa no Mongo). */
+const MAX_EXCLUDED = 20000;
 
 @Injectable()
 export class WorkCountFiltersService {
@@ -56,12 +74,27 @@ export class WorkCountFiltersService {
       criteria.push(this.topWorkIds('workScore', query.minScores));
     }
 
+    const maximos: Array<Promise<string[]>> = [];
+    if (query.maxFavorites !== undefined) {
+      maximos.push(this.aboveMax('favoriteWork', query.maxFavorites));
+    }
+    if (query.maxWantToLearn !== undefined) {
+      maximos.push(this.aboveMax('wantToLearn', query.maxWantToLearn));
+    }
+    if (query.maxLearned !== undefined) {
+      maximos.push(this.aboveMax('learned', query.maxLearned));
+    }
+    const excluidos = (await Promise.all(maximos)).flat();
+    const excludeIds = [...new Set(excluidos)];
+    const cappedMax = excluidos.length >= MAX_EXCLUDED;
+
     if (criteria.length === 0) {
-      return { workIds: null, capped: false };
+      return { workIds: null, excludeIds, capped: cappedMax };
     }
 
     const sets = await Promise.all(criteria);
-    const capped = sets.some((set) => set.length >= MAX_CANDIDATES);
+    const capped =
+      cappedMax || sets.some((set) => set.length >= MAX_CANDIDATES);
 
     // Interseção: a obra precisa satisfazer todos os critérios pedidos.
     const intersection = sets.reduce((acc, set) => {
@@ -69,57 +102,51 @@ export class WorkCountFiltersService {
       return acc.filter((id) => current.has(id));
     });
 
-    return { workIds: intersection, capped };
+    const fora = new Set(excludeIds);
+    return {
+      workIds: intersection.filter((id) => !fora.has(id)),
+      excludeIds: [],
+      capped,
+    };
+  }
+
+  /** Obras com mais de `max` registros na relação. */
+  private async aboveMax(
+    model: Exclude<CountedRelation, 'workScore'>,
+    max: number,
+  ): Promise<string[]> {
+    const having = { workId: { _count: { gt: max } } };
+    const args = {
+      by: ['workId'] as ['workId'],
+      _count: { _all: true as const },
+      having,
+      orderBy: { workId: 'asc' as const },
+      take: MAX_EXCLUDED,
+    };
+    const rows =
+      model === 'favoriteWork'
+        ? await this.prisma.favoriteWork.groupBy(args)
+        : model === 'wantToLearn'
+          ? await this.prisma.wantToLearn.groupBy(args)
+          : await this.prisma.learned.groupBy(args);
+    return rows.map((row) => row.workId);
   }
 
   /**
-   * Um `switch` em vez de indexar `this.prisma[model]`: o acesso dinâmico
-   * colapsa as assinaturas geradas pelo Prisma numa união não chamável, e
-   * recuperar a tipagem exigiria um `as any` justamente na consulta que
-   * precisa estar certa.
+   * As obras com pelo menos `minimum` registros na relação, as mais bem
+   * colocadas primeiro, até o teto. Contado e cortado no banco
+   * (`topPorContagem`): o `groupBy` do Prisma com `orderBy` por contagem e
+   * `take` devolve grupos quaisquer no MongoDB.
    */
   private async topWorkIds(
     model: CountedRelation,
     minimum: number,
   ): Promise<string[]> {
-    // `having`, `orderBy` e `take` são resolvidos pelo Mongo; nada é filtrado
-    // em memória.
-    const having = { workId: { _count: { gte: minimum } } };
-    const orderBy = { _count: { workId: 'desc' as const } };
-
-    const rows =
-      model === 'favoriteWork'
-        ? await this.prisma.favoriteWork.groupBy({
-            by: ['workId'],
-            _count: { _all: true },
-            having,
-            orderBy,
-            take: MAX_CANDIDATES,
-          })
-        : model === 'wantToLearn'
-          ? await this.prisma.wantToLearn.groupBy({
-              by: ['workId'],
-              _count: { _all: true },
-              having,
-              orderBy,
-              take: MAX_CANDIDATES,
-            })
-          : model === 'learned'
-            ? await this.prisma.learned.groupBy({
-                by: ['workId'],
-                _count: { _all: true },
-                having,
-                orderBy,
-                take: MAX_CANDIDATES,
-              })
-            : await this.prisma.workScore.groupBy({
-                by: ['workId'],
-                _count: { _all: true },
-                having,
-                orderBy,
-                take: MAX_CANDIDATES,
-              });
-
-    return rows.map((row) => row.workId);
+    const colecao = COLECAO[model];
+    const linhas = await topPorContagem(this.prisma, colecao, 'workId', {
+      limite: MAX_CANDIDATES,
+      minimo: minimum,
+    });
+    return linhas.map((l) => l.id);
   }
 }

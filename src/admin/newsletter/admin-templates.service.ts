@@ -12,6 +12,7 @@ import {
   BulkDeleteTemplatesDto,
   CreateTemplateDto,
   CreateTestListDto,
+  PreviewTemplateDto,
   ListTemplatesQueryDto,
   NewsletterAnalyticsQueryDto,
   UpdateTemplateDto,
@@ -19,6 +20,8 @@ import {
 } from './dto/admin-templates.dto';
 import { analyzeTemplate } from './template-analysis';
 import { deliveryRate } from './newsletter-rates';
+import { resolveContent } from './campaign-content';
+import { NewsletterDispatchService } from './newsletter-dispatch.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -58,7 +61,26 @@ const TEST_LIST_SELECT = {
 
 @Injectable()
 export class AdminTemplatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly dispatch: NewsletterDispatchService,
+  ) {}
+
+  /** The template as a made-up subscriber would receive it, in layout D. */
+  previewTemplate(dto: PreviewTemplateDto) {
+    return this.dispatch.preview(
+      resolveContent({
+        subject: dto.subject,
+        customSubject: null,
+        customHtmlContent: null,
+        customTextContent: null,
+        template: {
+          htmlContent: dto.htmlContent,
+          textContent: dto.textContent ?? '',
+        },
+      }),
+    );
+  }
 
   // -------------------------------------------------------------------
   // Templates

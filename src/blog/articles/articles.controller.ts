@@ -33,7 +33,7 @@ export class ArticlesController {
       'Lista artigos do blog publicados (com filtros, busca e paginação)',
     description:
       'Endpoint público. Anônimos e usuários comuns só veem artigos com status `PUBLISHED` e ' +
-      'já dentro da data de publicação. Chamadores com `role >= 1` (admin) podem filtrar por ' +
+      'já dentro da data de publicação. Administradores (`role >= 2`) podem filtrar por ' +
       'qualquer status.',
   })
   @ApiOkResponse({ type: ArticleListResponseDto })

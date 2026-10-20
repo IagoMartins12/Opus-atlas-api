@@ -11,6 +11,6 @@ import { WorksService } from './works.service';
   // O `ExternalPageFetcher` não tem dependência: registrado aqui em vez de
   // importar o módulo de scrapers inteiro (e a fila junto) no catálogo.
   providers: [WorksService, ImslpScoresService, ExternalPageFetcher],
-  exports: [WorksService],
+  exports: [WorksService, ImslpScoresService],
 })
 export class WorksModule {}

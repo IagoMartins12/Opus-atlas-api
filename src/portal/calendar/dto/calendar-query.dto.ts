@@ -108,3 +108,22 @@ export class CalendarQueryDto {
   @IsBoolean()
   includeNeedsAttention?: boolean;
 }
+
+export class CalendarDownloadQueryDto {
+  @ApiPropertyOptional({ description: 'Início. Padrão: agora.' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({
+    description: 'Fim. Padrão: 31 dias depois do início; no máximo um ano.',
+  })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @ApiPropertyOptional({ description: 'Uma aula só.' })
+  @IsOptional()
+  @IsMongoId()
+  lessonId?: string;
+}

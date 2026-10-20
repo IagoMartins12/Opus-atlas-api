@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 type StripeInvoiceWithSubscription = Stripe.Invoice & {
@@ -56,6 +57,7 @@ export class WebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly stripeCatalog: StripeCatalogService,
   ) {}
 
   /**
@@ -148,19 +150,36 @@ export class WebhookService {
       }
 
       case 'customer.subscription.deleted': {
+        // Só o que ainda estava valendo: a assinatura que nós mesmos
+        // encerramos (cron, upgrade, cancelamento) já tem o estado final, e o
+        // eco deste evento não pode trocá-lo — uma encerrada voltaria a
+        // "cancelada" e o cron a encerraria de novo, com outro e-mail.
         const stripeSub = event.data.object as Stripe.Subscription;
         await this.prisma.subscription.updateMany({
-          where: { stripeSubscriptionId: stripeSub.id },
+          where: {
+            stripeSubscriptionId: stripeSub.id,
+            status: { in: ['TRIAL', 'ACTIVE', 'PAST_DUE'] },
+          },
           data: {
             status: 'CANCELLED',
             cancelledAt: new Date(),
             autoRenew: false,
           },
         });
+        const local = await this.prisma.subscription.findFirst({
+          where: { stripeSubscriptionId: stripeSub.id },
+          select: { userId: true },
+        });
+        if (local) {
+          await this.subscriptionsService.updateUserPlanCache(local.userId);
+        }
         break;
       }
 
       default:
+        // Preço, produto e cupom mexidos no painel do Stripe: o catálogo
+        // decide se é dele.
+        if (await this.stripeCatalog.handleEvent(event)) break;
         this.logger.debug(`Evento Stripe ignorado: ${event.type}`);
     }
   }
@@ -180,6 +199,16 @@ export class WebhookService {
     if (invoice.billing_reason === 'subscription_create') {
       this.logger.debug(
         `Fatura ${invoice.id} é a do checkout — tratada por checkout.session.completed`,
+      );
+      return;
+    }
+
+    // A diferença de um upgrade (`changePriceNow`) é registrada por quem o
+    // fez, com o pagamento e a nota. Tratá-la aqui como renovação mudaria o
+    // fim do ciclo e criaria o pagamento de novo.
+    if (invoice.billing_reason === 'subscription_update') {
+      this.logger.debug(
+        `Fatura ${invoice.id} é a diferença de um upgrade — registrada na troca de plano`,
       );
       return;
     }
@@ -220,33 +249,12 @@ export class WebhookService {
       return;
     }
 
-    const subscription = await this.prisma.subscription.findFirst({
-      where: { stripeSubscriptionId },
-    });
-
-    if (!subscription) {
-      this.logger.warn(
-        `Assinatura não encontrada para stripeSubscriptionId=${stripeSubscriptionId}`,
-      );
-      return;
-    }
-
-    await this.prisma.payment.create({
-      data: {
-        subscriptionId: subscription.id,
-        amount: (invoice.amount_due ?? 0) / 100,
-        finalAmount: (invoice.amount_due ?? 0) / 100,
-        currency: (invoice.currency ?? 'brl').toUpperCase(),
-        status: 'REJECTED',
-      },
-    });
-
-    // PAST_DUE em vez de EXPIRED direto: o Stripe normalmente tenta cobrar de
-    // novo antes de desistir — a expiração definitiva fica a cargo do cron
-    // (`check-subscriptions`) ou do evento `customer.subscription.deleted`.
-    await this.prisma.subscription.update({
-      where: { id: subscription.id },
-      data: { status: 'PAST_DUE' },
+    // PAST_DUE em vez de EXPIRED direto: o Stripe tenta cobrar de novo, e a
+    // pessoa tem um prazo para trocar o cartão (`registerPaymentFailure`).
+    await this.subscriptionsService.registerPaymentFailure({
+      stripeSubscriptionId,
+      amountDue: (invoice.amount_due ?? 0) / 100,
+      currency: invoice.currency ?? 'brl',
     });
   }
 }

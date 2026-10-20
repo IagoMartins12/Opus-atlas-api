@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NOT_HIDDEN } from '../../common/database/optional-fields';
 import { AnnotationsService } from './annotations.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 
@@ -89,6 +90,26 @@ describe('AnnotationsService', () => {
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'user-1' } }),
       );
+    });
+  });
+
+  describe('findAll', () => {
+    beforeEach(() => {
+      prisma.workAnnotation.findMany.mockResolvedValue([]);
+      prisma.workAnnotation.count.mockResolvedValue(0);
+      prisma.annotationHelpfulVote.findMany.mockResolvedValue([]);
+    });
+
+    it('visitantes veem só anotações públicas e não retidas', async () => {
+      await service.findAll({ workId: 'w1' } as never);
+      const where = prisma.workAnnotation.findMany.mock.calls[0][0].where;
+      expect(where.AND[0].OR).toEqual([{ isPublic: true, ...NOT_HIDDEN }]);
+    });
+
+    it('quem está logado vê também as próprias, inclusive privadas', async () => {
+      await service.findAll({ workId: 'w1' } as never, 'u1');
+      const where = prisma.workAnnotation.findMany.mock.calls[0][0].where;
+      expect(where.AND[0].OR).toContainEqual({ userId: 'u1' });
     });
   });
 

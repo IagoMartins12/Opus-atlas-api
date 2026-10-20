@@ -37,6 +37,7 @@ import { policyFor } from '../../common/storage/asset-policies';
 import { CategoriesAdminService } from './categories-admin.service';
 import {
   CreateCategoryDto,
+  HomeSectionsDto,
   ReorderCategoriesDto,
   UpdateCategoryDto,
 } from './dto/write-category.dto';
@@ -96,6 +97,20 @@ export class CategoriesAdminController {
   @ApiBadRequestResponse({ type: ErrorResponseDto })
   reorder(@Body() dto: ReorderCategoriesDto) {
     return this.categories.reorder(dto.categories);
+  }
+
+  @Post('home-sections')
+  @HttpCode(HttpStatus.OK)
+  @Audited({ action: 'blog.category.home', entityType: 'blog-category' })
+  @ApiOperation({
+    summary: 'Define as seções do início do blog, na ordem',
+    description:
+      'As listadas ganham seção, de cima para baixo; as outras saem do início.',
+  })
+  @ApiOkResponse({ description: 'Seções gravadas' })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  homeSections(@Body() dto: HomeSectionsDto) {
+    return this.categories.setHomeSections(dto.ids);
   }
 
   @Patch(':id')

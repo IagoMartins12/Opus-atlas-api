@@ -108,6 +108,7 @@ describe('WorksService', () => {
       count: jest.Mock;
       update: jest.Mock;
       aggregateRaw: jest.Mock;
+      groupBy: jest.Mock;
     };
     workScore: {
       findFirst: jest.Mock;
@@ -124,7 +125,7 @@ describe('WorksService', () => {
   let appCache: { del: jest.Mock; remember: jest.Mock };
   /** Valor já em cache para uma chave, quando o teste quiser simular um hit. */
   let cacheHit: (key: string) => unknown;
-  let imslp: { ensure: jest.Mock };
+  let imslp: { request: jest.Mock };
   let textIndex: { hasTextIndex: jest.Mock };
   let service: WorksService;
 
@@ -143,6 +144,7 @@ describe('WorksService', () => {
           }),
         ),
         aggregateRaw: jest.fn().mockResolvedValue([]),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       workScore: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -180,7 +182,7 @@ describe('WorksService', () => {
           cacheHit(key) ?? (await load()),
       ),
     };
-    imslp = { ensure: jest.fn().mockResolvedValue(0) };
+    imslp = { request: jest.fn().mockResolvedValue('stored') };
     textIndex = { hasTextIndex: jest.fn().mockReturnValue(false) };
     service = new WorksService(
       prisma as unknown as PrismaService,
@@ -430,6 +432,84 @@ describe('WorksService', () => {
       await expect(service.getCatalog({})).resolves.toEqual({ works: [] });
     });
 
+    it('mais antigas e mais recentes ordenam pelo registro', async () => {
+      await service.getCatalog({ epochId: 'e1', sort: 'oldest' });
+      await service.getCatalog({ epochId: 'e1', sort: 'newest' });
+
+      const [[asc], [desc]] = prisma.work.findMany.mock.calls;
+      expect(asc.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+      expect(desc.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+    });
+
+    it('só verificadas entra como filtro e conta como filtro (não é o catálogo cru)', async () => {
+      await service.getCatalog({ verified: true });
+
+      const [{ where }] = prisma.work.findMany.mock.calls[0];
+      expect(where).toEqual({ isVerified: true });
+      expect(prisma.work.count.mock.calls[0][0].where).toEqual({
+        isVerified: true,
+      });
+    });
+
+    describe('em destaque', () => {
+      /** A contagem dos famosos (a única com `AND`) e a total correm em paralelo. */
+      const famousCount = (n: number) =>
+        prisma.work.count.mockImplementation(
+          (args?: { where?: { AND?: unknown } }) =>
+            Promise.resolve(args?.where?.AND ? n : 500),
+        );
+
+      beforeEach(() => {
+        prisma.composer.findMany.mockResolvedValue([
+          { id: 'c1' },
+          { id: 'c2' },
+        ]);
+      });
+
+      it('começa pelas obras dos compositores famosos, mais estudadas primeiro', async () => {
+        famousCount(100);
+
+        await service.getCatalog({ sort: 'featured', limit: 10 });
+
+        const [head] = prisma.work.findMany.mock.calls[0];
+        expect(head.where.AND[1]).toEqual({ composerId: { in: ['c1', 'c2'] } });
+        expect(head.orderBy[0]).toEqual({ annotationsCount: 'desc' });
+        expect(head.skip).toBe(0);
+      });
+
+      it('quando os famosos acabam no meio da página, completa com o resto de A a Z', async () => {
+        // 3 obras de famosos; página de 10 → 3 vêm do primeiro grupo, 7 do resto.
+        famousCount(3);
+        prisma.work.findMany
+          .mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
+          .mockResolvedValueOnce([]);
+
+        await service.getCatalog({ sort: 'featured', limit: 10 });
+
+        const calls = prisma.work.findMany.mock.calls;
+        const tail = calls[1][0];
+        expect(tail.where.AND[1]).toEqual({
+          composerId: { notIn: ['c1', 'c2'] },
+        });
+        expect(tail.take).toBe(7);
+        expect(tail.skip).toBe(0);
+      });
+
+      it('página além dos famosos pula só o que sobrou do resto', async () => {
+        famousCount(3);
+
+        await service.getCatalog({ sort: 'featured', limit: 10, page: 2 });
+
+        const calls = prisma.work.findMany.mock.calls;
+        expect(calls).toHaveLength(1);
+        expect(calls[0][0].where.AND[1]).toEqual({
+          composerId: { notIn: ['c1', 'c2'] },
+        });
+        // Página 2 começa na obra 10; as 3 primeiras eram dos famosos.
+        expect(calls[0][0].skip).toBe(7);
+      });
+    });
+
     it('busca o compositor pelos ids, sem filtro de relação (que custava ~18 s)', async () => {
       prisma.composer.findMany.mockResolvedValue([{ id: 'c9' }]);
 
@@ -563,6 +643,42 @@ describe('WorksService', () => {
         cached: true,
       });
     });
+  });
+
+  it('filtros trazem os gêneros mais usados, na ordem de uso', async () => {
+    prisma.work.aggregateRaw.mockResolvedValueOnce([
+      { _id: 'noturnos' },
+      { _id: 'sonatas' },
+    ]);
+    prisma.workGenre.findMany.mockResolvedValueOnce([
+      { id: 'g2', name: 'sonatas' },
+      { id: 'g1', name: 'noturnos' },
+    ]);
+
+    const options = await service.getFilterOptions();
+
+    expect(options.workGenres.map((g) => g.name)).toEqual([
+      'noturnos',
+      'sonatas',
+    ]);
+  });
+
+  it('filtros trazem todos os instrumentos, os mais usados primeiro', async () => {
+    prisma.instrument.findMany.mockResolvedValueOnce([
+      { id: 'i1', name: 'Alaúde' },
+      { id: 'i2', name: 'Piano' },
+    ]);
+    prisma.work.groupBy.mockResolvedValueOnce([
+      { instrumentId: 'i2', _count: { _all: 900 } },
+      { instrumentId: 'i1', _count: { _all: 3 } },
+    ]);
+
+    const options = await service.getFilterOptions();
+
+    expect(options.instruments.map((i) => i.name)).toEqual(['Piano', 'Alaúde']);
+    expect(prisma.instrument.findMany).toHaveBeenCalledWith(
+      expect.not.objectContaining({ take: expect.anything() }),
+    );
   });
 
   describe('gêneros e relacionadas', () => {
@@ -768,13 +884,15 @@ describe('WorksService', () => {
   });
 
   describe('partituras', () => {
-    it('listagem garante o IMSLP antes; busca por sourceId não', async () => {
-      await service.getScores(WORK, {});
-      expect(imslp.ensure).toHaveBeenCalledWith(WORK);
+    it('listagem pede o IMSLP e devolve a situação; busca por sourceId não', async () => {
+      imslp.request.mockResolvedValue('pending');
+      const result = await service.getScores(WORK, {}, { robot: false });
+      expect(imslp.request).toHaveBeenCalledWith(WORK, { robot: false });
+      expect(result.imslp).toEqual({ status: 'pending' });
 
-      imslp.ensure.mockClear();
+      imslp.request.mockClear();
       await service.getScores(WORK, { sourceId: '1', source: 'IMSLP' });
-      expect(imslp.ensure).not.toHaveBeenCalled();
+      expect(imslp.request).not.toHaveBeenCalled();
     });
 
     it('busca direta conta o acesso; inexistente volta vazia', async () => {

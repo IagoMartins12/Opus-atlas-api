@@ -39,3 +39,18 @@ export class VerifyComposersBulkDto {
   @MaxLength(2000)
   notes?: string;
 }
+
+export class VerifyWorksBulkDto {
+  @ApiProperty({ type: [String], maxItems: MAX_BULK_VERIFY })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MAX_BULK_VERIFY)
+  @IsMongoId({ each: true })
+  workIds!: string[];
+
+  @ApiProperty({
+    description: 'Verdadeiro verifica; falso retira a verificação.',
+  })
+  @IsBoolean()
+  isVerified!: boolean;
+}

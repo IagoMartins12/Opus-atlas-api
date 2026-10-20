@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { NOT_REVERTED } from '../common/database/optional-fields';
 import { PrismaService } from '../prisma/prisma.service';
 import { AchievementStats } from './achievement-catalog';
 
@@ -147,15 +148,22 @@ export class AchievementStatsService {
     };
   }
 
-  /** Compositores, obras e partituras que o usuário adicionou ao catálogo. */
+  /**
+   * Compositores, obras e partituras que o usuário adicionou ao catálogo,
+   * mais as contribuições aceitas: em vigor e já pagas (sete dias sem
+   * denúncia procedente).
+   */
   private async countContributions(userId: string): Promise<number> {
-    const [composers, works, scores] = await Promise.all([
+    const [composers, works, scores, contributions] = await Promise.all([
       this.prisma.composer.count({ where: { createdBy: userId } }),
       this.prisma.work.count({ where: { createdBy: userId } }),
       this.prisma.workScore.count({ where: { uploadedBy: userId } }),
+      this.prisma.contribution.count({
+        where: { userId, ...NOT_REVERTED, xpGrantedAt: { not: null } },
+      }),
     ]);
 
-    return composers + works + scores;
+    return composers + works + scores + contributions;
   }
 
   /**

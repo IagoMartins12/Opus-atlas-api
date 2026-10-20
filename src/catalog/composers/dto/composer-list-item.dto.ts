@@ -45,6 +45,12 @@ export class ComposerListItemDto {
   @ApiProperty({ example: true })
   isVerified: boolean;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Gentílico gravado (ex.: "Polish")',
+  })
+  nationality?: string | null;
+
   @ApiPropertyOptional({ type: ComposerEpochDto, nullable: true })
   epoch?: ComposerEpochDto | null;
 }

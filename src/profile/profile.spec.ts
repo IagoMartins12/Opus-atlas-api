@@ -235,7 +235,7 @@ describe('ProfileService', () => {
     it('sem include vem tudo: conta, instrumentos, estatísticas e os papéis da conta', async () => {
       withAccount({
         isTeacher: true,
-        teacherProfile: { isVerified: true },
+        teacherProfile: { status: 'ACTIVE', isVerified: true },
         accounts: [{ provider: 'google' }, { provider: 'google' }],
       });
       prisma.userInstrument.findMany.mockResolvedValue([
@@ -256,6 +256,7 @@ describe('ProfileService', () => {
         id: USER,
         name: 'Ana Lima',
         teacherVerified: true,
+        teacherPortal: true,
         studentInviteStatus: null,
         login: { hasPassword: true, providers: ['google'] },
       });
@@ -341,6 +342,28 @@ describe('ProfileService', () => {
       );
     });
 
+    it('assinante Mentor ou Maestro tem o portal antes da aprovação', async () => {
+      withAccount({
+        isTeacher: true,
+        teacherProfile: { status: 'ACTIVE', isVerified: false },
+      });
+
+      const { account } = await service.get(USER, 'account');
+      expect(account.teacherPortal).toBe(true);
+      expect(account.teacherVerified).toBe(false);
+    });
+
+    it('convidado que ainda não aceitou não tem o portal', async () => {
+      withAccount({
+        isTeacher: true,
+        teacherProfile: { status: 'PENDING', isVerified: false },
+      });
+
+      expect((await service.get(USER, 'account')).account.teacherPortal).toBe(
+        false,
+      );
+    });
+
     it('professor ainda sem perfil aparece como não verificado', async () => {
       withAccount({ isTeacher: true, teacherProfile: null });
 
@@ -403,7 +426,10 @@ describe('ProfileService', () => {
         },
       });
       // O diretório público de professores mostra estes dados e tem cache.
-      expect(cache.invalidateMany).toHaveBeenCalledWith(['teachers']);
+      expect(cache.invalidateMany).toHaveBeenCalledWith([
+        'teachers',
+        'blog:articles',
+      ]);
     });
 
     it('telefone vazio apaga os três campos; os demais campos da conta também passam', async () => {
@@ -809,7 +835,10 @@ describe('ProfileService', () => {
       where: { id: USER },
       data: { image: null },
     });
-    expect(cache.invalidateMany).toHaveBeenCalledWith(['teachers']);
+    expect(cache.invalidateMany).toHaveBeenCalledWith([
+      'teachers',
+      'blog:articles',
+    ]);
   });
 
   it('foto de perfil vai para o armazenamento e atualiza o diretório', async () => {

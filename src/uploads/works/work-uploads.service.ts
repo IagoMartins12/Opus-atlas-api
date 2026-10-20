@@ -20,6 +20,7 @@ import { CreateWorkContributionDto } from './dto/create-work-contribution.dto';
 import { UpdateWorkContributionDto } from './dto/update-work-contribution.dto';
 import { WorkDuplicateResponseDto } from './dto/work-duplicate-response.dto';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { ContributionLimitService } from '../shared/contribution-limit.service';
 
 /** Campos de mídia derivados do envio, montados por `buildMediaFields`. */
 interface WorkMediaFields {
@@ -73,6 +74,7 @@ export class WorkUploadsService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly activity: ActivityTracker,
+    private readonly limit: ContributionLimitService,
   ) {}
 
   async create(
@@ -80,6 +82,7 @@ export class WorkUploadsService {
     dto: CreateWorkContributionDto,
     context: RequestContext,
   ) {
+    await this.limit.assertWithinLimit(userId);
     const { composer, instrument, epoch } = await this.assertReferencesExist(
       dto.composerId,
       dto.instrumentId,

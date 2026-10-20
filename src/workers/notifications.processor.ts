@@ -4,11 +4,14 @@ import { Job, UnrecoverableError } from 'bullmq';
 import { ArticlePublishingService } from '../blog/articles/article-publishing.service';
 import {
   JOB_BLOG_PUBLISH_SCHEDULED,
+  JOB_CONTRIBUTIONS_GRANT_XP,
   JOB_MODERATION_SLA_SWEEP,
   JOB_NOTIFICATIONS_SWEEP,
   QUEUE_NOTIFICATIONS,
 } from '../common/queue/queue.constants';
 import { QueueService } from '../common/queue/queue.service';
+import { TaskRunsService } from '../common/queue/task-runs.service';
+import { ContributionsService } from '../library/contributions/contributions.service';
 import { NotificationSweepService } from '../portal/notifications/notification-sweep.service';
 import { ModerationSweepService } from '../uploads/moderation/moderation-sweep.service';
 
@@ -47,6 +50,15 @@ const BLOG_PUBLISH_CRON = '* * * * *';
 const BLOG_PUBLISH_SCHEDULER_ID = 'blog:publish-scheduled';
 
 /**
+ * O XP das contribuições é pago uma vez por dia, de madrugada: a regra é
+ * "sete dias sem denúncia", e um dia a mais de resolução não muda nada para
+ * quem espera uma semana.
+ */
+const CONTRIBUTIONS_XP_CRON = '20 4 * * *';
+
+const CONTRIBUTIONS_XP_SCHEDULER_ID = 'contributions:grant-xp';
+
+/**
  * Consumidor das notificações automáticas.
  *
  * **O agendamento é declarado em código e reafirmado a cada subida do worker.**
@@ -70,7 +82,9 @@ export class NotificationsProcessor
     private readonly sweep: NotificationSweepService,
     private readonly moderationSweep: ModerationSweepService,
     private readonly articlePublishing: ArticlePublishingService,
+    private readonly contributions: ContributionsService,
     private readonly queue: QueueService,
+    private readonly runs: TaskRunsService,
   ) {
     super();
   }
@@ -111,16 +125,86 @@ export class NotificationsProcessor
     });
 
     this.logger.log(`Artigos agendados conferidos: ${BLOG_PUBLISH_CRON}`);
+
+    await this.queue.upsertSchedule({
+      queue: QUEUE_NOTIFICATIONS,
+      schedulerId: CONTRIBUTIONS_XP_SCHEDULER_ID,
+      cron: CONTRIBUTIONS_XP_CRON,
+      timezone: 'America/Sao_Paulo',
+      job: JOB_CONTRIBUTIONS_GRANT_XP,
+      payload: {},
+      requestedBy: null,
+    });
+
+    this.logger.log(`XP das contribuições pago: ${CONTRIBUTIONS_XP_CRON}`);
   }
 
   async process(job: Job): Promise<unknown> {
+    // Estas três rodam de minuto em minuto a cada hora: só entra no histórico
+    // a execução que fez alguma coisa (ou falhou). Gravar todas seriam mais de
+    // mil linhas por dia dizendo "nada a fazer".
     switch (job.name) {
       case JOB_NOTIFICATIONS_SWEEP:
-        return this.sweep.sweep();
+        return this.runs.rastrear(
+          job,
+          {
+            queue: QUEUE_NOTIFICATIONS,
+            task: JOB_NOTIFICATIONS_SWEEP,
+            taskName: 'Lembretes do portal',
+            gravar: (r) => r.total > 0 || r.emailed > 0,
+            relato: (r) => ({
+              summary: { criadas: r.total, emails: r.emailed, ...r.created },
+            }),
+          },
+          () => this.sweep.sweep(),
+        );
       case JOB_MODERATION_SLA_SWEEP:
-        return this.moderationSweep.sweep();
+        return this.runs.rastrear(
+          job,
+          {
+            queue: QUEUE_NOTIFICATIONS,
+            task: JOB_MODERATION_SLA_SWEEP,
+            taskName: 'Prazo das denúncias',
+            gravar: (r) => r.notified > 0,
+            relato: (r) => ({
+              summary: {
+                vencidas: r.overdue,
+                avisados: r.notified,
+                ...r.byPriority,
+              },
+            }),
+          },
+          () => this.moderationSweep.sweep(),
+        );
       case JOB_BLOG_PUBLISH_SCHEDULED:
-        return this.articlePublishing.publishDue();
+        return this.runs.rastrear(
+          job,
+          {
+            queue: QUEUE_NOTIFICATIONS,
+            task: JOB_BLOG_PUBLISH_SCHEDULED,
+            taskName: 'Publicar artigos agendados',
+            gravar: (r) => r.published > 0,
+            relato: (r) => ({
+              summary: { vencidos: r.due, publicados: r.published },
+              sample: r.titulos,
+            }),
+          },
+          () => this.articlePublishing.publishDue(),
+        );
+      case JOB_CONTRIBUTIONS_GRANT_XP:
+        return this.runs.rastrear(
+          job,
+          {
+            queue: QUEUE_NOTIFICATIONS,
+            task: JOB_CONTRIBUTIONS_GRANT_XP,
+            taskName: 'XP das contribuições',
+            gravar: (r) => r.due > 0,
+            relato: (r) => ({
+              summary: { vencidas: r.due, pagas: r.granted },
+            }),
+          },
+          () => this.contributions.grantDueXp(),
+        );
       default:
         throw new UnrecoverableError(
           `Job desconhecido na fila ${QUEUE_NOTIFICATIONS}: ${job.name}`,

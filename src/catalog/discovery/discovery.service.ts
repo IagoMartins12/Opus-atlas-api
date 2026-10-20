@@ -1,4 +1,5 @@
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { IS_COMPOSER } from '../composers/composer-role';
 import { Inject, Injectable } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { CacheNamespace } from '../../common/cache/cache-keys';
@@ -9,7 +10,6 @@ import { RecentAdditionsResponseDto } from './dto/recent-additions-response.dto'
 /** Mesmo ID usado em `composers.service.ts` — identifica o papel "Compositor"
  * entre os `Role` do catálogo. Duplicado aqui (em vez de importado) para não
  * criar uma dependência cruzada entre sub-módulos por uma única constante. */
-const COMPOSER_ROLE_ID = '685d591c1e3db0c5aaa893e4';
 
 const DISCOVERIES_TTL_MS = 60 * 60 * 1000;
 const RECENT_ADDITIONS_TTL_MS = 10 * 60 * 1000;
@@ -59,12 +59,7 @@ export class DiscoveryService {
       return cached;
     }
 
-    const composerRoleFilter = {
-      OR: [
-        { primaryRoleId: COMPOSER_ROLE_ID },
-        { roles: { contains: COMPOSER_ROLE_ID } },
-      ],
-    };
+    const composerRoleFilter = IS_COMPOSER;
 
     const [lesserKnownComposers, randomWorks] = await Promise.all([
       this.prisma.composer.findMany({
@@ -132,7 +127,7 @@ export class DiscoveryService {
   /** Últimos compositores e obras cadastrados. Substitui a rota legada
    * `getRecentAdditions`. */
   async getRecentAdditions(): Promise<RecentAdditionsResponseDto> {
-    const cacheKey = `${CacheNamespace.DISCOVERY}:recent-additions:v1`;
+    const cacheKey = `${CacheNamespace.DISCOVERY}:recent-additions:v2`;
     const cached =
       await this.cacheManager.get<RecentAdditionsResponseDto>(cacheKey);
     if (cached) {
@@ -140,7 +135,16 @@ export class DiscoveryService {
     }
 
     const [recentComposers, recentWorks] = await Promise.all([
+      // Only real composers with a minimal record: an upload with just a name
+      // (or a non-composer someone typed in) must not reach the home page.
       this.prisma.composer.findMany({
+        where: {
+          AND: [
+            IS_COMPOSER,
+            { birthDate: { isSet: true } },
+            { NOT: { birthDate: null } },
+          ],
+        },
         select: {
           id: true,
           name: true,

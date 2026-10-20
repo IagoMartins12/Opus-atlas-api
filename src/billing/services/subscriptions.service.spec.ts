@@ -1,3 +1,4 @@
+import { AppCacheService } from '../../common/cache/cache.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -5,6 +6,7 @@ import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InvoicesService } from './invoices.service';
 import { PlanPricingService } from './plan-pricing.service';
+import { StripeCatalogService } from './stripe-catalog.service';
 import { StripeService } from './stripe.service';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -37,7 +39,13 @@ describe('SubscriptionsService', () => {
     };
     subscriptionHistory: { create: jest.Mock; findMany: jest.Mock };
     payment: { findMany: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
-    user: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
+    user: {
+      findUniqueOrThrow: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
+    teacher: { create: jest.Mock; update: jest.Mock };
+    $transaction: jest.Mock;
     coupon: { findFirst: jest.Mock; update: jest.Mock };
     couponUsage: { findUnique: jest.Mock; create: jest.Mock };
   };
@@ -45,13 +53,21 @@ describe('SubscriptionsService', () => {
   let stripe: {
     createCheckoutSession: jest.Mock;
     retrieveCheckoutSession: jest.Mock;
+    setCancelAtPeriodEnd: jest.Mock;
+    cancelSubscriptionNow: jest.Mock;
+    changePriceAtRenewal: jest.Mock;
+    changePriceNow: jest.Mock;
   };
+  let catalog: { priceIdFor: jest.Mock; checkoutCouponId: jest.Mock };
   let invoices: { createFromPayment: jest.Mock };
   let mail: {
     sendPaymentApprovedEmail: jest.Mock;
     sendSubscriptionCancelledEmail: jest.Mock;
+    sendTrialStartedEmail: jest.Mock;
+    sendPaymentFailedEmail: jest.Mock;
   };
   let service: SubscriptionsService;
+  let cache: { invalidateMany: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -81,8 +97,17 @@ describe('SubscriptionsService', () => {
           email: 'ana@x.com',
           firstName: 'Ana',
         }),
+        findUnique: jest.fn().mockResolvedValue({
+          isTeacher: false,
+          teacherProfile: null,
+        }),
         update: jest.fn().mockResolvedValue({}),
       },
+      teacher: {
+        create: jest.fn().mockResolvedValue({}),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $transaction: jest.fn(),
       coupon: {
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
@@ -104,27 +129,49 @@ describe('SubscriptionsService', () => {
         .fn()
         .mockResolvedValue({ id: 'cs_1', url: 'https://checkout/cs_1' }),
       retrieveCheckoutSession: jest.fn(),
+      setCancelAtPeriodEnd: jest.fn().mockResolvedValue(undefined),
+      cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined),
+      changePriceAtRenewal: jest.fn().mockResolvedValue(undefined),
+      changePriceNow: jest.fn().mockResolvedValue({
+        invoiceId: 'in_up',
+        amountPaid: 21.5,
+        currency: 'brl',
+        periodEnd: new Date('2026-11-20T00:00:00Z'),
+      }),
+    };
+    catalog = {
+      priceIdFor: jest.fn().mockResolvedValue('price_vigente'),
+      checkoutCouponId: jest.fn().mockResolvedValue('stripe_cupom'),
     };
     invoices = { createFromPayment: jest.fn().mockResolvedValue(undefined) };
+    cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
     mail = {
       sendPaymentApprovedEmail: jest.fn().mockResolvedValue(undefined),
       sendSubscriptionCancelledEmail: jest.fn().mockResolvedValue(undefined),
+      sendTrialStartedEmail: jest.fn().mockResolvedValue(undefined),
+      sendPaymentFailedEmail: jest.fn().mockResolvedValue(undefined),
     };
     service = new SubscriptionsService(
       prisma as unknown as PrismaService,
       pricing as unknown as PlanPricingService,
       stripe as unknown as StripeService,
+      catalog as unknown as StripeCatalogService,
       invoices as unknown as InvoicesService,
       mail as unknown as MailService,
       {
         get: jest.fn((_key: string, fallback: string) => fallback),
       } as unknown as ConfigService,
+      cache as unknown as AppCacheService,
+    );
+    // A transação roda o callback com o próprio mock como cliente.
+    prisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) =>
+      fn(prisma),
     );
   });
 
   describe('plano atual', () => {
     // A mensagem de cancelamento promete acesso até o fim do período pago.
-    it('cancelada ainda dá acesso até endDate; checkout aberto não dá', async () => {
+    it('cancelada e atrasada dão acesso até endDate; checkout aberto não dá', async () => {
       await service.getCurrentSubscription(USER);
 
       const [{ where }] = prisma.subscription.findFirst.mock.calls[0];
@@ -134,7 +181,10 @@ describe('SubscriptionsService', () => {
           status: { in: ['TRIAL', 'ACTIVE'] },
           OR: [{ endDate: null }, { endDate: { gte: expect.any(Date) } }],
         },
-        { status: 'CANCELLED', endDate: { gte: expect.any(Date) } },
+        {
+          status: { in: ['CANCELLED', 'PAST_DUE'] },
+          endDate: { gte: expect.any(Date) },
+        },
       ]);
     });
 
@@ -165,6 +215,17 @@ describe('SubscriptionsService', () => {
         isTrialActive: true,
         trialDaysRemaining: 3,
       });
+    });
+
+    // O 0 é "o plano não oferece", não "sem limite".
+    it('checkFeatureAccess devolve o 0 como 0', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ planType: 'PLUS' }),
+      );
+
+      const access = await service.checkFeatureAccess(USER, 'maxStudents');
+
+      expect(access.limit).toBe(0);
     });
 
     it('checkFeatureAccess lê o limite do plano', async () => {
@@ -215,24 +276,47 @@ describe('SubscriptionsService', () => {
       );
     });
 
-    it('primeira assinatura paga: teste grátis e checkout', async () => {
+    // Antes o teste começava ao abrir o checkout: quem desistia ficava com o
+    // plano, e o Stripe cobrava na hora quem seguia.
+    it('primeira assinatura paga: o teste é do Stripe e nada vale antes do checkout', async () => {
       const result = await service.create(USER, 'a@x.com', 'Ana', {
         planType: 'PLUS',
         billingPeriod: 'MONTHLY',
       });
 
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ trialDays: 7, customerId: null }),
+      );
       const [{ data }] = prisma.subscription.create.mock.calls[0];
       expect(data).toMatchObject({
-        status: 'TRIAL',
+        status: 'PENDING',
         stripeSessionId: 'cs_1',
         price: 29.9,
+        metadata: { trialDays: 7 },
       });
-      expect(data.trialEndDate.getTime()).toBeGreaterThan(Date.now() + 6 * DAY);
-      expect(result.message).toBe('Período de teste de 7 dias iniciado!');
+      expect(data.trialEndDate).toBeUndefined();
+      expect(prisma.teacher.create).not.toHaveBeenCalled();
       expect(result.payment).toEqual({
         sessionId: 'cs_1',
         checkoutUrl: 'https://checkout/cs_1',
       });
+    });
+
+    it('quem já foi cliente no Stripe volta como o mesmo cliente', async () => {
+      prisma.subscription.findFirst.mockImplementation(({ where }) =>
+        Promise.resolve(
+          where.stripeCustomerId ? { stripeCustomerId: 'cus_9' } : null,
+        ),
+      );
+
+      await service.create(USER, 'a@x.com', 'Ana', {
+        planType: 'PLUS',
+        billingPeriod: 'MONTHLY',
+      });
+
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'cus_9' }),
+      );
     });
 
     // Sem isto, deixar o teste expirar e assinar de novo dava outro teste.
@@ -244,8 +328,13 @@ describe('SubscriptionsService', () => {
         billingPeriod: 'YEARLY',
       });
 
+      const [{ where }] = prisma.subscription.count.mock.calls[0];
+      expect(where.stripeSubscriptionId).toEqual({ not: null });
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ trialDays: 0 }),
+      );
       const [{ data }] = prisma.subscription.create.mock.calls[0];
-      expect(data).toMatchObject({ status: 'PENDING', trialEndDate: null });
+      expect(data).toMatchObject({ status: 'PENDING' });
       expect(result.message).toBe('Redirecionando para o checkout seguro...');
     });
 
@@ -284,6 +373,35 @@ describe('SubscriptionsService', () => {
       });
       expect(prisma.couponUsage.create).not.toHaveBeenCalled();
       expect(prisma.coupon.update).not.toHaveBeenCalled();
+      // O cupom vai na sessão do Stripe: sem isso a pessoa via "cupom
+      // aplicado" e pagava o preço cheio.
+      expect(catalog.checkoutCouponId).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'cup-1' }),
+        29.9,
+        5.98,
+      );
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priceId: 'price_vigente',
+          stripeCouponId: 'stripe_cupom',
+        }),
+      );
+    });
+
+    it('sem cupom, a sessão usa o preço vigente e nenhum desconto', async () => {
+      await service.create(USER, 'a@x.com', 'Ana', {
+        planType: 'PLUS',
+        billingPeriod: 'YEARLY',
+      });
+
+      expect(catalog.priceIdFor).toHaveBeenCalledWith('PLUS', 'YEARLY');
+      expect(catalog.checkoutCouponId).not.toHaveBeenCalled();
+      expect(stripe.createCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          priceId: 'price_vigente',
+          stripeCouponId: null,
+        }),
+      );
     });
 
     describe('cupom recusado', () => {
@@ -307,9 +425,7 @@ describe('SubscriptionsService', () => {
       it('já usado pela pessoa', async () => {
         prisma.coupon.findFirst.mockResolvedValue(base);
         prisma.couponUsage.findUnique.mockResolvedValue({ id: 'u' });
-        await expect(tryCoupon()).rejects.toThrow(
-          'Você já utilizou este cupom',
-        );
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
 
       it('esgotado', async () => {
@@ -318,7 +434,7 @@ describe('SubscriptionsService', () => {
           maxUses: 5,
           usedCount: 5,
         });
-        await expect(tryCoupon()).rejects.toThrow('Cupom esgotado');
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
 
       it('de outro plano', async () => {
@@ -326,9 +442,7 @@ describe('SubscriptionsService', () => {
           ...base,
           applicablePlans: ['MAESTRO'],
         });
-        await expect(tryCoupon()).rejects.toThrow(
-          'Cupom não aplicável a este plano',
-        );
+        await expect(tryCoupon()).rejects.toThrow('Cupom inválido ou expirado');
       });
     });
   });
@@ -352,7 +466,12 @@ describe('SubscriptionsService', () => {
                 ...subscription({ status: 'PENDING', endDate: null }),
                 user: { email: 'ana@x.com', firstName: null },
               }
-            : null,
+            : where.id === 'antiga'
+              ? subscription({
+                  id: 'antiga',
+                  stripeSubscriptionId: 'sub_velha',
+                })
+              : null,
         ),
       );
       stripe.retrieveCheckoutSession.mockResolvedValue(paidSession);
@@ -361,10 +480,11 @@ describe('SubscriptionsService', () => {
     it('ativa, registra pagamento, nota e avisa por e-mail', async () => {
       await service.confirmCheckoutSession('cs_1');
 
-      expect(prisma.subscription.update).toHaveBeenCalledWith({
-        where: { id: SUB },
+      expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+        where: { id: SUB, status: 'PENDING' },
         data: expect.objectContaining({
           status: 'ACTIVE',
+          trialEndDate: null,
           stripeSubscriptionId: 'sub_stripe',
           stripeCustomerId: 'cus_1',
         }),
@@ -386,13 +506,13 @@ describe('SubscriptionsService', () => {
 
     it('anual vale um ano', async () => {
       prisma.subscription.findFirst.mockResolvedValue({
-        ...subscription({ billingPeriod: 'YEARLY' }),
+        ...subscription({ billingPeriod: 'YEARLY', status: 'PENDING' }),
         user: { email: null },
       });
 
       await service.confirmCheckoutSession('cs_1');
 
-      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      const [{ data }] = prisma.subscription.updateMany.mock.calls[0];
       expect(data.endDate.getTime()).toBeGreaterThan(Date.now() + 364 * DAY);
       expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
     });
@@ -407,36 +527,113 @@ describe('SubscriptionsService', () => {
       expect(prisma.payment.create).not.toHaveBeenCalled();
     });
 
+    it('retorno e webhook ao mesmo tempo: só quem tira de PENDING segue', async () => {
+      prisma.subscription.updateMany.mockResolvedValue({ count: 0 });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
+    });
+
+    it('com teste: começa o teste com o cartão aceito, sem pagamento nem nota', async () => {
+      const trialEnd = Math.floor((Date.now() + 7 * DAY) / 1000);
+      stripe.retrieveCheckoutSession.mockResolvedValue({
+        ...paidSession,
+        payment_status: 'no_payment_required',
+        amount_total: 0,
+        subscription: {
+          id: 'sub_stripe',
+          status: 'trialing',
+          trial_end: trialEnd,
+        },
+      });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+        where: { id: SUB, status: 'PENDING' },
+        data: expect.objectContaining({
+          status: 'TRIAL',
+          trialEndDate: new Date(trialEnd * 1000),
+          endDate: new Date(trialEnd * 1000),
+          stripeSubscriptionId: 'sub_stripe',
+        }),
+      });
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(invoices.createFromPayment).not.toHaveBeenCalled();
+      expect(mail.sendTrialStartedEmail).toHaveBeenCalledWith(
+        'ana@x.com',
+        expect.objectContaining({
+          chargeDate: new Date(trialEnd * 1000),
+          amount: 29.9,
+        }),
+      );
+      expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
+    });
+
+    it('sem pagamento e sem teste no Stripe, não ativa', async () => {
+      stripe.retrieveCheckoutSession.mockResolvedValue({
+        ...paidSession,
+        payment_status: 'no_payment_required',
+        subscription: { id: 'sub_stripe', status: 'active', trial_end: null },
+      });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
+    });
+
     it('sessão desconhecida ou não paga não ativa', async () => {
       stripe.retrieveCheckoutSession.mockResolvedValue({
         ...paidSession,
         payment_status: 'unpaid',
       });
       await service.confirmCheckoutSession('cs_1');
-      expect(prisma.subscription.update).not.toHaveBeenCalled();
+      expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
 
       prisma.subscription.findFirst.mockResolvedValue(null);
       await service.confirmCheckoutSession('cs_x');
       expect(prisma.payment.create).not.toHaveBeenCalled();
     });
 
-    it('upgrade pago: só agora cancela a assinatura anterior', async () => {
-      prisma.subscription.findFirst.mockResolvedValue({
-        ...subscription({ metadata: { replacesSubscriptionId: 'antiga' } }),
-        user: { email: null },
-      });
+    // Antes a antiga só mudava aqui e seguia cobrando no Stripe.
+    it('upgrade pago: só agora encerra a anterior, aqui e no Stripe', async () => {
+      prisma.subscription.findFirst.mockImplementation(({ where }) =>
+        Promise.resolve(
+          where.stripeSessionId
+            ? {
+                ...subscription({
+                  status: 'PENDING',
+                  metadata: { replacesSubscriptionId: 'antiga' },
+                }),
+                user: { email: null },
+              }
+            : where.id === 'antiga'
+              ? subscription({
+                  id: 'antiga',
+                  stripeSubscriptionId: 'sub_velha',
+                })
+              : null,
+        ),
+      );
 
       await service.confirmCheckoutSession('cs_1');
 
-      expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
-        where: { id: 'antiga', status: { in: ['TRIAL', 'ACTIVE'] } },
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledWith('sub_velha');
+      expect(prisma.subscription.update).toHaveBeenCalledWith({
+        where: { id: 'antiga' },
         data: expect.objectContaining({ status: 'CANCELLED' }),
       });
     });
 
     it('consome o cupom no pagamento, uma vez só', async () => {
       prisma.subscription.findFirst.mockResolvedValue({
-        ...subscription({ couponId: 'cup-1', metadata: { couponDiscount: 5 } }),
+        ...subscription({
+          status: 'PENDING',
+          couponId: 'cup-1',
+          metadata: { couponDiscount: 5 },
+        }),
         user: { email: null },
       });
 
@@ -453,7 +650,7 @@ describe('SubscriptionsService', () => {
 
     it('uso de cupom já registrado não conta de novo', async () => {
       prisma.subscription.findFirst.mockResolvedValue({
-        ...subscription({ couponId: 'cup-1' }),
+        ...subscription({ status: 'PENDING', couponId: 'cup-1' }),
         user: { email: null },
       });
       prisma.couponUsage.create.mockRejectedValue(
@@ -470,7 +667,7 @@ describe('SubscriptionsService', () => {
 
     it('outro erro ao registrar o cupom sobe', async () => {
       prisma.subscription.findFirst.mockResolvedValue({
-        ...subscription({ couponId: 'cup-1' }),
+        ...subscription({ status: 'PENDING', couponId: 'cup-1' }),
         user: { email: null },
       });
       prisma.couponUsage.create.mockRejectedValue(new Error('mongo'));
@@ -537,6 +734,41 @@ describe('SubscriptionsService', () => {
       expect(mail.sendSubscriptionCancelledEmail).not.toHaveBeenCalled();
     });
 
+    it('com Stripe: cancela lá no fim do período, antes de mudar aqui', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ stripeSubscriptionId: 'sub_1' }),
+      );
+
+      await service.cancel(USER, {});
+
+      expect(stripe.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_1', true);
+      expect(
+        stripe.setCancelAtPeriodEnd.mock.invocationCallOrder[0],
+      ).toBeLessThan(prisma.subscription.update.mock.invocationCallOrder[0]);
+    });
+
+    it('se o Stripe recusar, não se diz "cancelada" aqui', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ stripeSubscriptionId: 'sub_1' }),
+      );
+      stripe.setCancelAtPeriodEnd.mockRejectedValue(new Error('stripe fora'));
+
+      await expect(service.cancel(USER, {})).rejects.toThrow('stripe fora');
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it('atrasada: encerra agora, sem período pago a honrar', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ status: 'PAST_DUE', stripeSubscriptionId: 'sub_1' }),
+      );
+
+      await service.cancel(USER, {});
+
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledWith('sub_1');
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.endDate).toBeInstanceOf(Date);
+    });
+
     it('não cancela de novo o que já está cancelado', async () => {
       prisma.subscription.findFirst.mockResolvedValue(
         subscription({ status: 'CANCELLED' }),
@@ -565,6 +797,22 @@ describe('SubscriptionsService', () => {
         }),
       });
       expect(result.message).toBe('Assinatura reativada com sucesso!');
+    });
+
+    it('com Stripe: desfaz o cancelamento lá; no teste, volta ao teste', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({
+          status: 'CANCELLED',
+          stripeSubscriptionId: 'sub_1',
+          trialEndDate: new Date(Date.now() + 3 * DAY),
+        }),
+      );
+
+      await service.reactivate(USER);
+
+      expect(stripe.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_1', false);
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.status).toBe('TRIAL');
     });
 
     it('sem cancelada no período é 404', async () => {
@@ -606,6 +854,23 @@ describe('SubscriptionsService', () => {
       expect(result.message).toContain('Downgrade agendado');
     });
 
+    // Antes a descida ficava só anotada: o Stripe renovava no plano caro.
+    it('com Stripe: a próxima cobrança já sai no preço do plano novo', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ planType: 'MAESTRO', stripeSubscriptionId: 'sub_1' }),
+      );
+
+      await service.upgrade(USER, 'a@x.com', { newPlanType: 'PLUS' });
+
+      expect(catalog.priceIdFor).toHaveBeenCalledWith('PLUS', 'MONTHLY');
+      expect(stripe.changePriceAtRenewal).toHaveBeenCalledWith(
+        'sub_1',
+        'price_vigente',
+      );
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.autoRenew).toBe(true);
+    });
+
     // Era TRIAL sem fim: checkout abandonado virava upgrade grátis para sempre.
     it('upgrade abre checkout e a assinatura nova espera o pagamento, sem acesso', async () => {
       prisma.subscription.findFirst.mockResolvedValue(subscription());
@@ -623,6 +888,81 @@ describe('SubscriptionsService', () => {
         metadata: { replacesSubscriptionId: SUB },
       });
       expect(result.payment?.checkoutUrl).toBe('https://checkout/cs_1');
+    });
+
+    // Antes: checkout novo, preço cheio e a antiga cancelada sem crédito.
+    describe('upgrade na própria assinatura (com Stripe)', () => {
+      beforeEach(() => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1' }),
+        );
+        prisma.subscription.update.mockResolvedValue(subscription());
+      });
+
+      it('troca o preço, cobra só a diferença e não abre checkout', async () => {
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(stripe.changePriceNow).toHaveBeenCalledWith(
+          'sub_1',
+          'price_vigente',
+        );
+        expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+        expect(prisma.subscription.create).not.toHaveBeenCalled();
+        expect(stripe.cancelSubscriptionNow).not.toHaveBeenCalled();
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data).toMatchObject({
+          planType: 'MAESTRO',
+          endDate: new Date('2026-11-20T00:00:00Z'),
+        });
+        expect(prisma.payment.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            stripeInvoiceId: 'in_up',
+            finalAmount: 21.5,
+            status: 'APPROVED',
+          }),
+        });
+        expect(result.message).toContain('diferença');
+      });
+
+      it('cartão recusado: o Stripe falha e nada muda aqui', async () => {
+        stripe.changePriceNow.mockRejectedValue(new Error('card_declined'));
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('card_declined');
+
+        expect(prisma.subscription.update).not.toHaveBeenCalled();
+        expect(prisma.payment.create).not.toHaveBeenCalled();
+      });
+
+      it('durante o teste não há cobrança nem pagamento', async () => {
+        stripe.changePriceNow.mockResolvedValue({
+          invoiceId: null,
+          amountPaid: 0,
+          currency: 'brl',
+          periodEnd: null,
+        });
+
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(prisma.payment.create).not.toHaveBeenCalled();
+        expect(result.message).toContain('primeira cobrança');
+      });
+
+      it('assinatura atrasada não sobe de plano', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1', status: 'PAST_DUE' }),
+        );
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('em atraso');
+        expect(stripe.changePriceNow).not.toHaveBeenCalled();
+      });
     });
   });
   /**
@@ -707,12 +1047,231 @@ describe('SubscriptionsService', () => {
       expect(prisma.payment.create).not.toHaveBeenCalled();
     });
 
+    it('a descida agendada vale a partir desta fatura', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({
+          planType: 'MAESTRO',
+          metadata: { pendingDowngrade: 'PLUS', paymentFailedAt: 'x' },
+        }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerRenewal(fatura({ amountPaid: 19.9 }));
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data).toMatchObject({
+        planType: 'PLUS',
+        price: 19.9,
+        metadata: {},
+      });
+    });
+
     it('registra a renovação no histórico e emite a nota', async () => {
       await service.registerRenewal(fatura());
 
       const [{ data }] = prisma.subscriptionHistory.create.mock.calls[0];
       expect(data).toMatchObject({ action: 'RENEWED', subscriptionId: SUB });
       expect(invoices.createFromPayment).toHaveBeenCalledWith(SUB, 'pay-1');
+    });
+  });
+
+  describe('cobrança recusada', () => {
+    const recusa = {
+      stripeSubscriptionId: 'sub_1',
+      amountDue: 39.9,
+      currency: 'brl',
+    };
+
+    it('no fim do teste: atrasada, com prazo para o cartão, e avisa', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ status: 'TRIAL', planType: 'MENTOR' }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+      const antes = Date.now();
+
+      await service.registerPaymentFailure(recusa);
+
+      expect(prisma.payment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: 'REJECTED',
+          finalAmount: 39.9,
+        }),
+      });
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.status).toBe('PAST_DUE');
+      const dias = (data.endDate.getTime() - antes) / DAY;
+      expect(dias).toBeGreaterThan(3.99);
+      expect(dias).toBeLessThan(4.01);
+      expect(data.metadata.paymentFailedAt).toEqual(expect.any(String));
+      expect(mail.sendPaymentFailedEmail).toHaveBeenCalledWith(
+        'ana@x.com',
+        expect.objectContaining({ afterTrial: true, amount: 39.9 }),
+      );
+    });
+
+    it('as tentativas seguintes do Stripe não esticam o prazo', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ status: 'PAST_DUE' }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerPaymentFailure(recusa);
+
+      expect(prisma.payment.create).toHaveBeenCalled();
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+      expect(mail.sendPaymentFailedEmail).not.toHaveBeenCalled();
+    });
+
+    it('assinatura desconhecida não cria pagamento órfão', async () => {
+      await service.registerPaymentFailure(recusa);
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('professor pela assinatura', () => {
+    it('plano Mentor: vira professor ativo quando o teste começa', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ planType: 'MENTOR', status: 'PENDING' }),
+        user: { email: null },
+      });
+      stripe.retrieveCheckoutSession.mockResolvedValue({
+        id: 'cs_1',
+        payment_status: 'no_payment_required',
+        subscription: {
+          id: 'sub_1',
+          status: 'trialing',
+          trial_end: Math.floor((Date.now() + 14 * DAY) / 1000),
+        },
+        customer: 'cus_1',
+      });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: USER },
+        data: { isTeacher: true },
+      });
+      expect(prisma.teacher.create).toHaveBeenCalledWith({
+        data: { userId: USER, status: 'ACTIVE', isVerified: false },
+      });
+      expect(cache.invalidateMany).toHaveBeenCalled();
+    });
+
+    it('plano Plus não mexe no papel de professor', async () => {
+      await service.activateTeacherForPlan(USER, 'PLUS');
+      expect(prisma.teacher.create).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('ex-professor com perfil inativo volta a ativo, sem perfil novo', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        isTeacher: false,
+        teacherProfile: { id: 't1', status: 'INACTIVE' },
+      });
+      await service.activateTeacherForPlan(USER, 'MAESTRO');
+      expect(prisma.teacher.create).not.toHaveBeenCalled();
+      expect(prisma.teacher.update).toHaveBeenCalledWith({
+        where: { id: 't1' },
+        data: { status: 'ACTIVE' },
+      });
+    });
+
+    it('professor já ativo: nada muda', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        isTeacher: true,
+        teacherProfile: { id: 't1', status: 'ACTIVE' },
+      });
+      await service.activateTeacherForPlan(USER, 'MENTOR');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(cache.invalidateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('plano concedido pela equipe', () => {
+    it('cria assinatura ativa, sem cobrança nem renovação, com vencimento', async () => {
+      const ate = new Date(Date.now() + 30 * DAY);
+      await service.grantPlan(USER, 'MAESTRO', ate, 'admin-1');
+      expect(prisma.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: USER,
+          planType: 'MAESTRO',
+          status: 'ACTIVE',
+          endDate: ate,
+          price: 0,
+          autoRenew: false,
+        }),
+      });
+    });
+
+    it('sem vencimento grava endDate nulo', async () => {
+      await service.grantPlan(USER, 'MENTOR', null);
+      expect(prisma.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ endDate: null }),
+      });
+    });
+
+    it('a equipe troca o plano concedido e o vencimento', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({
+          planType: 'MENTOR',
+          price: 0,
+          metadata: { origin: 'GRANTED_BY_TEAM' },
+        }),
+      );
+
+      await service.updateGrantedPlan(
+        USER,
+        { planType: 'MAESTRO', expiresAt: null },
+        'admin-1',
+      );
+
+      expect(prisma.subscription.update).toHaveBeenCalledWith({
+        where: { id: SUB },
+        data: { planType: 'MAESTRO', endDate: null },
+      });
+      expect(prisma.subscriptionHistory.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'GRANT_UPDATED',
+          fromPlan: 'MENTOR',
+          toPlan: 'MAESTRO',
+        }),
+      });
+    });
+
+    it('sem plano concedido em vigor, concede um', async () => {
+      await service.updateGrantedPlan(
+        USER,
+        { planType: 'MENTOR', expiresAt: null },
+        'admin-1',
+      );
+
+      expect(prisma.subscription.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          planType: 'MENTOR',
+          metadata: { origin: 'GRANTED_BY_TEAM', grantedBy: 'admin-1' },
+        }),
+      });
+    });
+
+    // Mudar o plano sem mudar a cobrança faria os dois lados divergirem.
+    it('assinatura paga pelo Stripe não se edita por aqui', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ stripeSubscriptionId: 'sub_1' }),
+      );
+
+      await expect(
+        service.updateGrantedPlan(USER, { planType: 'MAESTRO' }, 'admin-1'),
+      ).rejects.toThrow('Esta conta paga pelo Stripe');
+    });
+
+    it('vencimento no passado é recusado', async () => {
+      await expect(
+        service.updateGrantedPlan(
+          USER,
+          { expiresAt: new Date(Date.now() - DAY) },
+          'admin-1',
+        ),
+      ).rejects.toThrow('O vencimento do plano precisa ser futuro');
     });
   });
 });

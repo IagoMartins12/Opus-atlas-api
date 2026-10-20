@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -25,6 +26,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { Public } from '../../common/decorators/api-key.decorator';
 import { PublicCache } from '../../common/decorators/public-cache.decorator';
+import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { GetWorksCatalogQueryDto } from './dto/get-works-catalog-query.dto';
 import { GetWorkScoresQueryDto } from './dto/get-work-scores-query.dto';
@@ -40,7 +42,11 @@ import {
   ClearWorkMediaResponseDto,
   RefreshWorkScoresResponseDto,
 } from './dto/work-media-clear-response.dto';
-import { WorkScoresResponseDto } from './dto/work-score-item.dto';
+import {
+  ImslpScoresStatusDto,
+  WorkScoresResponseDto,
+} from './dto/work-score-item.dto';
+import { isRobotUserAgent } from '../../common/utils/robot.util';
 import { WorksCatalogResponseDto } from './dto/works-catalog-response.dto';
 import { WorkSummaryDto } from './dto/work-summary.dto';
 import { ImslpScoresService } from './imslp-scores.service';
@@ -220,8 +226,24 @@ export class WorksController {
   async getScores(
     @Param('id') id: string,
     @Query() query: GetWorkScoresQueryDto,
+    @Headers('user-agent') userAgent?: string,
   ): Promise<WorkScoresResponseDto> {
-    return this.worksService.getScores(id, query);
+    return this.worksService.getScores(id, query, {
+      robot: isRobotUserAgent(userAgent),
+    });
+  }
+
+  @Public()
+  @Get(':id/scores/imslp-status')
+  @ApiOperation({
+    summary: 'Situação da busca das partituras da obra no IMSLP',
+    description:
+      'Barata e sem efeito: é o que a página da obra pergunta, de tempos em tempos, ' +
+      'enquanto mostra "buscando partituras" (`imslp.status = pending` na listagem).',
+  })
+  @ApiOkResponse({ type: ImslpScoresStatusDto })
+  async getImslpStatus(@Param('id') id: string): Promise<ImslpScoresStatusDto> {
+    return { status: await this.imslpScores.status(id) };
   }
 
   @ApiBearerAuth('access-token')
@@ -241,6 +263,12 @@ export class WorksController {
 
   @ApiBearerAuth('access-token')
   @Patch(':id/media')
+  @Audited({
+    action: 'work.media.update',
+    entityType: 'work',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @ApiOperation({
     summary: 'Atualiza os campos de mídia de uma obra',
     description:
@@ -267,6 +295,12 @@ export class WorksController {
 
   @ApiBearerAuth('access-token')
   @Delete(':id/media')
+  @Audited({
+    action: 'work.media.clear',
+    entityType: 'work',
+    entityIdParam: 'id',
+    apenasAdmin: true,
+  })
   @ApiOperation({
     summary: 'Remove um tipo específico de mídia de uma obra',
   })

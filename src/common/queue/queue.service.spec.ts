@@ -108,3 +108,94 @@ describe('QueueService', () => {
     });
   });
 });
+
+describe('QueueService — agendamentos guardados no banco', () => {
+  const fila = {
+    upsertJobScheduler: jest.fn().mockResolvedValue(undefined),
+    removeJobScheduler: jest.fn().mockResolvedValue(true),
+    getJobSchedulers: jest.fn().mockResolvedValue([]),
+  };
+  const prisma = {
+    taskSchedule: {
+      upsert: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn().mockResolvedValue({}),
+    },
+  };
+  const service = new QueueService({
+    get: (token: unknown) =>
+      typeof token === 'function' && token.name === 'PrismaService'
+        ? prisma
+        : fila,
+  } as never);
+  const agendamento = {
+    queue: 'maintenance' as const,
+    schedulerId: 'maintenance:tokens.prune',
+    cron: '30 4 * * *',
+    timezone: 'America/Sao_Paulo',
+    job: 'maintenance.task.run',
+    payload: { taskId: 'tokens.prune' },
+  };
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('agendar grava no Redis e no banco, ligado', async () => {
+    await service.upsertSchedule(agendamento);
+
+    expect(fila.upsertJobScheduler).toHaveBeenCalled();
+    expect(prisma.taskSchedule.upsert.mock.calls[0][0].create).toMatchObject({
+      schedulerId: 'maintenance:tokens.prune',
+      enabled: true,
+    });
+  });
+
+  // É o que impede o worker de recriá-lo ao subir.
+  it('remover deixa o registro desligado', async () => {
+    await service.removeSchedule('maintenance', 'maintenance:tokens.prune');
+
+    expect(prisma.taskSchedule.updateMany).toHaveBeenCalledWith({
+      where: { schedulerId: 'maintenance:tokens.prune' },
+      data: { enabled: false },
+    });
+  });
+
+  it('o padrão só entra quando nunca existiu', async () => {
+    prisma.taskSchedule.findUnique.mockResolvedValueOnce({ id: 'x' });
+    await expect(service.agendarSeNuncaExistiu(agendamento)).resolves.toBe(
+      false,
+    );
+    expect(fila.upsertJobScheduler).not.toHaveBeenCalled();
+
+    await expect(service.agendarSeNuncaExistiu(agendamento)).resolves.toBe(
+      true,
+    );
+    expect(fila.upsertJobScheduler).toHaveBeenCalled();
+  });
+
+  it('ao subir: traz para o banco o que só estava no Redis e reaplica os ligados', async () => {
+    fila.getJobSchedulers.mockResolvedValueOnce([
+      {
+        key: 'maintenance:database.backup',
+        name: 'maintenance.task.run',
+        pattern: '0 3 * * *',
+        tz: 'America/Sao_Paulo',
+        template: { data: { payload: { taskId: 'database.backup' } } },
+      },
+    ]);
+    prisma.taskSchedule.findMany.mockResolvedValueOnce([
+      { ...agendamento, requestedBy: null, options: null },
+    ]);
+
+    const n = await service.reaplicarAgendamentos(['maintenance']);
+
+    expect(prisma.taskSchedule.create.mock.calls[0][0].data).toMatchObject({
+      schedulerId: 'maintenance:database.backup',
+      payload: { taskId: 'database.backup' },
+    });
+    expect(n).toBe(1);
+    // Reaplicar não regrava o banco.
+    expect(prisma.taskSchedule.upsert).not.toHaveBeenCalled();
+  });
+});

@@ -5,6 +5,12 @@ class ComposerDetailEpochDto {
   name: string;
 }
 
+export class DatePartsDto {
+  @ApiProperty({ nullable: true, type: Number }) year: number | null;
+  @ApiProperty({ nullable: true, type: Number }) month: number | null;
+  @ApiProperty({ nullable: true, type: Number }) day: number | null;
+}
+
 export class ComposerDetailDto {
   @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
   id: string;
@@ -27,6 +33,16 @@ export class ComposerDetailDto {
   @ApiPropertyOptional({ nullable: true })
   deathDate?: string;
 
+  @ApiProperty({
+    type: () => DatePartsDto,
+    description:
+      'Numeric parts read from birthDate (null where the text is vague)',
+  })
+  birth: DatePartsDto;
+
+  @ApiProperty({ type: () => DatePartsDto })
+  death: DatePartsDto;
+
   @ApiPropertyOptional({ nullable: true })
   portraitUrl?: string;
 
@@ -41,9 +57,23 @@ export class ComposerDetailDto {
 
   @ApiProperty({
     description:
-      'A biografia em português foi gerada por IA e ninguém a revisou — o front pode avisar',
+      'A biografia em português foi gerada por IA (a origem; segue verdadeiro depois da revisão) — o front avisa',
   })
   bioGeneratedByAi: boolean;
+
+  @ApiProperty({
+    description:
+      'Uma pessoa da equipe leu e aprovou a biografia (e a tradução). Com `bioGeneratedByAi`, o aviso passa a "revisada pela equipe"',
+  })
+  bioReviewed: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['pt', 'en'],
+    description:
+      'Idioma original da biografia quando a do outro idioma é tradução automática ainda não revisada',
+  })
+  bioTranslatedFrom?: 'pt' | 'en' | null;
 
   @ApiPropertyOptional({ nullable: true })
   permLinkImslp?: string;

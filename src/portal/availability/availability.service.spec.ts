@@ -37,6 +37,9 @@ describe('AvailabilityService', () => {
           id: 'teacher-1',
           userId: TEACHER_USER,
           timezone: 'America/Sao_Paulo',
+          acceptsLessonRequests: true,
+          requestLeadHours: 12,
+          requestHorizonDays: 45,
         }),
         update: jest.fn().mockReturnValue('update-tz'),
       },
@@ -170,6 +173,72 @@ describe('AvailabilityService', () => {
       await expect(
         service.freeSlotsOf(STUDENT_USER, TEACHER_USER, query),
       ).resolves.toMatchObject({ timezone: 'America/Sao_Paulo' });
+    });
+
+    // O aluno só vê o que dá para pedir: sem as aulas dele em outra turma.
+    it('para o aluno, tira as aulas que ele já tem em qualquer turma', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue({
+        id: 'link',
+        studentId: 'student-1',
+      });
+      prisma.teacherAvailability.findMany.mockResolvedValue(
+        [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({
+          weekday,
+          startTime: '08:00',
+          endTime: '20:00',
+        })),
+      );
+      const inTwoDays = new Date(Date.now() + 2 * 24 * 3_600_000);
+      inTwoDays.setUTCHours(15, 0, 0, 0);
+      // A primeira busca de aulas é a do professor; a segunda, a do aluno.
+      prisma.lesson.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ scheduledAt: inTwoDays, duration: 60 }]);
+
+      const result = await service.freeSlotsOf(STUDENT_USER, TEACHER_USER, {
+        from: new Date().toISOString(),
+        to: new Date(Date.now() + 5 * 24 * 3_600_000).toISOString(),
+      });
+
+      const clash = result.slots.some(
+        (slot) =>
+          slot.start < new Date(inTwoDays.getTime() + 3_600_000) &&
+          slot.end > inTwoDays,
+      );
+      expect(clash).toBe(false);
+      expect(result.requests).toEqual({
+        accepts: true,
+        leadHours: 12,
+        horizonDays: 45,
+      });
+      expect(prisma.lesson.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ studentId: 'student-1' }),
+        }),
+      );
+    });
+
+    it('professor que não aceita pedidos não oferece horário', async () => {
+      prisma.teacherStudent.findFirst.mockResolvedValue({
+        id: 'link',
+        studentId: 'student-1',
+      });
+      prisma.teacher.findUnique.mockResolvedValue({
+        id: 'teacher-1',
+        userId: TEACHER_USER,
+        timezone: 'America/Sao_Paulo',
+        acceptsLessonRequests: false,
+        requestLeadHours: 12,
+        requestHorizonDays: 45,
+      });
+
+      const result = await service.freeSlotsOf(STUDENT_USER, TEACHER_USER, {
+        from: new Date().toISOString(),
+        to: new Date(Date.now() + 5 * 24 * 3_600_000).toISOString(),
+      });
+
+      expect(result.slots).toEqual([]);
+      expect(result.requests.accepts).toBe(false);
     });
 
     it('mais ninguém', async () => {

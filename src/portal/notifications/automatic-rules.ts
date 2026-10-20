@@ -68,6 +68,8 @@ const formatDate = (date: Date): string =>
     timeZone: 'America/Sao_Paulo',
   });
 
+// Os links levam ao portal de cada um (04/10/2026). Antes apontavam para
+// `/portal/aulas/...`, rota que não existe no site.
 export interface LessonForNotice {
   id: string;
   title: string;
@@ -111,7 +113,6 @@ export function lessonStartingSoon(
     relatedEntityType: 'lesson',
     relatedEntityId: lesson.id,
     actionText: 'Ver aula',
-    actionUrl: `/portal/aulas/${lesson.id}`,
     // O aviso perde sentido quando a aula termina. Sem prazo, ele ficaria na
     // caixa de entrada depois de a aula já ter acontecido.
     expiresAt: new Date(lesson.scheduledAt.getTime() + STARTING_SOON_MS),
@@ -121,6 +122,7 @@ export function lessonStartingSoon(
     {
       ...common,
       userId: lesson.teacherUserId,
+      actionUrl: `/teacher/lessons/${lesson.id}`,
       title: 'Sua aula começa em breve',
       message: `Aula com ${lesson.studentName} às ${time}.`,
       uniqueHash: notificationHash(
@@ -132,6 +134,7 @@ export function lessonStartingSoon(
     {
       ...common,
       userId: lesson.studentUserId,
+      actionUrl: `/student/lessons/${lesson.id}`,
       title: 'Sua aula começa em breve',
       message: `Aula com ${lesson.teacherName} às ${time}.`,
       uniqueHash: notificationHash(
@@ -155,7 +158,6 @@ export function lessonTomorrow(
     relatedEntityType: 'lesson',
     relatedEntityId: lesson.id,
     actionText: 'Ver aula',
-    actionUrl: `/portal/aulas/${lesson.id}`,
     expiresAt: lesson.scheduledAt,
   };
 
@@ -163,6 +165,7 @@ export function lessonTomorrow(
     {
       ...common,
       userId: lesson.teacherUserId,
+      actionUrl: `/teacher/lessons/${lesson.id}`,
       title: 'Aula amanhã',
       message: `Aula com ${lesson.studentName} em ${when}.`,
       uniqueHash: notificationHash(
@@ -174,6 +177,7 @@ export function lessonTomorrow(
     {
       ...common,
       userId: lesson.studentUserId,
+      actionUrl: `/student/lessons/${lesson.id}`,
       title: 'Aula amanhã',
       message: `Aula com ${lesson.teacherName} em ${when}.`,
       uniqueHash: notificationHash(
@@ -204,7 +208,7 @@ export function lessonNeedsStatus(
       relatedEntityType: 'lesson',
       relatedEntityId: lesson.id,
       actionText: 'Atualizar',
-      actionUrl: `/portal/aulas/${lesson.id}`,
+      actionUrl: `/teacher/lessons/${lesson.id}`,
       uniqueHash: notificationHash(
         lesson.teacherUserId,
         NotificationType.LESSON_STATUS_PENDING,
@@ -228,7 +232,7 @@ export function assignmentDueSoon(
       relatedEntityType: 'assignment',
       relatedEntityId: assignment.id,
       actionText: 'Ver tarefa',
-      actionUrl: `/portal/tarefas/${assignment.id}`,
+      actionUrl: `/student/assignments/${assignment.id}`,
       // Depois do vencimento o aviso certo é o de atraso, não este.
       expiresAt: assignment.dueDate,
       uniqueHash: notificationHash(
@@ -260,7 +264,7 @@ export function assignmentOverdue(
       relatedEntityType: 'assignment',
       relatedEntityId: assignment.id,
       actionText: 'Ver tarefa',
-      actionUrl: `/portal/tarefas/${assignment.id}`,
+      actionUrl: `/student/assignments/${assignment.id}`,
       uniqueHash: notificationHash(
         assignment.studentUserId,
         NotificationType.ASSIGNMENT_OVERDUE,
@@ -284,7 +288,7 @@ export function invitePending(
       relatedEntityType: 'teacherStudent',
       relatedEntityId: invite.id,
       actionText: 'Ver alunos',
-      actionUrl: '/portal/alunos',
+      actionUrl: '/teacher/students?tab=invites',
       uniqueHash: notificationHash(
         invite.teacherUserId,
         NotificationType.STUDENT_INVITE_PENDING,

@@ -24,6 +24,7 @@ import {
 import { CreateScoreContributionDto } from './dto/create-score-contribution.dto';
 import { UpdateScoreContributionDto } from './dto/update-score-contribution.dto';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { ContributionLimitService } from '../shared/contribution-limit.service';
 
 @Injectable()
 export class ScoreUploadsService {
@@ -33,6 +34,7 @@ export class ScoreUploadsService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly activity: ActivityTracker,
+    private readonly limit: ContributionLimitService,
   ) {}
 
   async create(
@@ -40,6 +42,7 @@ export class ScoreUploadsService {
     dto: CreateScoreContributionDto,
     context: RequestContext,
   ) {
+    await this.limit.assertWithinLimit(userId);
     const work = await this.prisma.work.findUnique({
       where: { id: dto.workId },
       select: { id: true, title: true },

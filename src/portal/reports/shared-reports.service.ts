@@ -4,10 +4,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NotificationPriority, NotificationType, Prisma } from '@prisma/client';
+import {
+  NotificationPriority,
+  NotificationType,
+  Prisma,
+  ReportVisibility,
+  SchoolActivityAction,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { toJsonInput } from '../../common/utils/json.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SchoolActivitiesService } from '../school-activities/school-activities.service';
 import {
   CreateReportCommentDto,
   ListSharedReportsQueryDto,
@@ -27,6 +34,8 @@ const SHARED_LIST_SELECT = {
   periodLabel: true,
   selectedSections: true,
   allowComments: true,
+  visibility: true,
+  sharedAt: true,
   isActive: true,
   viewCount: true,
   lastViewedAt: true,
@@ -54,6 +63,7 @@ export class SharedReportsService {
     private readonly prisma: PrismaService,
     private readonly reports: ProgressReportService,
     private readonly notifications: NotificationsService,
+    private readonly activities: SchoolActivitiesService,
   ) {}
 
   /**
@@ -85,6 +95,7 @@ export class SharedReportsService {
       ? new Date(Date.now() + dto.expiresInDays * 24 * 60 * 60 * 1000)
       : null;
 
+    const visibility = dto.visibility ?? ReportVisibility.SHARED;
     const shared = await this.prisma.sharedProgressReport.create({
       data: {
         teacherId: generated.teacher.id,
@@ -104,24 +115,117 @@ export class SharedReportsService {
         // sobre uma pessoa, muitas vezes menor de idade.
         isPublic: false,
         isActive: true,
+        visibility,
+        sharedAt: visibility === ReportVisibility.SHARED ? new Date() : null,
         expiresAt,
       },
       select: SHARED_LIST_SELECT,
     });
 
-    await this.notifications.notify({
-      userId: generated.student.userId,
-      type: NotificationType.TEACHER_GAVE_FEEDBACK,
-      priority: NotificationPriority.HIGH,
-      title: 'Novo relatório de progresso',
-      message: `${generated.teacher.name} compartilhou "${dto.title}" com você.`,
-      actionText: 'Ver relatório',
-      actionUrl: `/student/progress/${shared.id}`,
-      relatedEntityType: 'sharedProgressReport',
-      relatedEntityId: shared.id,
+    // Relatório só do professor é acompanhamento: o aluno não é avisado.
+    if (visibility === ReportVisibility.SHARED) {
+      await this.notifyShared(
+        generated.student.userId,
+        generated.teacher.name,
+        dto.title,
+        shared.id,
+      );
+    }
+
+    await this.activities.record({
+      userId: teacherUserId,
+      userType: 'teacher',
+      action: SchoolActivityAction.REPORT_SHARED,
+      entityType: 'report',
+      entityId: shared.id,
+      entityName: dto.title,
+      title:
+        visibility === ReportVisibility.SHARED
+          ? `Compartilhou um relatório com ${generated.student.name}`
+          : `Gerou um relatório de ${generated.student.name} só para você`,
     });
 
     return shared;
+  }
+
+  /**
+   * Compartilha com o aluno um relatório que era só do professor (04/10/2026).
+   * O conteúdo não muda — é o mesmo retrato do período, gerado no servidor.
+   */
+  async publish(teacherUserId: string, reportId: string) {
+    const report = await this.prisma.sharedProgressReport.findUnique({
+      where: { id: reportId },
+      select: {
+        id: true,
+        title: true,
+        visibility: true,
+        teacher: {
+          select: {
+            userId: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+        },
+        student: { select: { userId: true } },
+      },
+    });
+    if (!report || report.teacher.userId !== teacherUserId) {
+      throw new NotFoundException('Relatório não encontrado');
+    }
+    if (report.visibility === ReportVisibility.SHARED) {
+      return this.prisma.sharedProgressReport.findUniqueOrThrow({
+        where: { id: reportId },
+        select: SHARED_LIST_SELECT,
+      });
+    }
+
+    const updated = await this.prisma.sharedProgressReport.update({
+      where: { id: reportId },
+      data: {
+        visibility: ReportVisibility.SHARED,
+        sharedAt: new Date(),
+        isActive: true,
+      },
+      select: SHARED_LIST_SELECT,
+    });
+    const name = [report.teacher.user.firstName, report.teacher.user.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    await this.notifyShared(
+      report.student.userId,
+      name || 'Seu professor',
+      report.title,
+      reportId,
+    );
+    await this.activities.record({
+      userId: teacherUserId,
+      userType: 'teacher',
+      action: SchoolActivityAction.REPORT_SHARED,
+      entityType: 'report',
+      entityId: reportId,
+      entityName: report.title,
+      title: 'Compartilhou um relatório que era só seu',
+    });
+    return updated;
+  }
+
+  private notifyShared(
+    studentUserId: string,
+    teacherName: string,
+    title: string,
+    reportId: string,
+  ) {
+    return this.notifications.notify({
+      userId: studentUserId,
+      type: NotificationType.PROGRESS_REPORT_SHARED,
+      priority: NotificationPriority.HIGH,
+      title: 'Novo relatório de progresso',
+      message: `${teacherName} compartilhou "${title}" com você.`,
+      actionText: 'Ver relatório',
+      actionUrl: `/student/progress/${reportId}`,
+      relatedEntityType: 'sharedProgressReport',
+      relatedEntityId: reportId,
+    });
   }
 
   /** Relatórios compartilhados de quem chamou, nos dois papéis. */
@@ -136,11 +240,24 @@ export class SharedReportsService {
       ...(query.studentId && scope.role === 'teacher'
         ? { studentId: query.studentId }
         : {}),
+      ...(query.visibility && scope.role === 'teacher'
+        ? { visibility: query.visibility }
+        : {}),
+      ...(query.from || query.to
+        ? {
+            createdAt: {
+              ...(query.from ? { gte: new Date(query.from) } : {}),
+              ...(query.to ? { lt: new Date(query.to) } : {}),
+            },
+          }
+        : {}),
       // O aluno não vê o que foi desativado nem o que expirou; o professor vê,
       // porque é ele quem administra os próprios compartilhamentos.
       ...(scope.role === 'student'
         ? {
             isActive: true,
+            // O que é só do professor nunca aparece para o aluno.
+            visibility: ReportVisibility.SHARED,
             OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }],
           }
         : {}),
@@ -190,6 +307,10 @@ export class SharedReportsService {
     }
 
     if (isStudent) {
+      // "Só professor" responde como inexistente: nem a existência vaza.
+      if (report.visibility !== ReportVisibility.SHARED) {
+        throw new NotFoundException('Relatório não encontrado');
+      }
       this.assertAvailable(report);
 
       await this.prisma.sharedProgressReport.update({
@@ -348,6 +469,17 @@ export class SharedReportsService {
       relatedEntityId: report.id,
     });
 
+    await this.activities.record({
+      userId: studentUserId,
+      userType: 'student',
+      action: SchoolActivityAction.REPORT_COMMENTED,
+      entityType: 'report',
+      entityId: report.id,
+      entityName: report.title,
+      title: `Comentou o relatório "${report.title}"`,
+      description: dto.content.trim().slice(0, 200),
+    });
+
     return comment;
   }
 
@@ -385,6 +517,7 @@ export class SharedReportsService {
       where: { id: reportId },
       select: {
         id: true,
+        visibility: true,
         teacher: { select: { userId: true } },
         student: { select: { userId: true } },
       },
@@ -392,7 +525,9 @@ export class SharedReportsService {
 
     if (
       !report ||
-      (report.teacher.userId !== userId && report.student.userId !== userId)
+      (report.teacher.userId !== userId && report.student.userId !== userId) ||
+      (report.student.userId === userId &&
+        report.visibility !== ReportVisibility.SHARED)
     ) {
       throw new NotFoundException('Relatório não encontrado');
     }

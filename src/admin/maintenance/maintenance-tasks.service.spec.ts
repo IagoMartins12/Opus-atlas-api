@@ -15,7 +15,11 @@ describe('MaintenanceTasksService', () => {
   let textIndex: { ensureAll: jest.Mock };
   let backup: { executar: jest.Mock };
   let backupSettings: { ler: jest.Mock; listarColecoes: jest.Mock };
-  let backupHistory: { iniciar: jest.Mock; concluir: jest.Mock; falhar: jest.Mock };
+  let backupHistory: {
+    iniciar: jest.Mock;
+    concluir: jest.Mock;
+    falhar: jest.Mock;
+  };
   let backupStorage: { diagnostico: string | null };
 
   const model = () => ({
@@ -74,9 +78,10 @@ describe('MaintenanceTasksService', () => {
     };
 
     backupSettings = {
-      ler: jest
-        .fn()
-        .mockResolvedValue({ keep: 3, collections: [{ name: 'Work', limit: 10 }] }),
+      ler: jest.fn().mockResolvedValue({
+        keep: 3,
+        collections: [{ name: 'Work', limit: 10 }],
+      }),
       listarColecoes: jest
         .fn()
         .mockResolvedValue([{ name: 'Work', model: 'Work', documents: 10 }]),
@@ -363,7 +368,10 @@ describe('MaintenanceTasksService', () => {
         service.run('database.backup', { dryRun: false }),
       ).rejects.toThrow('bucket recusou');
 
-      expect(backupHistory.falhar).toHaveBeenCalledWith('run1', 'bucket recusou');
+      expect(backupHistory.falhar).toHaveBeenCalledWith(
+        'run1',
+        'bucket recusou',
+      );
     });
   });
 });

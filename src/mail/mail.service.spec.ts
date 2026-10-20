@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail.service';
 
 const EVIL = '<a href="https://phishing.example">Clique aqui</a>';
@@ -8,9 +9,15 @@ describe('MailService — dado do usuário no HTML', () => {
   let send: jest.SpyInstance;
 
   beforeEach(() => {
-    service = new MailService({
-      get: () => undefined,
-    } as unknown as ConfigService);
+    service = new MailService(
+      {
+        get: () => undefined,
+      } as unknown as ConfigService,
+      {
+        user: { findUnique: jest.fn().mockResolvedValue(null) },
+        newsletterSubscriber: { findUnique: jest.fn().mockResolvedValue(null) },
+      } as unknown as PrismaService,
+    );
     send = jest.spyOn(service, 'send').mockResolvedValue(undefined);
   });
 

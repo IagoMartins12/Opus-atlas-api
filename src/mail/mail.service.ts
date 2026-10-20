@@ -1,8 +1,15 @@
-import { escapeHtml } from '../common/utils/html.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BillingPeriod, PlanType } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  renderEmail,
+  type EmailLanguage,
+  type EmailSpec,
+} from './email-layout';
+import * as templates from './templates';
+import type { Say, TemplateContext } from './templates';
 
 interface SendMailInput {
   to: string;
@@ -39,27 +46,6 @@ export interface SendMailResult {
   error?: string;
 }
 
-const GOLD = '#d4af37';
-
-const PLAN_NAMES: Record<PlanType, string> = {
-  FREE: 'Gratuito',
-  PLUS: 'Plus',
-  MENTOR: 'Mentor',
-  MAESTRO: 'Maestro',
-};
-
-const BILLING_PERIOD_NAMES: Record<BillingPeriod, string> = {
-  MONTHLY: 'Mensal',
-  YEARLY: 'Anual',
-};
-
-function formatBRL(amount: number): string {
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  }).format(amount);
-}
-
 /**
  * Envio de e-mails transacionais via SMTP (nodemailer) — mesmo provedor/credenciais
  * já usados pelo front (`Classical-Music/src/app/libs/newsletter/email.ts`), lido
@@ -90,7 +76,10 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private getTransporter(): nodemailer.Transporter | null {
     const user = this.configService.get<string>('mail.user');
@@ -186,69 +175,77 @@ export class MailService {
     return `${fromName.replace(/[<>"\r\n]/g, '')} <${address}>`;
   }
 
-  private wrap(bodyHtml: string): string {
-    return `
-      <div style="background:#0d0d0d; padding:32px 16px; font-family: Arial, Helvetica, sans-serif;">
-        <div style="max-width:520px; margin:0 auto; background:#1a1a1a; border:1px solid rgba(212,175,55,0.3); border-radius:12px; padding:32px; color:#e5e5e5;">
-          <p style="text-align:center; color:${GOLD}; font-size:20px; font-weight:bold; margin:0 0 24px;">🎵 Opus Atlas</p>
-          ${bodyHtml}
-          <p style="text-align:center; color:#777; font-size:12px; margin-top:32px;">
-            Se você não solicitou esta ação, pode ignorar este e-mail com segurança.
-          </p>
-        </div>
-      </div>
-    `;
+  /** Base URL of the site: images live in its `public/email`, links point to it. */
+  private get site(): string {
+    return (
+      this.configService.get<string>('mail.assetsBaseUrl') ??
+      'http://localhost:3000'
+    ).replace(/\/$/, '');
+  }
+
+  /**
+   * The language the recipient chose on the site (`User.language`), else
+   * the one of their newsletter subscription; Portuguese otherwise. A failed
+   * lookup never holds an email back.
+   */
+  private async languageOf(to: string): Promise<EmailLanguage> {
+    try {
+      const email = to.trim().toLowerCase();
+      const user = await this.prisma.user.findUnique({
+        where: { email },
+        select: { language: true },
+      });
+      if (user?.language) return user.language === 'en' ? 'en' : 'pt';
+      const subscriber = await this.prisma.newsletterSubscriber.findUnique({
+        where: { email },
+        select: { language: true },
+      });
+      return subscriber?.language?.startsWith('en') ? 'en' : 'pt';
+    } catch {
+      return 'pt';
+    }
+  }
+
+  /**
+   * Renders the D layout in the recipient's language and returns the
+   * message, with its plain-text twin. The text comes from a template in
+   * `./templates`, which writes both versions of each line side by side.
+   */
+  private async compose(
+    to: string,
+    build: (ctx: TemplateContext) => EmailSpec,
+    extra: Pick<SendMailInput, 'replyTo' | 'headers'> = {},
+  ): Promise<SendMailInput> {
+    const language = await this.languageOf(to);
+    const say: Say = (pt, en) => (language === 'en' ? en : pt);
+    const { subject, html, text } = renderEmail(
+      {
+        ...build({ say, language, site: this.site, now: new Date() }),
+        language,
+      },
+      this.site,
+    );
+    return { to, subject, html, text, ...extra };
   }
 
   async sendAccountConfirmationEmail(
     to: string,
     data: { firstName: string; confirmationUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Confirme sua conta</h2>
-      <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, falta pouco para começar sua jornada musical.</p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.confirmationUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Confirmar e-mail
-        </a>
-      </div>
-      <p style="text-align:center; color:#aaa; font-size:13px;">Este link expira em 24 horas.</p>
-    `);
-
-    await this.send({
-      to,
-      subject: '🎵 Confirme sua conta - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.accountConfirmation(data, ctx)),
+    );
   }
 
-  /**
-   * Boas-vindas de quem entrou pela primeira vez com o Google. A conta nasce
-   * confirmada — o Google já provou o e-mail —, então não há confirmação a
-   * mandar; o link leva a completar o perfil.
-   */
   async sendWelcomeEmail(
     to: string,
     data: { firstName: string; onboardingUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Bem-vindo(a) ao Opus Atlas</h2>
-      <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, sua conta foi criada com o Google e já está pronta.</p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.onboardingUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Completar meu perfil
-        </a>
-      </div>
-    `);
-
-    await this.send({
-      to,
-      subject: '🎵 Bem-vindo(a) ao Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.welcome(data, ctx)),
+    );
   }
 
-  /** Convite para dar aula no Opus Atlas, enviado quando o admin promove a conta. */
   async sendTeacherInvitationEmail(
     to: string,
     data: {
@@ -256,173 +253,101 @@ export class MailService {
       invitedByName: string;
       acceptUrl: string;
       declineUrl: string;
+      /** Plano que vem com o convite (concedido no aceite). */
+      planGrant?: { planName: string; until: string | null };
     },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Convite para professor</h2>
-      <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, ${escapeHtml(data.invitedByName)} convidou você para dar aulas no Opus Atlas.</p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${escapeHtml(data.acceptUrl)}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Aceitar convite
-        </a>
-      </div>
-      <p style="text-align:center;"><a href="${escapeHtml(data.declineUrl)}" style="color:#aaa;">Recusar</a></p>
-      <p style="text-align:center; color:#aaa; font-size:13px;">O convite vale por 30 dias.</p>
-    `);
+    await this.send(
+      await this.compose(to, (ctx) => templates.teacherInvitation(data, ctx)),
+    );
+  }
 
-    await this.send({
-      to,
-      subject: '🎓 Convite para ser professor - Opus Atlas',
-      html,
-    });
+  async sendPortalNotice(
+    to: string,
+    data: {
+      firstName: string;
+      title: string;
+      message: string;
+      actionText?: string | null;
+      actionUrl?: string | null;
+    },
+  ): Promise<SendMailResult> {
+    return this.trySend(
+      await this.compose(to, (ctx) => templates.portalNotice(data, ctx)),
+    );
   }
 
   async sendPasswordResetEmail(
     to: string,
     data: { firstName: string; resetUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Redefinir senha</h2>
-      <p style="text-align:center;">Olá <strong>${escapeHtml(data.firstName)}</strong>, recebemos um pedido para redefinir sua senha.</p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.resetUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Redefinir senha
-        </a>
-      </div>
-      <p style="text-align:center; color:#aaa; font-size:13px;">Este link expira em 1 hora.</p>
-    `);
-
-    await this.send({ to, subject: '🔒 Redefinir senha - Opus Atlas', html });
+    await this.send(
+      await this.compose(to, (ctx) => templates.passwordReset(data, ctx)),
+    );
   }
 
   async sendGoogleAccountResetNotice(
     to: string,
     data: { firstName: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Conta vinculada ao Google</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua conta usa login do Google e não tem senha própria.
-        Para gerenciar sua senha, acesse
-        <a href="https://myaccount.google.com/security" style="color:${GOLD};">as configurações de segurança do Google</a>.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: 'ℹ️ Sua conta usa login do Google - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.googleAccountResetNotice(data, ctx),
+      ),
+    );
   }
 
   async sendPasswordChangedEmail(
     to: string,
     data: { firstName: string; ipAddress: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#22c55e; margin-bottom:16px;">✅ Senha alterada</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua senha foi alterada com sucesso em
-        ${new Date().toLocaleString('pt-BR')} a partir do IP ${escapeHtml(data.ipAddress)}.
-      </p>
-      <p style="text-align:center; color:#f59e0b;">Se não foi você, entre em contato conosco imediatamente.</p>
-    `);
-
-    await this.send({
-      to,
-      subject: '🔒 Senha alterada com sucesso - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.passwordChanged(data, ctx)),
+    );
   }
 
-  /** Enviado para o NOVO e-mail quando a troca é solicitada — o link confirma a troca. */
   async sendEmailChangeRequestEmail(
     to: string,
     data: { firstName: string; confirmationUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Confirme seu novo e-mail</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, recebemos um pedido para usar este endereço como
-        o novo e-mail da sua conta Opus Atlas.
-      </p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.confirmationUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Confirmar novo e-mail
-        </a>
-      </div>
-      <p style="text-align:center; color:#aaa; font-size:13px;">Este link expira em 24 horas.</p>
-    `);
-
-    await this.send({
-      to,
-      subject: '📧 Confirme seu novo e-mail - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.emailChangeRequest(data, ctx)),
+    );
   }
 
   async sendEmailChangedToOldAddress(
     to: string,
     data: { firstName: string; newEmail: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Seu e-mail foi alterado</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, o e-mail da sua conta Opus Atlas foi alterado para
-        <strong>${escapeHtml(data.newEmail)}</strong>. Se não foi você, entre em contato conosco imediatamente.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '⚠️ Seu e-mail foi alterado - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.emailChangedToOldAddress(data, ctx),
+      ),
+    );
   }
 
   async sendEmailChangeConfirmedToNewAddress(
     to: string,
     data: { firstName: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#22c55e; margin-bottom:16px;">✅ E-mail confirmado</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, este e-mail agora é o endereço principal da sua conta Opus Atlas.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '✅ Novo e-mail confirmado - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.emailChangeConfirmedToNewAddress(data, ctx),
+      ),
+    );
   }
 
   async sendAccountDeletedFarewellEmail(
     to: string,
     data: { firstName: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">👋 Até logo!</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua conta Opus Atlas foi excluída com sucesso em
-        ${new Date().toLocaleString('pt-BR')}. Esperamos ver você novamente algum dia.
-      </p>
-      <p style="text-align:center; color:#aaa; font-size:13px;">
-        Se você não solicitou esta exclusão, entre em contato conosco imediatamente em
-        contato@opusatlas.com.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '👋 Até logo da Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.accountDeletedFarewell(data, ctx),
+      ),
+    );
   }
 
-  /** Notificação interna para a equipe de suporte — dispara com `replyTo` do
-   * próprio usuário, para permitir resposta direta pelo cliente de e-mail. */
   async sendContactSupportNotification(data: {
     ticketId: string;
     name: string;
@@ -432,42 +357,24 @@ export class MailService {
     category: string;
     priority: string;
   }): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">📬 Nova mensagem de contato</h2>
-      <p style="color:#aaa; font-size:13px; text-align:center;">Ticket <strong>${escapeHtml(data.ticketId)}</strong> — categoria ${escapeHtml(data.category)}, prioridade ${escapeHtml(data.priority)}</p>
-      <p><strong>Nome:</strong> ${escapeHtml(data.name)}</p>
-      <p><strong>E-mail:</strong> ${escapeHtml(data.email)}</p>
-      <p><strong>Assunto:</strong> ${escapeHtml(data.subject)}</p>
-      <div style="background:#111; padding:16px; border-radius:8px; border-left:3px solid ${GOLD}; margin-top:16px; white-space:pre-wrap;">${escapeHtml(data.message)}</div>
-    `);
-
-    await this.send({
-      to: this.configService.get<string>('mail.supportTo')!,
-      subject: `[${data.ticketId}] ${data.subject}`,
-      html,
-    });
+    await this.send(
+      await this.compose(
+        this.configService.get<string>('mail.supportTo')!,
+        (ctx) => templates.contactSupportNotification(data, ctx),
+        { replyTo: data.email },
+      ),
+    );
   }
 
   async sendContactConfirmationEmail(
     to: string,
     data: { firstName: string; ticketId: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Mensagem recebida!</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, recebemos sua mensagem (ticket <strong>${escapeHtml(data.ticketId)}</strong>)
-        e nossa equipe já foi notificada. Normalmente respondemos em até 24 horas durante dias úteis.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: `Confirmação de contato [${data.ticketId}] - Opus Atlas`,
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.contactConfirmation(data, ctx)),
+    );
   }
 
-  /** Enviado ao inscrever/reinscrever — pede confirmação por double opt-in. */
   async sendNewsletterConfirmationEmail(
     to: string,
     data: {
@@ -476,74 +383,33 @@ export class MailService {
       unsubscribeUrl: string;
     },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Confirme sua inscrição</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, falta um passo para receber nossa newsletter.
-      </p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.confirmationUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Confirmar inscrição
-        </a>
-      </div>
-      <p style="text-align:center; color:#aaa; font-size:13px;">Este link expira em 48 horas.</p>
-      <p style="text-align:center; color:#666; font-size:11px; margin-top:24px;">
-        Não era você? <a href="${data.unsubscribeUrl}" style="color:#888;">Cancelar inscrição</a>
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '📬 Confirme sua inscrição na newsletter - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.newsletterConfirmation(data, ctx),
+      ),
+    );
   }
 
-  /** Enviado depois que o double opt-in é confirmado com sucesso. */
   async sendNewsletterWelcomeEmail(
     to: string,
     data: { firstName: string; unsubscribeUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#22c55e; margin-bottom:16px;">✅ Inscrição confirmada!</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua inscrição na newsletter Opus Atlas está confirmada.
-        Em breve você receberá curiosidades, novidades do catálogo e conteúdo musical selecionado.
-      </p>
-      <p style="text-align:center; color:#666; font-size:11px; margin-top:24px;">
-        <a href="${data.unsubscribeUrl}" style="color:#888;">Cancelar inscrição</a>
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '✅ Inscrição confirmada - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.newsletterWelcome(data, ctx), {
+        headers: { 'List-Unsubscribe': `<${data.unsubscribeUrl}>` },
+      }),
+    );
   }
 
   async sendNewsletterUnsubscribeConfirmationEmail(
     to: string,
     data: { firstName: string; resubscribeUrl: string },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Inscrição cancelada</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua inscrição na newsletter Opus Atlas foi cancelada.
-        Sentiremos sua falta!
-      </p>
-      <div style="text-align:center; margin:32px 0;">
-        <a href="${data.resubscribeUrl}" style="background:${GOLD}; color:#000; text-decoration:none; padding:14px 28px; border-radius:8px; font-weight:bold; display:inline-block;">
-          Reinscrever-se
-        </a>
-      </div>
-    `);
-
-    await this.send({
-      to,
-      subject: 'Inscrição cancelada - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.newsletterUnsubscribeConfirmation(data, ctx),
+      ),
+    );
   }
 
   async sendPaymentApprovedEmail(
@@ -555,35 +421,20 @@ export class MailService {
       amount: number;
     },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#22c55e; margin-bottom:16px;">✅ Pagamento aprovado</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, seu pagamento de <strong>${formatBRL(data.amount)}</strong>
-        para o plano <strong>${PLAN_NAMES[data.planType]}</strong>${data.billingPeriod ? ` (${BILLING_PERIOD_NAMES[data.billingPeriod]})` : ''}
-        foi confirmado. Sua assinatura já está ativa!
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: '✅ Pagamento aprovado - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.paymentApproved(data, ctx)),
+    );
   }
 
   async sendSubscriptionCancelledEmail(
     to: string,
     data: { firstName: string; planType: PlanType },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Assinatura cancelada</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua assinatura do plano <strong>${PLAN_NAMES[data.planType]}</strong>
-        foi cancelada. Você continua com acesso até o fim do período já pago.
-      </p>
-    `);
-
-    await this.send({ to, subject: 'Assinatura cancelada - Opus Atlas', html });
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.subscriptionCancelled(data, ctx),
+      ),
+    );
   }
 
   async sendPlanChangedEmail(
@@ -595,24 +446,9 @@ export class MailService {
       changeType: 'UPGRADE' | 'DOWNGRADE';
     },
   ): Promise<void> {
-    const isUpgrade = data.changeType === 'UPGRADE';
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:${isUpgrade ? '#22c55e' : '#fff'}; margin-bottom:16px;">
-        ${isUpgrade ? '🚀 Upgrade confirmado' : 'Downgrade agendado'}
-      </h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua troca de plano de <strong>${PLAN_NAMES[data.fromPlan]}</strong>
-        para <strong>${PLAN_NAMES[data.toPlan]}</strong> foi ${isUpgrade ? 'confirmada' : 'agendada para o fim do ciclo atual'}.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: isUpgrade
-        ? '🚀 Upgrade confirmado - Opus Atlas'
-        : 'Downgrade agendado - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.planChanged(data, ctx)),
+    );
   }
 
   async sendRenewalReminderEmail(
@@ -624,39 +460,62 @@ export class MailService {
       amount: number;
     },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#fff; margin-bottom:16px;">Sua assinatura renova em breve</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, sua assinatura <strong>${PLAN_NAMES[data.planType]}</strong>
-        será renovada automaticamente em <strong>${data.renewalDate.toLocaleDateString('pt-BR')}</strong>,
-        no valor de <strong>${formatBRL(data.amount)}</strong>.
-      </p>
-    `);
-
-    await this.send({
-      to,
-      subject: 'Sua assinatura renova em breve - Opus Atlas',
-      html,
-    });
+    await this.send(
+      await this.compose(to, (ctx) => templates.renewalReminder(data, ctx)),
+    );
   }
 
   async sendTrialExpiringEmail(
     to: string,
-    data: { firstName: string; planType: PlanType; daysRemaining: number },
+    data: {
+      firstName: string;
+      planType: PlanType;
+      daysRemaining: number;
+      chargeDate: Date;
+      amount: number;
+    },
   ): Promise<void> {
-    const html = this.wrap(`
-      <h2 style="text-align:center; color:#f59e0b; margin-bottom:16px;">⏳ Seu período de teste está acabando</h2>
-      <p style="text-align:center;">
-        Olá <strong>${escapeHtml(data.firstName)}</strong>, seu teste gratuito do plano <strong>${PLAN_NAMES[data.planType]}</strong>
-        expira em <strong>${data.daysRemaining} dia(s)</strong>. Assine para continuar aproveitando todos os recursos.
-      </p>
-    `);
+    await this.send(
+      await this.compose(to, (ctx) => templates.trialExpiring(data, ctx)),
+    );
+  }
 
-    await this.send({
-      to,
-      subject: '⏳ Seu período de teste está acabando - Opus Atlas',
-      html,
-    });
+  async sendTrialStartedEmail(
+    to: string,
+    data: {
+      firstName: string;
+      planType: PlanType;
+      chargeDate: Date;
+      amount: number;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.trialStarted(data, ctx)),
+    );
+  }
+
+  async sendPaymentFailedEmail(
+    to: string,
+    data: {
+      firstName: string;
+      planType: PlanType;
+      amount: number;
+      graceEndsAt: Date;
+      afterTrial: boolean;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.paymentFailed(data, ctx)),
+    );
+  }
+
+  async sendSubscriptionEndedEmail(
+    to: string,
+    data: { firstName: string; planType: PlanType },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.subscriptionEnded(data, ctx)),
+    );
   }
 }
 

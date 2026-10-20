@@ -67,7 +67,7 @@ describe('SearchService', () => {
   });
 
   it('admin vê todos os estados, direto do banco', async () => {
-    await service.searchArticles({ q: 'x' } as never, { sub: 'u1', role: 1 });
+    await service.searchArticles({ q: 'x' } as never, { sub: 'u1', role: 2 });
 
     expect(
       prisma.blogArticle.findMany.mock.calls[0][0].where,

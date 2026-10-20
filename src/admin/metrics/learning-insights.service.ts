@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { topPorContagem } from './raw-aggregate';
 import { buildInsight, Insight, percent } from './insight';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -78,13 +79,13 @@ export class LearningInsightsService {
       this.prisma.wantToLearn.count(),
     ]);
 
-    const worst = await this.prisma.wantToLearn.groupBy({
-      by: ['workId'],
-      where: { addedAt: { lt: cutoff } },
-      _count: { _all: true },
-      orderBy: { _count: { workId: 'desc' } },
-      take: EVIDENCE,
-    });
+    // Contado e cortado no banco (ver `topPorContagem`).
+    const worst = (
+      await topPorContagem(this.prisma, 'WantToLearn', 'workId', {
+        limite: EVIDENCE,
+        match: { addedAt: { $lt: { $date: cutoff.toISOString() } } },
+      })
+    ).map((r) => ({ workId: r.id, _count: { _all: r.n } }));
 
     const works = await this.prisma.work.findMany({
       where: { id: { in: worst.map((row) => row.workId) } },
@@ -185,12 +186,9 @@ export class LearningInsightsService {
    */
   private async repertoireBreadth(): Promise<Insight> {
     const [porObra, totalObras] = await Promise.all([
-      this.prisma.learned.groupBy({
-        by: ['workId'],
-        _count: { _all: true },
-        orderBy: { _count: { workId: 'desc' } },
-        take: 100,
-      }),
+      topPorContagem(this.prisma, 'Learned', 'workId', { limite: 100 }).then(
+        (l) => l.map((r) => ({ workId: r.id, _count: { _all: r.n } })),
+      ),
       this.prisma.work.count(),
     ]);
 

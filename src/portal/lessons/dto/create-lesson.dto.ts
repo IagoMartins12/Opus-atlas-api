@@ -15,7 +15,18 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+
+export class MovedOccurrenceDto {
+  @ApiProperty({ description: 'O início original da ocorrência.' })
+  @IsDateString()
+  from: string;
+
+  @ApiProperty({ description: 'O novo início.' })
+  @IsDateString()
+  to: string;
+}
 
 export class CreateLessonDto {
   @ApiProperty({
@@ -76,6 +87,17 @@ export class CreateLessonDto {
   @IsMongoId({ each: true })
   @ArrayMaxSize(50)
   worksIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Compositores em foco, com ou sem obra (aula de escuta, de história).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  @ArrayMaxSize(20)
+  composerIds?: string[];
 
   @ApiPropertyOptional({ type: [String], description: 'Partituras usadas.' })
   @IsOptional()
@@ -152,6 +174,28 @@ export class CreateLessonDto {
   recurrenceEnd?: string;
 
   @ApiPropertyOptional({
+    type: [String],
+    description: 'Ocorrências da série a pular (o início de cada uma, em UTC).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsDateString({}, { each: true })
+  @ArrayMaxSize(60)
+  skipOccurrences?: string[];
+
+  @ApiPropertyOptional({
+    type: [MovedOccurrenceDto],
+    description:
+      'Ocorrências da série movidas para outro horário (a que chocava vai para a sugestão).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MovedOccurrenceDto)
+  @ArrayMaxSize(60)
+  moveOccurrences?: MovedOccurrenceDto[];
+
+  @ApiPropertyOptional({
     default: false,
     description:
       'Cria mesmo havendo conflito de horário. A resposta lista os conflitos aceitos.',
@@ -160,4 +204,48 @@ export class CreateLessonDto {
   @Type(() => Boolean)
   @IsBoolean()
   force?: boolean;
+}
+
+/**
+ * Simulação da marcação: o mesmo corpo da criação, sem gravar nada. A tela de
+ * criação chama a cada mudança (com espera) para mostrar o que a agenda diz.
+ */
+export class CheckLessonDto {
+  @ApiProperty() @IsMongoId() studentId: string;
+  @ApiProperty() @IsDateString() scheduledAt: string;
+
+  @ApiPropertyOptional({ default: 60 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(15)
+  @Max(480)
+  duration?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  location?: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  isRecurring?: boolean;
+
+  @ApiPropertyOptional({ enum: RecurrenceType })
+  @IsOptional()
+  @IsEnum(RecurrenceType)
+  recurrenceType?: RecurrenceType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  recurrenceEnd?: string;
+
+  @ApiPropertyOptional({ description: 'Remarcação: a própria aula não conta.' })
+  @IsOptional()
+  @IsMongoId()
+  excludeLessonId?: string;
 }

@@ -56,8 +56,11 @@ export const PLAN_FEATURES: Record<PlanType, PlanFeatureSet> = {
     alreadyLearned: true,
     basicProgress: true,
     gamificationXP: true,
-    uploadLimit: 3,
-    maxPerformanceVideos: 3,
+    // Envios ao acervo: compositores, obras e partituras somados
+    // (`ContributionLimitService`). Os números estão também na página de
+    // planos do front (`conteudo/planos.ts`, `LIMITES`) — mude os dois.
+    uploadLimit: 20,
+    maxPerformanceVideos: 4,
     smartRecommendations: false,
     aiAssistant: false,
     weeklyGoals: false,

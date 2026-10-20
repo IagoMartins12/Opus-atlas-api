@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAnnotationDto } from './dto/create-annotation.dto';
 import { ListAnnotationsQueryDto } from './dto/list-annotations-query.dto';
 import { UpdateAnnotationDto } from './dto/update-annotation.dto';
+import { NOT_HIDDEN } from '../../common/database/optional-fields';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 
 const AUTHOR_SELECT = {
@@ -98,7 +99,17 @@ export class AnnotationsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
+    // Others see only public notes that no grave report took down; the
+    // author sees all of their own.
+    const visible: Prisma.WorkAnnotationWhereInput = {
+      OR: [
+        { isPublic: true, ...NOT_HIDDEN },
+        ...(currentUserId ? [{ userId: currentUserId }] : []),
+      ],
+    };
+
     const where: Prisma.WorkAnnotationWhereInput = {
+      AND: [visible],
       ...(workId ? { workId } : {}),
       ...(category ? { category } : {}),
       ...(difficulty ? { difficulty } : {}),
@@ -179,7 +190,9 @@ export class AnnotationsService {
       throw new NotFoundException('Anotação não encontrada');
     }
 
-    if (!annotation.isPublic && annotation.userId !== currentUserId) {
+    // Private or held after a report: only its author can open it.
+    const visible = annotation.isPublic && !annotation.isHidden;
+    if (!visible && annotation.userId !== currentUserId) {
       throw new NotFoundException('Anotação não encontrada');
     }
 
@@ -266,10 +279,10 @@ export class AnnotationsService {
   async vote(id: string, userId: string, isHelpful: boolean) {
     const annotation = await this.prisma.workAnnotation.findUnique({
       where: { id },
-      select: { id: true, userId: true, isPublic: true },
+      select: { id: true, userId: true, isPublic: true, isHidden: true },
     });
 
-    if (!annotation) {
+    if (!annotation || annotation.isHidden) {
       throw new NotFoundException('Anotação não encontrada');
     }
 

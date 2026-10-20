@@ -52,11 +52,18 @@ import type { PrismaService } from '../prisma/prisma.service';
  * isto é passo de implantação, com a aplicação parada — não algo para rodar sob
  * tráfego.
  *
+ * **E os vazios.** Nessa janela o `db push` cria o único comum, que trata
+ * campo ausente como valor: com duas contas sem `username` (ou dois
+ * pagamentos sem `mpPaymentId`), a criação falha no meio do push. Por isso,
+ * antes do push, cada campo opcional único vazio recebe um marcador
+ * temporário e único por documento (`__dbpush__:<_id>` nas strings, o
+ * próprio `_id` nos ObjectId), e depois dos índices parciais os marcadores
+ * saem. Eles são reconhecíveis: se o script cair no meio, rodar de novo os
+ * limpa.
+ *
  * Uso:  APP_ENV=local npm run prisma:push
  *       APP_ENV=prd   node dist/scripts/db-push.js
  */
-
-const COLLECTION = 'newsletter_subscribers';
 
 /**
  * Tira da frente os índices que vão conflitar.
@@ -74,7 +81,7 @@ async function derrubarConflitantes(prisma: PrismaClient): Promise<string[]> {
   for (const spec of PARTIAL_UNIQUE_INDEXES) {
     try {
       await prisma.$runCommandRaw({
-        dropIndexes: COLLECTION,
+        dropIndexes: spec.collection,
         index: spec.name,
       });
       derrubados.push(spec.name);
@@ -93,6 +100,52 @@ async function derrubarConflitantes(prisma: PrismaClient): Promise<string[]> {
   return derrubados;
 }
 
+const MARCADOR = '__dbpush__:';
+
+const vazio = (field: string) => ({
+  $or: [{ [field]: { $exists: false } }, { [field]: null }],
+});
+
+/** Preenche os vazios com um marcador único por documento. */
+async function marcarVazios(prisma: PrismaClient): Promise<number> {
+  let total = 0;
+  for (const spec of PARTIAL_UNIQUE_INDEXES) {
+    const valor =
+      spec.type === 'objectId'
+        ? '$_id'
+        : { $concat: [MARCADOR, { $toString: '$_id' }] };
+    const r = (await prisma.$runCommandRaw({
+      update: spec.collection,
+      updates: [
+        {
+          q: vazio(spec.field),
+          u: [{ $set: { [spec.field]: valor } }],
+          multi: true,
+        },
+      ],
+    })) as { nModified?: number };
+    total += r.nModified ?? 0;
+  }
+  return total;
+}
+
+/** Tira os marcadores — também os que uma execução interrompida deixou. */
+async function limparMarcadores(prisma: PrismaClient): Promise<number> {
+  let total = 0;
+  for (const spec of PARTIAL_UNIQUE_INDEXES) {
+    const q =
+      spec.type === 'objectId'
+        ? { $expr: { $eq: [`$${spec.field}`, '$_id'] } }
+        : { [spec.field]: { $regex: `^${MARCADOR}` } };
+    const r = (await prisma.$runCommandRaw({
+      update: spec.collection,
+      updates: [{ q, u: { $unset: { [spec.field]: '' } }, multi: true }],
+    })) as { nModified?: number };
+    total += r.nModified ?? 0;
+  }
+  return total;
+}
+
 async function main(): Promise<void> {
   const arquivoEnv = envFilePath();
   const prisma = new PrismaClient();
@@ -105,6 +158,12 @@ async function main(): Promise<void> {
         ? `     ${derrubados.length} derrubado(s): ${derrubados.join(', ')}`
         : '     nenhum (nada a fazer)',
     );
+
+    const marcados = await marcarVazios(prisma);
+    if (marcados > 0)
+      console.log(
+        `     ${marcados} campo(s) único(s) vazio(s) marcado(s) até o fim`,
+      );
 
     await prisma.$disconnect();
 
@@ -124,7 +183,8 @@ async function main(): Promise<void> {
     if (push.status !== 0) {
       throw new Error(
         'O `prisma db push` falhou. Os índices parciais e de texto NÃO foram ' +
-          'recriados — rode este comando de novo depois de resolver o erro acima.',
+          'recriados e os marcadores dos campos vazios continuam no banco — ' +
+          'rode este comando de novo depois de resolver o erro acima.',
       );
     }
 
@@ -137,6 +197,9 @@ async function main(): Promise<void> {
       const comoService = prismaDepois as unknown as PrismaService;
 
       await new PartialUniqueIndexesService(comoService).ensurePartialIndexes();
+      const limpos = await limparMarcadores(prismaDepois);
+      if (limpos > 0)
+        console.log(`     ${limpos} marcador(es) temporário(s) removido(s)`);
 
       const relatorio = await new TextIndexService(comoService).ensureAll();
 

@@ -5,6 +5,8 @@ import {
   StudentInviteStatus,
   UserType,
 } from '@prisma/client';
+import { STUDY_HORIZONS, type StudyHorizon } from './study-horizon';
+import { LIST_VIEWS, type ListView } from './list-view';
 import { UserInstrumentDto } from './user-instrument.dto';
 import {
   StudentSectionDto,
@@ -49,8 +51,18 @@ export class ProfileAccountDto {
   @ApiPropertyOptional({ nullable: true }) favoriteEpochId: string | null;
   @ApiProperty({ enum: DifficultyLevel }) experienceLevel: DifficultyLevel;
   @ApiPropertyOptional({ nullable: true }) practiceTimePerWeek: number | null;
+  @ApiPropertyOptional({ nullable: true, enum: STUDY_HORIZONS })
+  studyHorizon: StudyHorizon | null;
   @ApiProperty() profilePublic: boolean;
   @ApiProperty() showLocation: boolean;
+  @ApiPropertyOptional({ nullable: true, enum: LIST_VIEWS })
+  listView: ListView | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['pt', 'en'],
+    description: 'O idioma escolhido no site; `null` até a primeira escolha.',
+  })
+  language: string | null;
   @ApiProperty({ enum: PlanType }) currentPlan: PlanType;
   @ApiPropertyOptional({ nullable: true }) planExpiresAt: Date | null;
   @ApiProperty() isTrialActive: boolean;
@@ -59,9 +71,16 @@ export class ProfileAccountDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'Professor aprovado pelo admin. `null` para quem não é professor.',
+      'Professor aprovado pelo admin (selo; libera editar o catálogo). `null` para quem não é professor.',
   })
   teacherVerified: boolean | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Portal do professor liberado: perfil de professor ativo (assinante Mentor/Maestro na hora; convidado depois de aceitar). Não depende da aprovação. `null` para quem não é professor.',
+  })
+  teacherPortal: boolean | null;
 
   @ApiPropertyOptional({
     nullable: true,

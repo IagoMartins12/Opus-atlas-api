@@ -9,6 +9,13 @@ export class WorkFilterOptionsResponseDto {
   @ApiProperty({ type: [WorkFilterOptionItemDto] })
   instruments: WorkFilterOptionItemDto[];
 
+  @ApiProperty({
+    type: [WorkFilterOptionItemDto],
+    description:
+      'Formações (orquestra, coro, quarteto…), por número de obras. Ficam fora de `instruments`.',
+  })
+  ensembles: WorkFilterOptionItemDto[];
+
   @ApiProperty({ type: [WorkFilterOptionItemDto] })
   epochs: WorkFilterOptionItemDto[];
 

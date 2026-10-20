@@ -1,6 +1,16 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { LessonStatus, Prisma } from '@prisma/client';
+import {
+  LessonRequestStatus,
+  LessonStatus,
+  Prisma,
+  StudentInviteStatus,
+} from '@prisma/client';
+import { localDate, zonedDate } from '../../common/utils/time-zone';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AvailabilityService } from '../availability/availability.service';
+import { weekStartOf } from '../lessons/schedule-rules';
+import { PracticeService } from '../practice/practice.service';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
 
 /** Quantos itens cada lista do painel traz. */
@@ -10,6 +20,19 @@ const STUDENTS_LIMIT = 20;
 const STUDY_LIMIT = 10;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** O aluno ainda não tem fuso próprio: o do Brasil. */
+const STUDENT_TIME_ZONE = 'America/Sao_Paulo';
+/** Até quanto tempo atrás uma aula sem desfecho ainda aparece no painel. */
+const PENDING_OUTCOME_DAYS = 60;
+/** Quantos dias de aulas à frente formam o "repertório em estudo". */
+const REPERTOIRE_DAYS = 30;
+/** Convite pendente há mais que isto vira sinal de atenção. */
+const STALE_INVITE_DAYS = 5;
+/** A partir de quantas aulas o aluno "devia" ter um relatório. */
+const REPORT_AFTER_LESSONS = 8;
+/** Relatório mais velho que isto conta como "sem relatório recente". */
+const REPORT_STALE_DAYS = 40;
 
 /** Janela que define "aluno com atividade recente". */
 const RECENT_ACTIVITY_DAYS = 30;
@@ -65,6 +88,10 @@ export type WeeklyLessonRow = {
 
 export interface WeeklyScheduleDay {
   date: Date;
+  /** O dia no fuso do professor, `AAAA-MM-DD`. */
+  localDate: string;
+  /** Horas livres do dia em minutos; `null` sem agenda declarada. */
+  freeMinutes: number | null;
   /** 0 = domingo. O nome do dia é decisão de quem desenha a tela. */
   weekday: number;
   lessons: Array<{
@@ -81,7 +108,12 @@ export interface WeeklyScheduleDay {
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly availability: AvailabilityService,
+    private readonly practice: PracticeService,
+    private readonly subscriptions: SubscriptionsService,
+  ) {}
 
   /**
    * Painel de quem chamou.
@@ -93,9 +125,57 @@ export class DashboardService {
   async getDashboard(userId: string, query: DashboardQueryDto) {
     const scope = await this.resolveScope(userId, query.as);
 
-    return scope.role === 'teacher'
-      ? this.teacherDashboard(scope.id)
-      : this.studentDashboard(scope.id, userId);
+    if (scope.role !== 'teacher') {
+      return this.studentDashboard(scope.id, userId);
+    }
+
+    const [dashboard, plan] = await Promise.all([
+      this.teacherDashboard(scope.id, scope.timeZone, scope.onboardedAt),
+      this.teacherPlan(userId, scope.id),
+    ]);
+    return { ...dashboard, plan };
+  }
+
+  /**
+   * O plano e as vagas de aluno, para a casca do portal mostrar "3 de 7" e
+   * abrir a troca de plano. Conta como o limite conta (RN-1): só vínculo
+   * aceito e ativo. `maxStudents: null` é ilimitado.
+   */
+  private async teacherPlan(userId: string, teacherId: string) {
+    const [access, activeStudents] = await Promise.all([
+      this.subscriptions.checkFeatureAccess(userId, 'maxStudents'),
+      this.prisma.teacherStudent.count({
+        where: {
+          teacherId,
+          isActive: true,
+          inviteStatus: StudentInviteStatus.ACCEPTED,
+        },
+      }),
+    ]);
+    const limit = access.limit;
+    return {
+      name: access.plan,
+      maxStudents: typeof limit === 'number' && limit >= 0 ? limit : null,
+      activeStudents,
+    };
+  }
+
+  /** Boas-vindas do portal concluídas (ou puladas) naquele papel. */
+  async finishOnboarding(userId: string, role: 'teacher' | 'student') {
+    const now = new Date();
+    const { count } =
+      role === 'teacher'
+        ? await this.prisma.teacher.updateMany({
+            where: { userId },
+            data: { portalOnboardedAt: now },
+          })
+        : await this.prisma.student.updateMany({
+            where: { userId },
+            data: { portalOnboardedAt: now },
+          });
+    if (count === 0)
+      throw new ForbiddenException('Você não tem esse papel no portal');
+    return { role, onboardedAt: now };
   }
 
   // -------------------------------------------------------------------
@@ -104,7 +184,7 @@ export class DashboardService {
 
   private async studentDashboard(studentId: string, userId: string) {
     const now = new Date();
-    const { startOfToday, endOfToday } = this.dayBounds(now);
+    const { startOfToday, endOfToday } = this.dayBounds(now, STUDENT_TIME_ZONE);
 
     const [
       byStatus,
@@ -146,6 +226,7 @@ export class DashboardService {
           totalLessonsAttended: true,
           level: true,
           mainInstrument: true,
+          portalOnboardedAt: true,
         },
       }),
       this.prisma.lesson.findMany({
@@ -188,12 +269,49 @@ export class DashboardService {
       this.studentTeachers(studentId, now),
     ]);
 
+    // O que entrou no portal em 04/10/2026: o diário de prática da semana,
+    // os pedidos de aula ainda sem resposta e as tarefas atrasadas (antes só
+    // vinham as que vencem — a atrasada sumia do painel justo quando importa).
+    const [practice, requests, overdue] = await Promise.all([
+      this.practice.list(userId, {
+        from: new Date(startOfToday.getTime() - 6 * DAY_MS).toISOString(),
+        to: endOfToday.toISOString(),
+      }),
+      this.prisma.lessonRequest.findMany({
+        where: {
+          studentId,
+          status: LessonRequestStatus.PENDING,
+          scheduledAt: { gt: now },
+        },
+        select: {
+          id: true,
+          scheduledAt: true,
+          duration: true,
+          note: true,
+          teacher: { select: PERSON_SELECT },
+        },
+        orderBy: { scheduledAt: 'asc' },
+        take: 10,
+      }),
+      this.prisma.assignment.findMany({
+        where: {
+          studentId,
+          isCompleted: false,
+          dueDate: { lt: now, not: null },
+        },
+        select: ASSIGNMENT_CARD_SELECT,
+        orderBy: { dueDate: 'asc' },
+        take: RECENT_LIMIT,
+      }),
+    ]);
+
     const counts = this.countsByStatus(byStatus);
     const attended = counts.completed + counts.noShow;
 
     return {
       role: 'student' as const,
       generatedAt: now,
+      onboardedAt: profile?.portalOnboardedAt ?? null,
       stats: {
         totalLessons: counts.total,
         completedLessons: counts.completed,
@@ -243,6 +361,28 @@ export class DashboardService {
       })),
       studyProgress,
       teachers,
+      practice: {
+        weeklyGoalMinutes: practice.weeklyGoalMinutes,
+        totalMinutes: practice.totalMinutes,
+        days: practice.days,
+        subjects: practice.subjects.slice(0, 5),
+      },
+      lessonRequests: requests.map((r) => ({
+        id: r.id,
+        scheduledAt: r.scheduledAt,
+        duration: r.duration,
+        note: r.note,
+        teacher: {
+          id: r.teacher.id,
+          userId: r.teacher.userId,
+          name: this.fullName(r.teacher.user),
+          image: r.teacher.user.image,
+        },
+      })),
+      overdueAssignments: overdue.map((assignment) => ({
+        ...assignment,
+        assignmentType: assignment.type,
+      })),
     };
   }
 
@@ -377,11 +517,18 @@ export class DashboardService {
   // Painel do professor
   // -------------------------------------------------------------------
 
-  private async teacherDashboard(teacherId: string) {
+  private async teacherDashboard(
+    teacherId: string,
+    timeZone: string,
+    onboardedAt?: Date | null,
+  ) {
     const now = new Date();
-    const { startOfToday, endOfToday } = this.dayBounds(now);
-    const { startOfWeek, endOfWeek } = this.weekBounds(now);
-    const { startOfMonth, endOfMonth } = this.monthBounds(now);
+    // "Hoje" e "esta semana" no fuso do professor. Antes eram no fuso do
+    // servidor: com o servidor em UTC, a aula das 22h de Brasília caía no
+    // dia seguinte.
+    const { startOfToday, endOfToday } = this.dayBounds(now, timeZone);
+    const { startOfWeek, endOfWeek } = this.weekBounds(now, timeZone);
+    const { startOfMonth, endOfMonth } = this.monthBounds(now, timeZone);
     const recentSince = new Date(now.getTime() - RECENT_ACTIVITY_DAYS * DAY_MS);
 
     const [
@@ -407,7 +554,11 @@ export class DashboardService {
         where: { teacherId, scheduledAt: { lt: now } },
       }),
       this.prisma.teacherStudent.count({
-        where: { teacherId, isActive: true },
+        where: {
+          teacherId,
+          isActive: true,
+          inviteStatus: StudentInviteStatus.ACCEPTED,
+        },
       }),
       this.prisma.teacherStudent.count({
         where: {
@@ -489,10 +640,19 @@ export class DashboardService {
     ]);
 
     const counts = this.countsByStatus(byStatus);
+    const extras = await this.teacherExtras(
+      teacherId,
+      timeZone,
+      now,
+      startOfWeek,
+      endOfWeek,
+      students,
+    );
 
     return {
       role: 'teacher' as const,
       generatedAt: now,
+      onboardedAt: onboardedAt ?? null,
       stats: {
         totalStudents,
         studentsWithRecentLessons,
@@ -527,8 +687,24 @@ export class DashboardService {
       upcomingLessons: upcomingLessons.map((lesson) =>
         this.toLessonCard(lesson, lesson.student),
       ),
-      weeklySchedule: this.buildWeeklySchedule(startOfWeek, weeklyLessons),
-      students,
+      weeklySchedule: this.buildWeeklySchedule(
+        startOfWeek,
+        weeklyLessons,
+        timeZone,
+        extras.freeMinutesByDay,
+      ),
+      students: students.map((student) => ({
+        ...student,
+        practiceMinutes7d: extras.practiceByStudent.get(student.studentId) ?? 0,
+        // Meta semanal do aluno (minutos); nula quando ele não definiu.
+        practiceGoalMinutes: extras.goalOf.get(student.studentId) ?? null,
+      })),
+      pendingOutcome: extras.pendingOutcome,
+      lessonRequests: extras.lessonRequests,
+      pendingInvites: extras.pendingInvites,
+      repertoire: extras.repertoire,
+      attention: extras.attention,
+      freeMinutesThisWeek: extras.freeMinutesThisWeek,
       assignmentsAwaitingFeedback: awaitingFeedback.map((assignment) => ({
         id: assignment.id,
         title: assignment.title,
@@ -546,6 +722,289 @@ export class DashboardService {
   }
 
   /**
+   * O que o painel ganhou em 04/10/2026, numa leva de consultas paralelas:
+   *
+   * - **aula sem desfecho**: passou e continua "agendada" — a regra do
+   *   portal diz que ela aparece em destaque para o professor fechar;
+   * - **pedidos de aula** pendentes;
+   * - **horas livres** da semana, por dia (`null` sem agenda declarada: "não
+   *   sei" não é "zero");
+   * - **prática** dos alunos nos últimos 7 dias, do diário;
+   * - **repertório em estudo**: as obras das próximas aulas, com quem as toca;
+   * - **sinais de atenção**: prática abaixo da metade da meta, tarefa
+   *   atrasada, convite parado e aluno sem relatório.
+   */
+  private async teacherExtras(
+    teacherId: string,
+    timeZone: string,
+    now: Date,
+    startOfWeek: Date,
+    endOfWeek: Date,
+    students: Array<{ studentId: string; name: string; totalLessons: number }>,
+  ) {
+    const studentIds = students.map((s) => s.studentId);
+    const weekAgo = new Date(now.getTime() - 7 * DAY_MS);
+
+    const [
+      pending,
+      requests,
+      free,
+      practiceByStudent,
+      upcoming,
+      goals,
+      overdue,
+      invites,
+      reports,
+      pendingInvites,
+    ] = await Promise.all([
+      this.prisma.lesson.findMany({
+        where: {
+          teacherId,
+          status: LessonStatus.SCHEDULED,
+          scheduledAt: {
+            gte: new Date(now.getTime() - PENDING_OUTCOME_DAYS * DAY_MS),
+            lt: now,
+          },
+        },
+        select: {
+          ...LESSON_CARD_SELECT,
+          student: { select: { ...PERSON_SELECT, level: true } },
+        },
+        orderBy: { scheduledAt: 'asc' },
+        take: 30,
+      }),
+      this.prisma.lessonRequest.findMany({
+        where: {
+          teacherId,
+          status: LessonRequestStatus.PENDING,
+          scheduledAt: { gt: now },
+        },
+        select: {
+          id: true,
+          scheduledAt: true,
+          duration: true,
+          note: true,
+          createdAt: true,
+          student: { select: PERSON_SELECT },
+        },
+        orderBy: { scheduledAt: 'asc' },
+        take: 20,
+      }),
+      this.availability.computeFreeTime(
+        teacherId,
+        timeZone,
+        startOfWeek,
+        endOfWeek,
+      ),
+      this.practice.totalsFor(studentIds, weekAgo, now),
+      this.prisma.lesson.findMany({
+        where: {
+          teacherId,
+          status: LessonStatus.SCHEDULED,
+          scheduledAt: {
+            gte: now,
+            lt: new Date(now.getTime() + REPERTOIRE_DAYS * DAY_MS),
+          },
+        },
+        select: { worksIds: true, student: { select: PERSON_SELECT } },
+        take: 200,
+      }),
+      this.prisma.student.findMany({
+        where: { id: { in: studentIds } },
+        select: { id: true, practiceTime: true },
+      }),
+      this.prisma.assignment.groupBy({
+        by: ['studentId'],
+        where: {
+          lesson: { is: { teacherId } },
+          isCompleted: false,
+          dueDate: { lt: now, not: null },
+        },
+        _count: { _all: true },
+        _min: { dueDate: true },
+      }),
+      this.prisma.teacherStudent.findMany({
+        where: {
+          teacherId,
+          inviteStatus: StudentInviteStatus.PENDING,
+          startDate: {
+            lt: new Date(now.getTime() - STALE_INVITE_DAYS * DAY_MS),
+          },
+        },
+        select: {
+          id: true,
+          startDate: true,
+          student: { select: PERSON_SELECT },
+        },
+        take: 10,
+      }),
+      this.prisma.sharedProgressReport.groupBy({
+        by: ['studentId'],
+        where: { teacherId, studentId: { in: studentIds } },
+        _max: { createdAt: true },
+      }),
+      this.prisma.teacherStudent.findMany({
+        where: {
+          teacherId,
+          isActive: true,
+          inviteStatus: StudentInviteStatus.PENDING,
+        },
+        select: {
+          id: true,
+          startDate: true,
+          student: { select: PERSON_SELECT },
+        },
+        orderBy: { startDate: 'desc' },
+        take: 20,
+      }),
+    ]);
+
+    // Só a aula que já terminou (começou e passou a duração).
+    const pendingOutcome = pending
+      .filter(
+        (l) => l.scheduledAt.getTime() + l.duration * 60_000 <= now.getTime(),
+      )
+      .map((l) => this.toLessonCard(l, l.student));
+
+    const freeMinutesByDay =
+      free.hours === null ? null : new Map<string, number>();
+    if (freeMinutesByDay) {
+      for (const slot of free.slots) {
+        const day = localDate(slot.start, timeZone);
+        freeMinutesByDay.set(
+          day,
+          (freeMinutesByDay.get(day) ?? 0) +
+            (slot.end.getTime() - slot.start.getTime()) / 60_000,
+        );
+      }
+    }
+
+    // Repertório: cada obra das próximas aulas, com os alunos que a tocam.
+    const byWork = new Map<string, Set<string>>();
+    for (const lesson of upcoming) {
+      for (const workId of lesson.worksIds) {
+        const who = byWork.get(workId) ?? new Set<string>();
+        who.add(this.fullName(lesson.student.user).split(' ')[0]);
+        byWork.set(workId, who);
+      }
+    }
+    const works = byWork.size
+      ? await this.prisma.work.findMany({
+          where: { id: { in: [...byWork.keys()] } },
+          select: {
+            id: true,
+            title: true,
+            composer: { select: { id: true, name: true } },
+          },
+        })
+      : [];
+    const repertoire = works
+      .map((w) => ({
+        workId: w.id,
+        title: w.title,
+        composer: w.composer ?? null,
+        students: [...(byWork.get(w.id) ?? [])],
+      }))
+      .sort((a, b) => b.students.length - a.students.length)
+      .slice(0, 8);
+
+    // Sinais de atenção.
+    const goalOf = new Map(goals.map((g) => [g.id, g.practiceTime ?? null]));
+    const nameOf = new Map(students.map((s) => [s.studentId, s.name]));
+    const lastReport = new Map(
+      reports.map((r) => [r.studentId, r._max.createdAt]),
+    );
+    const attention: Array<{
+      kind: 'practice' | 'overdue' | 'invite' | 'report';
+      studentId: string;
+      studentName: string;
+      relationshipId?: string;
+      minutes?: number;
+      goalMinutes?: number;
+      count?: number;
+      since?: Date | null;
+    }> = [];
+
+    for (const s of students) {
+      const goal = goalOf.get(s.studentId);
+      const minutes = practiceByStudent.get(s.studentId) ?? 0;
+      if (goal && minutes < goal / 2) {
+        attention.push({
+          kind: 'practice',
+          studentId: s.studentId,
+          studentName: s.name,
+          minutes,
+          goalMinutes: goal,
+        });
+      }
+      const report = lastReport.get(s.studentId);
+      if (
+        s.totalLessons >= REPORT_AFTER_LESSONS &&
+        (!report ||
+          now.getTime() - report.getTime() > REPORT_STALE_DAYS * DAY_MS)
+      ) {
+        attention.push({
+          kind: 'report',
+          studentId: s.studentId,
+          studentName: s.name,
+          count: s.totalLessons,
+          since: report ?? null,
+        });
+      }
+    }
+    for (const row of overdue) {
+      if (!nameOf.has(row.studentId)) continue;
+      attention.push({
+        kind: 'overdue',
+        studentId: row.studentId,
+        studentName: nameOf.get(row.studentId) ?? '',
+        count: row._count._all,
+        since: row._min.dueDate,
+      });
+    }
+    for (const invite of invites) {
+      attention.push({
+        kind: 'invite',
+        studentId: invite.student.id,
+        studentName: this.fullName(invite.student.user),
+        relationshipId: invite.id,
+        since: invite.startDate,
+      });
+    }
+
+    return {
+      pendingOutcome,
+      lessonRequests: requests.map((r) => ({
+        id: r.id,
+        scheduledAt: r.scheduledAt,
+        duration: r.duration,
+        note: r.note,
+        createdAt: r.createdAt,
+        student: {
+          id: r.student.id,
+          userId: r.student.userId,
+          name: this.fullName(r.student.user),
+          image: r.student.user.image,
+        },
+      })),
+      freeMinutesByDay,
+      freeMinutesThisWeek:
+        free.hours === null ? null : Math.round(free.hours * 60),
+      practiceByStudent,
+      goalOf,
+      repertoire,
+      attention,
+      pendingInvites: pendingInvites.map((invite) => ({
+        relationshipId: invite.id,
+        studentId: invite.student.id,
+        name: this.fullName(invite.student.user),
+        image: invite.student.user.image,
+        sentAt: invite.startDate,
+      })),
+    };
+  }
+
+  /**
    * Alunos do professor, com última e próxima aula.
    *
    * Mesmo problema do lado do aluno, em escala maior: o legado rodava duas
@@ -554,8 +1013,14 @@ export class DashboardService {
    * alunos.
    */
   private async teacherStudents(teacherId: string, now: Date) {
+    // Só vínculo aceito: o convite pendente não é aluno ainda (vem em
+    // `pendingInvites`). O legado listava os dois juntos.
     const relationships = await this.prisma.teacherStudent.findMany({
-      where: { teacherId, isActive: true },
+      where: {
+        teacherId,
+        isActive: true,
+        inviteStatus: StudentInviteStatus.ACCEPTED,
+      },
       select: {
         startDate: true,
         totalLessons: true,
@@ -573,11 +1038,21 @@ export class DashboardService {
 
     const studentIds = relationships.map((rel) => rel.student.id);
 
+    // Janelas limitadas: antes carregava **toda** a história de aulas de cada
+    // aluno só para achar a próxima e a última.
     const [schedule, totals] = await Promise.all([
       this.prisma.lesson.findMany({
-        where: { teacherId, studentId: { in: studentIds } },
+        where: {
+          teacherId,
+          studentId: { in: studentIds },
+          scheduledAt: {
+            gte: new Date(now.getTime() - 180 * DAY_MS),
+            lt: new Date(now.getTime() + 120 * DAY_MS),
+          },
+        },
         select: { studentId: true, scheduledAt: true, status: true },
         orderBy: { scheduledAt: 'asc' },
+        take: 2000,
       }),
       this.prisma.lesson.groupBy({
         by: ['studentId'],
@@ -633,16 +1108,24 @@ export class DashboardService {
   private buildWeeklySchedule(
     startOfWeek: Date,
     lessons: WeeklyLessonRow[],
+    timeZone: string,
+    freeMinutesByDay: Map<string, number> | null,
   ): WeeklyScheduleDay[] {
     const days: WeeklyScheduleDay[] = [];
+    const firstDay = localDate(startOfWeek, timeZone);
 
     for (let offset = 0; offset < 7; offset += 1) {
-      const date = new Date(startOfWeek.getTime() + offset * DAY_MS);
-      const nextDate = new Date(date.getTime() + DAY_MS);
+      const ymd = this.addDays(firstDay, offset);
+      const date = zonedDate(ymd, '00:00', timeZone);
+      const nextDate = zonedDate(this.addDays(ymd, 1), '00:00', timeZone);
 
       days.push({
         date,
-        weekday: date.getDay(),
+        localDate: ymd,
+        weekday: offset,
+        freeMinutes: freeMinutesByDay
+          ? Math.round(freeMinutesByDay.get(ymd) ?? 0)
+          : null,
         lessons: lessons
           .filter(
             (lesson) =>
@@ -778,40 +1261,47 @@ export class DashboardService {
     return [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   }
 
-  private dayBounds(now: Date) {
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
+  private addDays(ymd: string, days: number) {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d) + days * DAY_MS)
+      .toISOString()
+      .slice(0, 10);
+  }
 
+  /** Começo e fim do dia local de `now`, no fuso dado. */
+  private dayBounds(now: Date, timeZone: string) {
+    const today = localDate(now, timeZone);
     return {
-      startOfToday,
-      endOfToday: new Date(startOfToday.getTime() + DAY_MS),
+      startOfToday: zonedDate(today, '00:00', timeZone),
+      endOfToday: zonedDate(this.addDays(today, 1), '00:00', timeZone),
     };
   }
 
-  private weekBounds(now: Date) {
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-
+  /** A semana do portal, de domingo a sábado, no fuso dado. */
+  private weekBounds(now: Date, timeZone: string) {
+    const sunday = weekStartOf(now, timeZone);
     return {
-      startOfWeek,
-      endOfWeek: new Date(startOfWeek.getTime() + 7 * DAY_MS),
+      startOfWeek: zonedDate(sunday, '00:00', timeZone),
+      endOfWeek: zonedDate(this.addDays(sunday, 7), '00:00', timeZone),
     };
   }
 
   /**
-   * Limites do mês corrente.
+   * Limites do mês corrente, no fuso dado.
    *
    * O fim é o primeiro instante do mês seguinte, usado com `lt`. O legado
    * montava `new Date(ano, mês + 1, 0)`, que é o **último dia do mês à
    * meia-noite** — e com `lt` isso descartava tudo o que acontecesse no último
-   * dia do mês depois das 00h00. A contagem "aulas deste mês" perdia o dia
-   * inteiro do fechamento, todo mês.
+   * dia do mês depois das 00h00.
    */
-  private monthBounds(now: Date) {
+  private monthBounds(now: Date, timeZone: string) {
+    const [y, m] = localDate(now, timeZone).split('-').map(Number);
+    const first = `${y}-${String(m).padStart(2, '0')}-01`;
+    const next =
+      m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
     return {
-      startOfMonth: new Date(now.getFullYear(), now.getMonth(), 1),
-      endOfMonth: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+      startOfMonth: zonedDate(first, '00:00', timeZone),
+      endOfMonth: zonedDate(next, '00:00', timeZone),
     };
   }
 
@@ -819,11 +1309,16 @@ export class DashboardService {
     if (as !== 'student') {
       const teacher = await this.prisma.teacher.findUnique({
         where: { userId },
-        select: { id: true },
+        select: { id: true, timezone: true, portalOnboardedAt: true },
       });
 
       if (teacher) {
-        return { role: 'teacher' as const, id: teacher.id };
+        return {
+          role: 'teacher' as const,
+          id: teacher.id,
+          timeZone: teacher.timezone,
+          onboardedAt: teacher.portalOnboardedAt,
+        };
       }
 
       if (as === 'teacher') {
@@ -840,6 +1335,11 @@ export class DashboardService {
       throw new ForbiddenException('Você não tem perfil de aluno');
     }
 
-    return { role: 'student' as const, id: student.id };
+    return {
+      role: 'student' as const,
+      id: student.id,
+      timeZone: STUDENT_TIME_ZONE,
+      onboardedAt: null,
+    };
   }
 }

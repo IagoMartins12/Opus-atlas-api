@@ -19,8 +19,12 @@ export interface ImportResult {
 
 export interface ImportDetail {
   eventId?: string;
+  /** O evento que já existia, quando é duplicata. */
+  existingId?: string;
   externalId: string;
   title: string;
+  /** Data do evento como veio do site. */
+  startDate?: string;
   status: 'success' | 'error' | 'duplicate';
   message: string;
 }
@@ -35,9 +39,38 @@ export class ImportService {
     private readonly cache: AppCacheService,
   ) {}
 
+  /**
+   * O evento que já está na agenda, se houver: pelo id do provedor ou pelo
+   * par título + data. É a mesma regra da importação e da prévia — a prévia
+   * não pode dizer "novo" para algo que a importação pularia.
+   *
+   * `externalId` vazio não entra no `OR`: casaria com qualquer evento cujo
+   * campo também esteja vazio.
+   */
+  async existente(
+    event: Pick<ScrapedEvent, 'externalId' | 'title' | 'startDate'>,
+  ): Promise<{ id: string } | null> {
+    return this.prisma.event.findFirst({
+      where: {
+        OR: [
+          ...(event.externalId ? [{ externalId: event.externalId }] : []),
+          {
+            AND: [
+              { title: event.title },
+              { startDate: new Date(event.startDate) },
+            ],
+          },
+        ],
+      },
+      select: { id: true },
+    });
+  }
+
   async importEvents(
     scraperId: string,
     events: ScrapedEvent[],
+    /** Avisa a cada evento — é o que a tela mostra enquanto importa. */
+    aoImportar?: (feitos: number, total: number, titulo: string) => void,
   ): Promise<ImportResult> {
     if (!events || events.length === 0) {
       return {
@@ -61,32 +94,24 @@ export class ImportService {
     let duplicates = 0;
     let errors = 0;
 
+    let feitos = 0;
     for (const event of events) {
+      aoImportar?.(feitos++, events.length, event.title);
       try {
         // Verificar duplicata
         // `externalId` vazio não pode entrar no `OR`: seria um ramo que casa
         // com qualquer evento cujo campo também esteja vazio, e a rodada
         // inteira sairia marcada como duplicata. Sem id do provedor, sobra o
         // par título + data, que é o que identifica o espetáculo.
-        const existing = await this.prisma.event.findFirst({
-          where: {
-            OR: [
-              ...(event.externalId ? [{ externalId: event.externalId }] : []),
-              {
-                AND: [
-                  { title: event.title },
-                  { startDate: new Date(event.startDate) },
-                ],
-              },
-            ],
-          },
-        });
+        const existing = await this.existente(event);
 
         if (existing) {
           duplicates++;
           results.push({
+            existingId: existing.id,
             externalId: event.externalId,
             title: event.title,
+            startDate: String(event.startDate),
             status: 'duplicate',
             message: 'Evento já existe',
           });
@@ -145,6 +170,7 @@ export class ImportService {
         imported++;
         results.push({
           eventId: createdEvent.id,
+          startDate: String(event.startDate),
           externalId: event.externalId,
           title: event.title,
           status: 'success',
@@ -155,6 +181,7 @@ export class ImportService {
       } catch (error) {
         errors++;
         results.push({
+          startDate: String(event.startDate),
           externalId: event.externalId,
           title: event.title,
           status: 'error',

@@ -25,7 +25,7 @@ import {
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
-import { CreateLessonDto } from './dto/create-lesson.dto';
+import { CheckLessonDto, CreateLessonDto } from './dto/create-lesson.dto';
 import {
   CancelLessonDto,
   CompleteLessonDto,
@@ -79,6 +79,25 @@ export class LessonsController {
     @Body() dto: CreateLessonDto,
   ) {
     return this.service.create(user.sub, dto);
+  }
+
+  @Post('check')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Confere um horário (ou uma série) sem marcar',
+    description:
+      'O que a agenda diz de cada ocorrência: choque com aulas do professor e do aluno ' +
+      '(em qualquer turma), bloqueios, atendimento, folga, deslocamento, limites e plano ' +
+      'do aluno — com sugestões de horário limpo. É o mesmo motor da criação.',
+  })
+  @ApiOkResponse({ description: 'Achados por ocorrência e o resumo' })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
+  async check(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: CheckLessonDto,
+  ) {
+    return this.service.check(user.sub, dto);
   }
 
   @Get()

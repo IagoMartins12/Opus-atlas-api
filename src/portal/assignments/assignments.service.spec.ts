@@ -151,7 +151,10 @@ describe('AssignmentsService', () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: StorageService, useValue: storage },
         // A trilha escolar é efeito colateral: o dublê só registra a chamada.
-        { provide: SchoolActivitiesService, useValue: { record: jest.fn() } },
+        {
+          provide: SchoolActivitiesService,
+          useValue: { record: jest.fn(), recordCollapsing: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -710,7 +713,7 @@ describe('AssignmentsService', () => {
       const result = await service.list('teacher-user', { limit: 1 });
 
       expect(result.stats.total).toBe(7);
-      expect(prisma.assignment.count).toHaveBeenCalledTimes(6);
+      expect(prisma.assignment.count).toHaveBeenCalledTimes(7);
     });
 
     it('estatísticas ignoram o filtro de status aberto', async () => {
@@ -721,6 +724,25 @@ describe('AssignmentsService', () => {
       const totalCall = prisma.assignment.count.mock.calls[1][0];
 
       expect(totalCall.where).not.toHaveProperty('isCompleted');
+    });
+
+    // O que o professor precisa fazer: entregue e ainda sem retorno.
+    it('"esperando retorno" é entregue sem retorno, e entra nas estatísticas', async () => {
+      const result = await service.list('teacher-user', {
+        status: 'AWAITING_FEEDBACK',
+      });
+
+      const where = prisma.assignment.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ isCompleted: true, teacherFeedback: null });
+      expect(result.stats).toHaveProperty('awaitingFeedback');
+    });
+
+    it('"abertas" é tudo o que ainda não foi entregue', async () => {
+      await service.list('teacher-user', { status: 'OPEN' });
+
+      const where = prisma.assignment.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ isCompleted: false });
+      expect(where).not.toHaveProperty('status');
     });
 
     it('deriva atraso na projeção', async () => {

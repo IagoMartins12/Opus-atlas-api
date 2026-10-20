@@ -13,6 +13,7 @@ import { toCsv } from '../../common/utils/csv.util';
 import { toJsonInput } from '../../common/utils/json.util';
 import { audienceWhere, readSegments } from './newsletter-audience';
 import { deliveryRate } from './newsletter-rates';
+import { resolveContent } from './campaign-content';
 import {
   CreateCampaignDto,
   ListCampaignsQueryDto,
@@ -54,8 +55,22 @@ const CAMPAIGN_SELECT = {
   emailsOpened: true,
   emailsClicked: true,
   emailsBounced: true,
+  emailsComplained: true,
+  emailsUnsubscribed: true,
   createdAt: true,
 } as const;
+
+/**
+ * A lista não leva o conteúdo: o HTML de cada e-mail ia inteiro para a tela
+ * que só mostra nome, estado e taxas. O detalhe (`GET campaigns/:id`) e as
+ * escritas continuam devolvendo tudo.
+ */
+const {
+  customHtmlContent: _html,
+  customTextContent: _text,
+  targetSubscriberIds: _ids,
+  ...CAMPAIGN_LIST_SELECT
+} = CAMPAIGN_SELECT;
 
 const SUBSCRIBER_SELECT = {
   id: true,
@@ -110,7 +125,7 @@ export class AdminNewsletterService {
     const [campaigns, total] = await Promise.all([
       this.prisma.newsletterCampaign.findMany({
         where,
-        select: CAMPAIGN_SELECT,
+        select: CAMPAIGN_LIST_SELECT,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
@@ -293,6 +308,7 @@ export class AdminNewsletterService {
       select: {
         id: true,
         subject: true,
+        customSubject: true,
         customHtmlContent: true,
         customTextContent: true,
         template: { select: { htmlContent: true, textContent: true } },
@@ -303,19 +319,18 @@ export class AdminNewsletterService {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    const html = campaign.customHtmlContent ?? campaign.template?.htmlContent;
-
-    if (!html) {
+    if (!campaign.customHtmlContent && !campaign.template) {
       throw new BadRequestException(
         'A campanha não tem template nem conteúdo próprio para enviar',
       );
     }
 
+    const email = this.dispatch.preview(resolveContent(campaign));
+
     await this.mail.send({
       to: dto.to,
-      subject: `[TESTE] ${campaign.subject}`,
-      html,
-      text: campaign.customTextContent ?? campaign.template?.textContent ?? '',
+      ...email,
+      subject: `[TESTE] ${email.subject}`,
     });
 
     await this.prisma.newsletterCampaign.update({

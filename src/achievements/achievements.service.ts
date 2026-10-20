@@ -300,6 +300,21 @@ export class AchievementsService {
   }
 
   /**
+   * Conquistas ainda não vistas: o que o aviso em tempo real precisa saber.
+   * Leitura mínima (uma consulta indexada por usuário), feita para ser
+   * repetida a cada poucos segundos — a lista completa recalcula as estatísticas.
+   */
+  async listNew(userId: string) {
+    const entries = await this.prisma.userAchievement.findMany({
+      where: { userId, isNew: true },
+      orderBy: { unlockedAt: 'desc' },
+      take: 20,
+    });
+
+    return { unlocked: entries.map((entry) => this.toUnlockedDto(entry)) };
+  }
+
+  /**
    * Marca a conquista como vista, para o aviso não reaparecer.
    *
    * O `badgeId` é validado contra o catálogo antes de tocar no banco: sem isso,

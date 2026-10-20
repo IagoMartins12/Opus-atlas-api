@@ -214,7 +214,7 @@ describe('AuditInterceptor', () => {
         success: false,
         ipAddress: '1.1.1.1',
         entityId: undefined,
-        metadata: { error: 'Error' },
+        metadata: { error: 'Error', mensagem: 'boom' },
       }),
     );
 
@@ -404,6 +404,7 @@ describe('JobStatusService', () => {
   });
   const queue = {
     getJob: jest.fn(),
+    getJobs: jest.fn(),
     getFailed: jest.fn(),
     getJobCounts: jest.fn().mockResolvedValue({ waiting: 2, active: 1 }),
     isPaused: jest.fn().mockResolvedValue(false),
@@ -414,6 +415,35 @@ describe('JobStatusService', () => {
   };
   const moduleRef = { get: jest.fn().mockReturnValue(queue) };
   const service = new JobStatusService(moduleRef as unknown as ModuleRef);
+
+  it('rodadas recentes: as mais novas primeiro, filtradas pelo que rodam', async () => {
+    queue.getJobs.mockResolvedValue([
+      job({
+        id: 'velho',
+        timestamp: 1,
+        data: { ...job().data, payload: { scraperId: 'osesp' } },
+      }),
+      job({
+        id: 'novo',
+        timestamp: 2,
+        data: { ...job().data, payload: { scraperId: 'osesp' } },
+      }),
+      job({
+        id: 'outra',
+        timestamp: 3,
+        data: { ...job().data, payload: { scraperId: 'teatro-amazonas' } },
+      }),
+    ]);
+
+    const r = await service.recent('scraper', 5, 'osesp');
+
+    expect(r.map((j) => j.jobId)).toEqual(['novo', 'velho']);
+    expect(r[0]).toMatchObject({
+      state: 'completed',
+      result: { ok: true },
+      payload: { scraperId: 'osesp' },
+    });
+  });
 
   it('descreve o job com quem pediu, progresso e resultado', async () => {
     queue.getJob.mockResolvedValue(job());

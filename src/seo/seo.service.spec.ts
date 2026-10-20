@@ -27,7 +27,23 @@ describe('SeoService', () => {
       },
       annotation: { groupBy: jest.fn().mockResolvedValue([]) },
       blogArticle: {
-        findMany: jest.fn().mockResolvedValue([{ slug: 'chopin', updatedAt }]),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            slug: 'chopin',
+            updatedAt,
+            authorId: 'a1',
+            categories: [
+              { category: { slug: 'historia', isActive: true } },
+              { category: { slug: 'desligada', isActive: false } },
+            ],
+            tags: [{ tag: { slug: 'piano' } }],
+          },
+        ]),
+      },
+      user: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'a1', username: 'helena-prado' }]),
       },
       teacher: {
         findMany: jest.fn().mockResolvedValue([{ userId: 'u1', updatedAt }]),
@@ -54,6 +70,21 @@ describe('SeoService', () => {
         where: expect.objectContaining({ status: 'PUBLISHED' }),
       }),
     );
+  });
+
+  it('lista as categorias ativas, as tags e os autores do blog', async () => {
+    const result = await service.sitemapEntries();
+
+    expect(result.blogCategories).toEqual([
+      { slug: 'historia', lastModified: updatedAt },
+    ]);
+    expect(result.blogTags).toEqual([
+      { slug: 'piano', lastModified: updatedAt },
+    ]);
+    // O endereço público do autor é o nome de usuário.
+    expect(result.blogAuthors).toEqual([
+      { id: 'helena-prado', lastModified: updatedAt },
+    ]);
   });
 
   it('compositor sem nome completo usa o nome', async () => {

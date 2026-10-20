@@ -1,15 +1,19 @@
 import { Logger, Module, OnModuleInit } from '@nestjs/common';
 import { AdminModule } from '../admin/admin.module';
 import { ArticlesModule } from '../blog/articles/articles.module';
+import { WorksModule } from '../catalog/works/works.module';
 import { PortalModule } from '../portal/portal.module';
 import { ScrapersModule } from '../scrapers/scrapers.module';
 import { UploadsModule } from '../uploads/uploads.module';
+import { ContributionsModule } from '../library/contributions/contributions.module';
 import { QUEUE_NAMES } from '../common/queue/queue.constants';
 import { resolveQueueRole } from '../common/queue/queue-role';
 import { MaintenanceProcessor } from './maintenance.processor';
 import { NewsletterProcessor } from './newsletter.processor';
 import { NotificationsProcessor } from './notifications.processor';
 import { ScraperProcessor } from './scraper.processor';
+import { ImslpScoresProcessor } from './imslp-scores.processor';
+import { SchedulesKeeper } from './schedules-keeper';
 
 /**
  * Os consumidores de fila.
@@ -30,13 +34,17 @@ import { ScraperProcessor } from './scraper.processor';
     ScrapersModule,
     PortalModule,
     UploadsModule,
+    ContributionsModule,
     ArticlesModule,
+    WorksModule,
   ],
   providers: [
     NewsletterProcessor,
     MaintenanceProcessor,
     ScraperProcessor,
     NotificationsProcessor,
+    ImslpScoresProcessor,
+    SchedulesKeeper,
   ],
 })
 export class WorkerModule implements OnModuleInit {

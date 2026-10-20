@@ -249,25 +249,10 @@ export class SetPlanPricingDto {
   monthlyPrice: number;
 
   @ApiPropertyOptional({
-    default: 10,
-    description: 'Desconto trimestral, em %.',
+    default: 20,
+    description:
+      'Desconto do anual sobre doze mensais, em %. Só se vende mensal e anual: o Stripe não tem outro período.',
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100)
-  quarterlyDiscount?: number;
-
-  @ApiPropertyOptional({ default: 15 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100)
-  biannualDiscount?: number;
-
-  @ApiPropertyOptional({ default: 20 })
   @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })

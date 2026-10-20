@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LearningService } from './learning.service';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
 import { StorageService } from '../../common/storage/storage.service';
+import { SchoolActivitiesService } from '../../portal/school-activities/school-activities.service';
 
 describe('LearningService', () => {
   let service: LearningService;
@@ -13,6 +14,7 @@ describe('LearningService', () => {
   beforeEach(async () => {
     prisma = {
       work: { findUnique: jest.fn() },
+      student: { findUnique: jest.fn().mockResolvedValue(null) },
       workScore: { findFirst: jest.fn() },
       storedAsset: { findUnique: jest.fn(), findFirst: jest.fn() },
       wantToLearn: {
@@ -39,6 +41,10 @@ describe('LearningService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ActivityTracker, useValue: { track: jest.fn() } },
         { provide: StorageService, useValue: storage },
+        {
+          provide: SchoolActivitiesService,
+          useValue: { record: jest.fn() },
+        },
       ],
     }).compile();
 

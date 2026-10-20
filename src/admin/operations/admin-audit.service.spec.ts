@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../../common/audit/audit.service';
 import { AdminAuditService } from './admin-audit.service';
 
 describe('AdminAuditService', () => {
@@ -9,9 +10,12 @@ describe('AdminAuditService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       groupBy: jest.Mock;
+      deleteMany?: jest.Mock;
     };
     user: { findMany: jest.Mock };
+    $runCommandRaw?: jest.Mock;
   };
+  let auditoria: { record: jest.Mock };
 
   const registro = (over: Record<string, unknown> = {}) => ({
     id: 'audit-1',
@@ -31,6 +35,9 @@ describe('AdminAuditService', () => {
 
   beforeEach(async () => {
     prisma = {
+      $runCommandRaw: jest
+        .fn()
+        .mockResolvedValue({ cursor: { firstBatch: [] } }),
       adminAuditLog: {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
@@ -39,10 +46,13 @@ describe('AdminAuditService', () => {
       user: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
+    auditoria = { record: jest.fn().mockResolvedValue(undefined) };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminAuditService,
         { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: auditoria },
       ],
     }).compile();
 
@@ -50,6 +60,33 @@ describe('AdminAuditService', () => {
   });
 
   // -----------------------------------------------------------------
+  describe('filtros precisos', () => {
+    it('alvo e campo saem do metadata numa consulta crua, e viram lista de ids', async () => {
+      prisma.$runCommandRaw = jest.fn().mockResolvedValue({
+        cursor: { firstBatch: [{ _id: { $oid: '64f000000000000000000001' } }] },
+      });
+
+      await service.list({ target: 'Chopin (', field: 'role' });
+
+      const [cmd] = prisma.$runCommandRaw.mock.calls[0];
+      expect(cmd.aggregate).toBe('admin_audit_logs');
+      expect(cmd.pipeline[0].$match).toEqual({
+        'metadata.alvo': { $regex: 'Chopin \\(', $options: 'i' },
+        'metadata.mudancas.campo': 'role',
+      });
+      const { where } = prisma.adminAuditLog.findMany.mock.calls[0][0];
+      expect(where.AND).toContainEqual({
+        id: { in: ['64f000000000000000000001'] },
+      });
+    });
+
+    it('papel vai como texto, como o interceptor grava', async () => {
+      await service.list({ actorRole: 2 });
+      const { where } = prisma.adminAuditLog.findMany.mock.calls[0][0];
+      expect(where.actorRole).toBe('2');
+    });
+  });
+
   describe('listagem', () => {
     it('resolve o nome de quem agiu em lote', async () => {
       prisma.adminAuditLog.findMany.mockResolvedValue([
@@ -206,9 +243,14 @@ describe('AdminAuditService', () => {
     });
 
     it('nomeia quem mais agiu', async () => {
-      prisma.adminAuditLog.groupBy
-        .mockResolvedValueOnce([{ action: 'user.update', _count: { _all: 5 } }])
-        .mockResolvedValueOnce([{ actorId: 'admin-1', _count: { _all: 5 } }]);
+      // Ações e pessoas saem de agregações cruas, nessa ordem.
+      prisma
+        .$runCommandRaw!.mockResolvedValueOnce({
+          cursor: { firstBatch: [{ _id: 'user.update', n: 5 }] },
+        })
+        .mockResolvedValueOnce({
+          cursor: { firstBatch: [{ _id: 'admin-1', n: 5 }] },
+        });
       prisma.user.findMany.mockResolvedValue([
         { id: 'admin-1', firstName: 'Ana', lastName: 'Costa', email: null },
       ]);
@@ -258,6 +300,53 @@ describe('AdminAuditService', () => {
       }
 
       expect(result.csv).toContain('"não"');
+    });
+  });
+
+  describe('limpeza', () => {
+    beforeEach(() => {
+      prisma.adminAuditLog.deleteMany = jest
+        .fn()
+        .mockResolvedValue({ count: 12 });
+    });
+
+    it('sem escolha e sem filtro, não apaga nada', async () => {
+      await expect(service.purge({}, 'admin-1')).rejects.toThrow(
+        'Escolha os registros',
+      );
+      await expect(
+        service.purge({ filtros: { page: 2 } as never }, 'admin-1'),
+      ).rejects.toThrow('Escolha os registros');
+      expect(prisma.adminAuditLog.deleteMany).not.toHaveBeenCalled();
+    });
+
+    // Sem isso, apagar a auditoria seria o jeito de apagar o que se fez.
+    it('apaga os escolhidos, nunca o registro de uma limpeza, e deixa o seu', async () => {
+      const r = await service.purge({ ids: ['a', 'b'] }, 'admin-1');
+
+      expect(r).toEqual({ apagados: 12 });
+      expect(prisma.adminAuditLog.deleteMany).toHaveBeenCalledWith({
+        where: {
+          AND: [{ id: { in: ['a', 'b'] } }, { action: { not: 'audit.purge' } }],
+        },
+      });
+      expect(auditoria.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: 'admin-1',
+          action: 'audit.purge',
+          metadata: expect.objectContaining({ apagados: 12 }),
+        }),
+      );
+    });
+
+    it('por filtro, usa o mesmo critério da lista', async () => {
+      await service.purge(
+        { filtros: { actionPrefix: 'database.' } as never },
+        'admin-1',
+      );
+
+      const where = prisma.adminAuditLog.deleteMany!.mock.calls[0][0].where;
+      expect(JSON.stringify(where)).toContain('database');
     });
   });
 });

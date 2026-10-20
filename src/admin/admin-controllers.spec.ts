@@ -259,10 +259,45 @@ describe('AdminMaintenanceController', () => {
     removeSchedule: jest.fn().mockResolvedValue(true),
   };
   const health = echoMock('snapshot');
+  const orphans = {
+    listar: jest.fn().mockResolvedValue({ items: [] }),
+    remover: jest.fn().mockResolvedValue({ removidos: 1 }),
+  };
+  const runs = {
+    listar: jest.fn().mockResolvedValue({ items: [] }),
+    resumo: jest.fn().mockResolvedValue([]),
+    apagar: jest.fn().mockResolvedValue({ apagados: 2 }),
+  };
   const controller = new AdminMaintenanceController(
     as(maintenance),
     as(health),
+    as(runs),
+    as(orphans),
   );
+
+  it('órfãos: lista com o filtro e remove os escolhidos', async () => {
+    await controller.listOrphans({ tipo: 'work', page: 2 } as never);
+    expect(orphans.listar).toHaveBeenCalledWith(
+      { de: undefined, ate: undefined, tipo: 'work' },
+      2,
+      40,
+    );
+    await controller.deleteOrphans({ ids: ['a'] });
+    expect(orphans.remover).toHaveBeenCalledWith(['a']);
+  });
+
+  it('histórico: lista, resume e só apaga com critério', async () => {
+    await controller.listRuns({ task: 'tokens.prune' } as never);
+    expect(runs.listar).toHaveBeenCalledWith({ task: 'tokens.prune' }, 1, 30);
+    await expect(controller.runsSummary()).resolves.toEqual({ tarefas: [] });
+
+    await expect(controller.deleteRuns({} as never)).rejects.toThrow(
+      'Escolha as execuções',
+    );
+    await expect(
+      controller.deleteRuns({ before: '2026-09-01' } as never),
+    ).resolves.toEqual({ apagados: 2 });
+  });
 
   it('tarefas, saúde e falhas', async () => {
     await controller.tasks();
@@ -514,9 +549,12 @@ describe('auditoria, métricas e relatórios', () => {
 
   it('métricas', async () => {
     const service = echoMock('overview', 'insights');
-    const controller = new AdminMetricsController(as(service));
+    const attention = echoMock('attention');
+    const controller = new AdminMetricsController(as(service), as(attention));
 
     await controller.overview();
+    await controller.attention();
+    expect(attention.attention).toHaveBeenCalled();
     await controller.insights({ areas: ['catalog'] } as never);
     expect(service.insights).toHaveBeenCalledWith(['catalog']);
   });

@@ -7,6 +7,7 @@ const at = (iso: string) => new Date(iso);
 describe('AdminUploadsService', () => {
   let service: AdminUploadsService;
   let prisma: {
+    $runCommandRaw: jest.Mock;
     uploadHistory: {
       findMany: jest.Mock;
       count: jest.Mock;
@@ -32,6 +33,9 @@ describe('AdminUploadsService', () => {
 
   beforeEach(async () => {
     prisma = {
+      $runCommandRaw: jest
+        .fn()
+        .mockResolvedValue({ cursor: { firstBatch: [] } }),
       uploadHistory: {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
@@ -174,7 +178,44 @@ describe('AdminUploadsService', () => {
       await service.stats({});
 
       expect(prisma.uploadHistory.findMany).toHaveBeenCalledTimes(1);
-      expect(prisma.uploadHistory.count).toHaveBeenCalledTimes(1);
+      // O total da janela e o total geral.
+      expect(prisma.uploadHistory.count).toHaveBeenCalledTimes(2);
+    });
+
+    it('as somas por ação e por tipo são da janela, não de todo o tempo', async () => {
+      await service.stats({ days: 30 });
+
+      for (const [args] of prisma.uploadHistory.groupBy.mock.calls.slice(
+        0,
+        2,
+      )) {
+        expect(args.where.createdAt.gte).toBeInstanceOf(Date);
+      }
+    });
+
+    it('janela longa agrupa por semana; mais de um ano, por mês', async () => {
+      const semana = await service.stats({ days: 180 });
+      expect(semana.janela.passo).toBe('semana');
+      expect(semana.timeline.length).toBeLessThanOrEqual(27);
+
+      const mes = await service.stats({ days: 730 });
+      expect(mes.janela.passo).toBe('mes');
+      expect(mes.timeline.length).toBeLessThanOrEqual(25);
+    });
+
+    it('conta quem contribuiu pela primeira vez dentro da janela', async () => {
+      prisma.uploadHistory.groupBy.mockImplementation(
+        (args: { by: string[]; _min?: unknown }) =>
+          Promise.resolve(
+            args._min
+              ? [{ userId: 'nova', _min: { createdAt: new Date() } }]
+              : [],
+          ),
+      );
+
+      const r = await service.stats({ days: 7 });
+
+      expect(r.contribuintesNovos).toBe(1);
     });
 
     it('devolve um balde por dia pedido', async () => {
@@ -244,9 +285,9 @@ describe('AdminUploadsService', () => {
   // -----------------------------------------------------------------
   describe('contribuidores', () => {
     it('junta contagem e usuário em duas consultas', async () => {
-      prisma.uploadHistory.groupBy.mockResolvedValue([
-        { userId: 'u1', _count: { _all: 12 } },
-      ]);
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: { firstBatch: [{ _id: { $oid: 'u1' }, n: 12 }] },
+      });
       prisma.user.findMany.mockResolvedValue([
         { id: 'u1', firstName: 'Ana', lastName: 'Costa', image: null },
       ]);
@@ -269,9 +310,9 @@ describe('AdminUploadsService', () => {
     });
 
     it('usuário removido não quebra a lista', async () => {
-      prisma.uploadHistory.groupBy.mockResolvedValue([
-        { userId: 'sumiu', _count: { _all: 3 } },
-      ]);
+      prisma.$runCommandRaw.mockResolvedValue({
+        cursor: { firstBatch: [{ _id: { $oid: 'sumiu' }, n: 3 }] },
+      });
 
       const result = await service.topContributors();
 

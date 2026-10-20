@@ -74,6 +74,8 @@ export class UserTokenService {
      * pessoa, sem aviso para ninguém.
      */
     revokePrevious?: boolean;
+    /** Validade escolhida por quem emite (convite de professor); sem ela, a do tipo. */
+    expiresAt?: Date;
   }): Promise<string> {
     const {
       userId,
@@ -86,7 +88,9 @@ export class UserTokenService {
     } = options;
     const token = this.generateSecureToken();
     const expiresInHours = EXPIRES_IN_HOURS[type] ?? 24;
-    const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
+    const expiresAt =
+      options.expiresAt ??
+      new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
     if (revokePrevious) {
       await this.prisma.userToken.updateMany({

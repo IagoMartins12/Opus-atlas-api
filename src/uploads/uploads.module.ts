@@ -3,6 +3,7 @@ import { BillingModule } from '../billing/billing.module';
 import { UploadsController } from './uploads.controller';
 import { UploadsService } from './uploads.service';
 import { UploadHistoryService } from './shared/upload-history.service';
+import { ContributionLimitService } from './shared/contribution-limit.service';
 import { ComposerUploadsController } from './composers/composer-uploads.controller';
 import { ComposerUploadsService } from './composers/composer-uploads.service';
 import { WorkUploadsController } from './works/work-uploads.controller';
@@ -11,6 +12,8 @@ import { ScoreUploadsController } from './scores/score-uploads.controller';
 import { ScoreUploadsService } from './scores/score-uploads.service';
 import { ModerationController } from './moderation/moderation.controller';
 import { PortalModule } from '../portal/portal.module';
+import { CollectionsModule } from '../library/collections/collections.module';
+import { ContributionsModule } from '../library/contributions/contributions.module';
 import { ModerationService } from './moderation/moderation.service';
 import { ModerationSweepService } from './moderation/moderation-sweep.service';
 import { UploadHistoryController } from './history/upload-history.controller';
@@ -26,7 +29,12 @@ import { UploadSupportService } from './support/upload-support.service';
  * `maxPerformanceVideos`) — a regra RN-1 do ROADMAP.
  */
 @Module({
-  imports: [BillingModule, PortalModule],
+  imports: [
+    BillingModule,
+    PortalModule,
+    ContributionsModule,
+    CollectionsModule,
+  ],
   controllers: [
     UploadsController,
     UploadSupportController,
@@ -39,6 +47,7 @@ import { UploadSupportService } from './support/upload-support.service';
   providers: [
     UploadsService,
     UploadHistoryService,
+    ContributionLimitService,
     UploadHistoryQueryService,
     UploadSupportService,
     ModerationService,

@@ -43,6 +43,59 @@ export class ArticlePublishingService {
     private readonly cache: AppCacheService,
   ) {}
 
+  /**
+   * Os números do painel de artigos numa passada: quantos em cada estado,
+   * visualizações somadas dos publicados e quem escreve.
+   *
+   * O painel montava isso com quatro listas de um item (só pela contagem) e
+   * uma varredura de até 20 páginas de 100 artigos para somar visualizações
+   * e juntar autores — trazendo o conteúdo inteiro de cada artigo para ler
+   * dois campos.
+   */
+  async overview() {
+    const [porEstado, visualizacoes, autores] = await Promise.all([
+      this.prisma.blogArticle.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
+      this.prisma.blogArticle.aggregate({
+        where: { status: 'PUBLISHED' },
+        _sum: { viewCount: true },
+      }),
+      this.prisma.blogArticle.groupBy({
+        by: ['authorId'],
+        _count: { _all: true },
+      }),
+    ]);
+
+    const pessoas = await this.prisma.user.findMany({
+      where: { id: { in: autores.map((a) => a.authorId) } },
+      select: { id: true, firstName: true, lastName: true, image: true },
+    });
+    const porId = new Map(pessoas.map((p) => [p.id, p]));
+
+    const estados = Object.fromEntries(
+      porEstado.map((r) => [r.status, r._count._all]),
+    );
+
+    return {
+      total: porEstado.reduce((s, r) => s + r._count._all, 0),
+      porEstado: estados,
+      visualizacoes: visualizacoes._sum.viewCount ?? 0,
+      autores: autores
+        .map((a) => ({
+          id: a.authorId,
+          nome:
+            [porId.get(a.authorId)?.firstName, porId.get(a.authorId)?.lastName]
+              .filter(Boolean)
+              .join(' ') || 'Conta removida',
+          imagem: porId.get(a.authorId)?.image ?? null,
+          artigos: a._count._all,
+        }))
+        .sort((a, b) => b.artigos - a.artigos),
+    };
+  }
+
   async publish(id: string, action: PublishAction, scheduledFor?: string) {
     const current = await this.requireState(id);
     const fields = this.transition(
@@ -201,6 +254,7 @@ export class ArticlePublishingService {
     });
 
     let published = 0;
+    const titulos: string[] = [];
 
     for (const article of due) {
       if (!article.scheduledFor) {
@@ -218,6 +272,7 @@ export class ArticlePublishingService {
 
       if (count > 0) {
         published += count;
+        titulos.push(article.title);
         this.logger.log(`Agendado publicado: "${article.title}"`);
       }
     }
@@ -226,7 +281,7 @@ export class ArticlePublishingService {
       await this.invalidate();
     }
 
-    return { due: due.length, published };
+    return { due: due.length, published, titulos };
   }
 
   // -------------------------------------------------------------------

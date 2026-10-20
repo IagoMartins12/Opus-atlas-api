@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DifficultyLevel, UserType } from '@prisma/client';
+import { DifficultyLevel, PlanType, UserType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { queryBoolean } from '../../../common/utils/query-boolean';
 import {
@@ -7,12 +7,14 @@ import {
   IsEnum,
   IsIn,
   IsInt,
+  IsISO8601,
   IsMongoId,
   IsOptional,
   IsString,
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 /**
@@ -32,6 +34,8 @@ export const USER_SORT_FIELDS = [
   'email',
   'firstName',
 ] as const;
+
+export const USER_ACTIVITY = ['7d', '30d', 'inactive90', 'never'] as const;
 
 // Da query vem texto, e a conversão implícita do ValidationPipe já teria
 // transformado "false" em `true` antes do `@Transform`: lê o valor cru.
@@ -90,6 +94,52 @@ export class ListAdminUsersQueryDto {
   @IsBoolean()
   isTeacher?: boolean;
 
+  @ApiPropertyOptional({ description: 'E-mail confirmado (true) ou não.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  emailVerified?: boolean;
+
+  @ApiPropertyOptional({ description: 'Cadastro inicial concluído ou não.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  onboardingCompleted?: boolean;
+
+  @ApiPropertyOptional({ description: 'Perfil público ou privado.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  profilePublic?: boolean;
+
+  @ApiPropertyOptional({
+    enum: PlanType,
+    description:
+      'Plano com acesso hoje (assinatura viva). FREE: quem não tem nenhuma.',
+  })
+  @IsOptional()
+  @IsEnum(PlanType)
+  plan?: PlanType;
+
+  @ApiPropertyOptional({
+    enum: USER_ACTIVITY,
+    description:
+      'Último acesso: nos últimos 7 ou 30 dias, sem acesso há 90 dias, ou nunca.',
+  })
+  @IsOptional()
+  @IsIn(USER_ACTIVITY)
+  activity?: (typeof USER_ACTIVITY)[number];
+
+  @ApiPropertyOptional({ description: 'Conta criada a partir de (ISO 8601).' })
+  @IsOptional()
+  @IsISO8601()
+  createdFrom?: string;
+
+  @ApiPropertyOptional({ description: 'Conta criada até (ISO 8601).' })
+  @IsOptional()
+  @IsISO8601()
+  createdTo?: string;
+
   @ApiPropertyOptional({ enum: USER_SORT_FIELDS, default: 'createdAt' })
   @IsOptional()
   @IsIn(USER_SORT_FIELDS)
@@ -123,10 +173,32 @@ export class AdminUserAnalyticsQueryDto {
  * Lista fechada e com domínio validado. O legado aceitava `role` e `userType`
  * do corpo sem conferir o valor de nenhum dos dois.
  */
+/** Planos que a equipe pode conceder junto com o convite de professor. */
+export const TEACHER_GRANT_PLANS = ['MENTOR', 'MAESTRO'] as const;
+
+/**
+ * O plano que acompanha o convite para ser professor. Concedido quando a
+ * pessoa **aceita** o convite — recusado, nada é concedido.
+ */
+export class TeacherPlanGrantDto {
+  @ApiProperty({ enum: TEACHER_GRANT_PLANS })
+  @IsIn(TEACHER_GRANT_PLANS)
+  planType: (typeof TEACHER_GRANT_PLANS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Vencimento (ISO 8601). Ausente ou nulo: sem vencimento.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601()
+  expiresAt?: string | null;
+}
+
 export class UpdateAdminUserDto {
   @ApiPropertyOptional({
     enum: USER_ROLE_LEVELS,
-    description: '0 comum, 1 admin, 2 super admin.',
+    description:
+      '0 pessoa, 1 professor do legado (não abre o painel), 2 administrador. Ver `common/auth/roles.ts`.',
   })
   @IsOptional()
   @Type(() => Number)
@@ -140,12 +212,32 @@ export class UpdateAdminUserDto {
 
   @ApiPropertyOptional({
     description:
-      'Marca a conta como de professor, criando o perfil se faltar. Mudar ' +
-      '`role` para 1 já faz isso.',
+      'Marca a conta como de professor e envia o convite por e-mail (o ' +
+      'perfil fica pendente até o aceite). Independe de `role`: 1 é admin.',
   })
   @IsOptional()
   @IsBoolean()
   isTeacher?: boolean;
+
+  @ApiPropertyOptional({
+    type: TeacherPlanGrantDto,
+    description:
+      '**Obrigatório ao convidar** (`isTeacher: true` numa conta que não é ' +
+      'professor): o plano, Mentor ou Maestro, concedido quando o convite ' +
+      'for aceito. É ele que dá o limite de alunos.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TeacherPlanGrantDto)
+  teacherPlanGrant?: TeacherPlanGrantDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Validade do convite (ISO 8601). Ausente: 30 dias a partir do envio.',
+  })
+  @IsOptional()
+  @IsISO8601()
+  teacherInviteExpiresAt?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -153,9 +245,86 @@ export class UpdateAdminUserDto {
   isStudent?: boolean;
 }
 
+/** Mudanças num convite de professor ainda sem resposta. */
+export class UpdateTeacherInvitationDto {
+  @ApiPropertyOptional({ enum: TEACHER_GRANT_PLANS })
+  @IsOptional()
+  @IsIn(TEACHER_GRANT_PLANS)
+  planType?: (typeof TEACHER_GRANT_PLANS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Vencimento do plano (ISO 8601). Nulo: sem vencimento.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601()
+  planExpiresAt?: string | null;
+
+  @ApiPropertyOptional({ description: 'Nova validade do convite (ISO 8601).' })
+  @IsOptional()
+  @IsISO8601()
+  inviteExpiresAt?: string;
+
+  @ApiPropertyOptional({
+    description: 'Emite links novos e manda outro e-mail com o convite.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  resend?: boolean;
+}
+
+/** Plano concedido pela equipe: trocar Mentor ↔ Maestro e o vencimento. */
+export class UpdateGrantedPlanDto {
+  @ApiPropertyOptional({ enum: TEACHER_GRANT_PLANS })
+  @IsOptional()
+  @IsIn(TEACHER_GRANT_PLANS)
+  planType?: (typeof TEACHER_GRANT_PLANS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Vencimento (ISO 8601). Nulo: sem vencimento.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601()
+  expiresAt?: string | null;
+}
+
 export class AdminUserSummaryDto {
   @ApiProperty() id: string;
   @ApiProperty() email: string;
   @ApiPropertyOptional() name: string | null;
   @ApiProperty() role: number;
+}
+
+/** O que a conta guardou ou fez, para abrir a lista a partir do detalhe. */
+export const USER_ITEM_KINDS = [
+  'favoritos',
+  'aprendidas',
+  'quero-aprender',
+  'anotacoes',
+  'envios',
+  'arquivos',
+] as const;
+
+export type UserItemKind = (typeof USER_ITEM_KINDS)[number];
+
+export class AdminUserItemsQueryDto {
+  @ApiProperty({ enum: USER_ITEM_KINDS })
+  @IsIn(USER_ITEM_KINDS)
+  kind: UserItemKind;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 20;
 }

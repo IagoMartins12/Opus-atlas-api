@@ -26,6 +26,7 @@ function makePrisma() {
       ),
       delete: jest.fn().mockResolvedValue({}),
       count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     venue: {
       findUnique: jest.fn().mockResolvedValue({ id: VENUE }),
@@ -65,6 +66,65 @@ describe('EventsService', () => {
   });
 
   const eventData = () => prisma.event.create.mock.calls[0][0].data;
+
+  describe('destaque do mês', () => {
+    it('entra na menor posição livre do mês, em tamanho normal', async () => {
+      prisma.event.findMany.mockResolvedValueOnce([
+        { id: 'a', featuredOrder: 1 },
+      ]);
+      await service.createEvent({ ...base, isFeatured: true }, USER);
+
+      expect(eventData()).toMatchObject({
+        isFeatured: true,
+        featuredOrder: 2,
+        featuredSize: 'normal',
+      });
+      // O mês é o de Brasília: 11/09 22h UTC cai em setembro.
+      expect(prisma.event.findMany.mock.calls[0][0].where.startDate).toEqual({
+        gte: new Date('2026-09-01T03:00:00Z'),
+        lt: new Date('2026-10-01T03:00:00Z'),
+      });
+    });
+
+    it('recusa o quarto destaque do mês sem posição escolhida', async () => {
+      prisma.event.findMany.mockResolvedValueOnce([
+        { id: 'a', featuredOrder: 1 },
+        { id: 'b', featuredOrder: 2 },
+        { id: 'c', featuredOrder: 3 },
+      ]);
+      await expect(
+        service.createEvent({ ...base, isFeatured: true }, USER),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('posição ocupada substitui quem estava nela', async () => {
+      prisma.event.findMany.mockResolvedValueOnce([
+        { id: 'b', featuredOrder: 2 },
+      ]);
+      await service.createEvent(
+        { ...base, isFeatured: true, featuredOrder: 2, featuredSize: 'large' },
+        USER,
+      );
+
+      expect(eventData()).toMatchObject({
+        featuredOrder: 2,
+        featuredSize: 'large',
+      });
+      expect(prisma.event.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['b'] } },
+        data: { isFeatured: false, featuredOrder: null, featuredSize: null },
+      });
+    });
+
+    it('tirar o destaque limpa posição e tamanho', async () => {
+      await service.updateEvent(EVENT, { isFeatured: false }, USER);
+      expect(prisma.event.update.mock.calls[0][0].data).toMatchObject({
+        isFeatured: false,
+        featuredOrder: null,
+        featuredSize: null,
+      });
+    });
+  });
 
   describe('criar evento', () => {
     it('nasce pendente, com slug do título e origem de administrador', async () => {
@@ -167,6 +227,18 @@ describe('EventsService', () => {
         isVerified: true,
         verifiedBy: USER,
       });
+    });
+
+    it('marca e desmarca o evento para a home do site', async () => {
+      await service.updateEvent(EVENT, { showOnMainHome: true }, USER);
+      await service.updateEvent(EVENT, { showOnMainHome: false }, USER);
+
+      expect(prisma.event.update.mock.calls[0][0].data.showOnMainHome).toBe(
+        true,
+      );
+      expect(prisma.event.update.mock.calls[1][0].data.showOnMainHome).toBe(
+        false,
+      );
     });
   });
 

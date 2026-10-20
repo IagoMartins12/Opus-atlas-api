@@ -61,6 +61,7 @@ export class PersonalDataExportService {
         phoneNumber: true,
         experienceLevel: true,
         practiceTimePerWeek: true,
+        studyHorizon: true,
         profilePublic: true,
         showLocation: true,
         userType: true,

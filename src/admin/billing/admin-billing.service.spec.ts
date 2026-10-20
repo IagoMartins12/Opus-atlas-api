@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { CouponType, PlanType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StripeCatalogService } from '../../billing/services/stripe-catalog.service';
 import { AdminBillingService } from './admin-billing.service';
 
 const p2002 = () =>
@@ -20,6 +21,7 @@ describe('AdminBillingService', () => {
     coupon: {
       findMany: jest.Mock;
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       count: jest.Mock;
       aggregate: jest.Mock;
       create: jest.Mock;
@@ -32,9 +34,18 @@ describe('AdminBillingService', () => {
       findFirst: jest.Mock;
       findMany: jest.Mock;
       create: jest.Mock;
+      update: jest.Mock;
       updateMany: jest.Mock;
     };
     $transaction: jest.Mock;
+  };
+  let catalog: {
+    isConfigured: jest.Mock;
+    pushPricing: jest.Mock;
+    syncCoupon: jest.Mock;
+    deleteCoupon: jest.Mock;
+    adoptFromStripe: jest.Mock;
+    status: jest.Mock;
   };
   let tx: {
     planPricing: {
@@ -80,6 +91,7 @@ describe('AdminBillingService', () => {
       coupon: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(cupom()),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(cupom()),
         count: jest.fn().mockResolvedValue(0),
         aggregate: jest.fn().mockResolvedValue({ _sum: { usedCount: 0 } }),
         create: jest.fn((args: { data: Record<string, unknown> }) =>
@@ -96,15 +108,32 @@ describe('AdminBillingService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
+        update: jest.fn((args: { data: unknown }) =>
+          Promise.resolve(args.data),
+        ),
         updateMany: jest.fn(),
       },
       $transaction: jest.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
+    };
+
+    catalog = {
+      isConfigured: jest.fn().mockReturnValue(true),
+      pushPricing: jest.fn().mockResolvedValue({
+        stripeProductId: 'prod_1',
+        stripeMonthlyPriceId: 'price_m',
+        stripeYearlyPriceId: 'price_y',
+      }),
+      syncCoupon: jest.fn().mockResolvedValue('stripe_cupom'),
+      deleteCoupon: jest.fn().mockResolvedValue(undefined),
+      adoptFromStripe: jest.fn().mockResolvedValue({ adotado: true }),
+      status: jest.fn().mockResolvedValue({ configurado: true, planos: [] }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AdminBillingService,
         { provide: PrismaService, useValue: prisma },
+        { provide: StripeCatalogService, useValue: catalog },
       ],
     }).compile();
 
@@ -248,28 +277,35 @@ describe('AdminBillingService', () => {
 
   // -----------------------------------------------------------------
   describe('preço de plano', () => {
-    // `29,90 × 3 × 0,9` dá 80.72999999999999 em ponto flutuante.
-    it('arredonda os preços derivados a centavos', async () => {
+    // `29,90 × 12 × 0,8` dá 287.03999999999996 em ponto flutuante.
+    it('arredonda o anual a centavos', async () => {
       const result = (await service.setPricing({
         planType: PlanType.PLUS,
         monthlyPrice: 29.9,
-        quarterlyDiscount: 10,
-      })) as { quarterlyPrice: number };
+      })) as { yearlyPrice: number };
 
-      expect(result.quarterlyPrice).toBe(80.73);
+      expect(result.yearlyPrice).toBe(287.04);
     });
 
     it('desconto zero mantém o múltiplo exato', async () => {
       const result = (await service.setPricing({
         planType: PlanType.PLUS,
         monthlyPrice: 10,
-        quarterlyDiscount: 0,
-        biannualDiscount: 0,
         yearlyDiscount: 0,
-      })) as { quarterlyPrice: number; yearlyPrice: number };
+      })) as { yearlyPrice: number };
 
-      expect(result.quarterlyPrice).toBe(30);
       expect(result.yearlyPrice).toBe(120);
+    });
+
+    // O Stripe só vende mensal e anual.
+    it('não grava trimestral nem semestral', async () => {
+      const result = (await service.setPricing({
+        planType: PlanType.PLUS,
+        monthlyPrice: 10,
+      })) as { quarterlyPrice: null; biannualPrice: null };
+
+      expect(result.quarterlyPrice).toBeNull();
+      expect(result.biannualPrice).toBeNull();
     });
 
     it('desconto de 100% zera o preço, sem negativo', async () => {
@@ -307,7 +343,7 @@ describe('AdminBillingService', () => {
       expect(tx.planPricing.create.mock.calls[0][0].data.displayOrder).toBe(3);
     });
 
-    it('usa os descontos padrão quando não informados', async () => {
+    it('usa o desconto anual padrão quando não informado', async () => {
       await service.setPricing({
         planType: PlanType.PLUS,
         monthlyPrice: 10,
@@ -315,9 +351,137 @@ describe('AdminBillingService', () => {
 
       const { data } = tx.planPricing.create.mock.calls[0][0];
 
-      expect(data.quarterlyDiscount).toBe(10);
-      expect(data.biannualDiscount).toBe(15);
       expect(data.yearlyDiscount).toBe(20);
+    });
+  });
+
+  // -----------------------------------------------------------------
+  describe('sincronização com o Stripe', () => {
+    it('o preço vai ao Stripe antes de gravar, e a versão guarda os ids', async () => {
+      const ordem: string[] = [];
+      catalog.pushPricing.mockImplementation(() => {
+        ordem.push('stripe');
+        return Promise.resolve({
+          stripeProductId: 'prod_1',
+          stripeMonthlyPriceId: 'price_m',
+          stripeYearlyPriceId: 'price_y',
+        });
+      });
+      prisma.$transaction.mockImplementation(
+        (fn: (client: typeof tx) => unknown) => {
+          ordem.push('banco');
+          return fn(tx);
+        },
+      );
+
+      await service.setPricing({ planType: PlanType.PLUS, monthlyPrice: 30 });
+
+      expect(ordem).toEqual(['stripe', 'banco']);
+      expect(catalog.pushPricing).toHaveBeenCalledWith('PLUS', {
+        monthly: 30,
+        yearly: 288,
+      });
+      expect(tx.planPricing.create.mock.calls[0][0].data).toMatchObject({
+        stripeMonthlyPriceId: 'price_m',
+        stripeYearlyPriceId: 'price_y',
+        origin: 'painel',
+      });
+    });
+
+    // Painel dizendo um preço e Stripe cobrando outro é o defeito.
+    it('se o Stripe recusa, nada é gravado', async () => {
+      catalog.pushPricing.mockRejectedValue(new Error('recusou'));
+
+      await expect(
+        service.setPricing({ planType: PlanType.PLUS, monthlyPrice: 30 }),
+      ).rejects.toThrow('recusou');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('sem Stripe no ambiente, grava só aqui e diz por quê', async () => {
+      catalog.isConfigured.mockReturnValue(false);
+
+      await service.setPricing({ planType: PlanType.PLUS, monthlyPrice: 30 });
+
+      expect(catalog.pushPricing).not.toHaveBeenCalled();
+      expect(
+        tx.planPricing.create.mock.calls[0][0].data.stripeSyncError,
+      ).toContain('não configurado');
+    });
+
+    it('plano gratuito não vai ao Stripe', async () => {
+      await service.setPricing({ planType: PlanType.FREE, monthlyPrice: 0 });
+
+      expect(catalog.pushPricing).not.toHaveBeenCalled();
+    });
+
+    it('enviar ao Stripe usa o preço vigente e grava os ids nele', async () => {
+      prisma.planPricing.findFirst.mockResolvedValue({
+        id: 'pp-1',
+        monthlyPrice: 29.9,
+        yearlyPrice: 287.04,
+      });
+
+      await service.pushPricing('PLUS');
+
+      expect(catalog.pushPricing).toHaveBeenCalledWith('PLUS', {
+        monthly: 29.9,
+        yearly: 287.04,
+      });
+      expect(prisma.planPricing.update.mock.calls[0][0]).toMatchObject({
+        where: { id: 'pp-1' },
+        data: { stripeMonthlyPriceId: 'price_m', stripeSyncError: null },
+      });
+    });
+
+    it('trazer do Stripe é manual: não espera o eco e leva quem pediu', async () => {
+      await service.pullPricing('MENTOR', 'admin-1');
+
+      expect(catalog.adoptFromStripe).toHaveBeenCalledWith('MENTOR', {
+        ignorarEco: true,
+        actorId: 'admin-1',
+      });
+    });
+
+    it('cupom criado nasce também no Stripe', async () => {
+      await service.createCoupon(criar);
+
+      expect(catalog.syncCoupon).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'BEMVINDO20' }),
+      );
+    });
+
+    it('mudar o desconto troca o espelho; mudar a descrição, não', async () => {
+      prisma.coupon.update.mockResolvedValue(
+        cupom({ stripeCouponId: 'stripe_antigo' }),
+      );
+
+      await service.updateCoupon('coupon-1', { description: 'outra' });
+      expect(catalog.syncCoupon).not.toHaveBeenCalled();
+
+      await service.updateCoupon('coupon-1', { discountValue: 30 });
+      expect(catalog.syncCoupon).toHaveBeenCalledWith(expect.anything(), {
+        recriar: true,
+      });
+    });
+
+    it('cupom sem espelho ganha um em qualquer edição', async () => {
+      await service.updateCoupon('coupon-1', { description: 'outra' });
+
+      expect(catalog.syncCoupon).toHaveBeenCalledWith(expect.anything(), {
+        recriar: false,
+      });
+    });
+
+    it('remover apaga no banco e depois no Stripe', async () => {
+      prisma.coupon.findUnique.mockResolvedValue(
+        cupom({ stripeCouponId: 'stripe_1' }),
+      );
+
+      await service.deleteCoupon('coupon-1');
+
+      expect(prisma.coupon.delete).toHaveBeenCalled();
+      expect(catalog.deleteCoupon).toHaveBeenCalledWith('stripe_1');
     });
   });
 });

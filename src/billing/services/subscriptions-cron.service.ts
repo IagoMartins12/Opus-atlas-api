@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
+import { StripeService } from './stripe.service';
 import { SubscriptionsService } from './subscriptions.service';
 
 export interface CronCheckResult {
@@ -18,6 +19,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const ABANDONED_CHECKOUT_MS = 2 * DAY_MS;
 
 /**
+ * Folga para o webhook do fim do teste chegar. O teste é do Stripe: no fim
+ * dele vem a fatura (paga → ativa; recusada → atrasada). Só um teste que
+ * passou desta folga sem notícia nenhuma é dado como vencido aqui.
+ */
+const TRIAL_WEBHOOK_SLACK_MS = DAY_MS;
+
+/**
  * Job de manutenção diária de assinaturas — portado de
  * `cron/check-subscriptions/route.ts`. Chamado por um scheduler externo
  * (mesmo modelo do legado, ex. Vercel Cron / cron-job.org), protegido por
@@ -31,6 +39,7 @@ export class SubscriptionsCronService {
     private readonly prisma: PrismaService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly mailService: MailService,
+    private readonly stripeService: StripeService,
   ) {}
 
   async checkSubscriptions(): Promise<CronCheckResult> {
@@ -92,6 +101,8 @@ export class SubscriptionsCronService {
           firstName: subscription.user.firstName ?? 'Usuário',
           planType: subscription.planType,
           daysRemaining,
+          chargeDate: subscription.trialEndDate!,
+          amount: subscription.price ?? 0,
         });
 
         await this.prisma.subscriptionHistory.create({
@@ -119,7 +130,10 @@ export class SubscriptionsCronService {
     result: CronCheckResult,
   ): Promise<void> {
     const expiredTrials = await this.prisma.subscription.findMany({
-      where: { status: 'TRIAL', trialEndDate: { lt: now } },
+      where: {
+        status: 'TRIAL',
+        trialEndDate: { lt: new Date(now.getTime() - TRIAL_WEBHOOK_SLACK_MS) },
+      },
     });
 
     for (const subscription of expiredTrials) {
@@ -225,16 +239,26 @@ export class SubscriptionsCronService {
     result: CronCheckResult,
   ): Promise<void> {
     // Cancelada entra também: o acesso dela vale até `endDate`, e depois o
-    // plano em cache do usuário precisa voltar para o gratuito.
+    // plano em cache do usuário precisa voltar para o gratuito. Atrasada que
+    // passou do prazo (`PAYMENT_GRACE_DAYS`) é encerrada também no Stripe —
+    // senão ele seguiria tentando cobrar uma assinatura que aqui já acabou.
     const expired = await this.prisma.subscription.findMany({
       where: {
         status: { in: ['ACTIVE', 'PAST_DUE', 'CANCELLED'] },
         endDate: { lt: now },
       },
+      include: { user: true },
     });
 
     for (const subscription of expired) {
       try {
+        const unpaid = subscription.status === 'PAST_DUE';
+        if (unpaid && subscription.stripeSubscriptionId) {
+          await this.stripeService.cancelSubscriptionNow(
+            subscription.stripeSubscriptionId,
+          );
+        }
+
         await this.prisma.subscription.update({
           where: { id: subscription.id },
           data: { status: 'EXPIRED' },
@@ -256,9 +280,21 @@ export class SubscriptionsCronService {
             reason:
               subscription.status === 'CANCELLED'
                 ? 'Fim do período pago de assinatura cancelada'
-                : 'Assinatura expirada',
+                : unpaid
+                  ? 'Cobrança recusada e não resolvida no prazo'
+                  : 'Assinatura expirada',
           },
         });
+
+        if (unpaid && subscription.user?.email) {
+          await this.mailService.sendSubscriptionEndedEmail(
+            subscription.user.email,
+            {
+              firstName: subscription.user.firstName ?? 'Usuário',
+              planType: subscription.planType,
+            },
+          );
+        }
 
         result.subscriptionsExpired++;
       } catch (error) {

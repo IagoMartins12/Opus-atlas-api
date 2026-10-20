@@ -40,6 +40,11 @@ export class AchievementListResponseDto {
   @ApiProperty({ type: AchievementSummaryDto }) summary: AchievementSummaryDto;
 }
 
+export class AchievementNewResponseDto {
+  @ApiProperty({ type: [UnlockedAchievementDto] })
+  unlocked: UnlockedAchievementDto[];
+}
+
 export class AchievementProgressResponseDto {
   @ApiProperty({
     type: [LockedAchievementDto],

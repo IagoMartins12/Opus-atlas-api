@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+
+export const COMPOSER_WORK_SORTS = [
+  'famous',
+  'title',
+  'title-desc',
+  'recent',
+] as const;
+export type ComposerWorkSort = (typeof COMPOSER_WORK_SORTS)[number];
 
 export class ComposerWorksQueryDto {
   @ApiPropertyOptional({
@@ -92,4 +100,14 @@ export class ComposerWorksQueryDto {
   )
   @IsString()
   difficultyLevel?: string;
+
+  @ApiPropertyOptional({
+    enum: COMPOSER_WORK_SORTS,
+    default: 'famous',
+    description:
+      'Ordem: as mais conhecidas (escolhas da equipe, depois as mais estudadas, aprendidas e favoritadas), A–Z, Z–A ou as recém-chegadas.',
+  })
+  @IsOptional()
+  @IsIn(COMPOSER_WORK_SORTS)
+  sort?: ComposerWorkSort;
 }

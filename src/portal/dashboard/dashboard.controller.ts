@@ -1,4 +1,12 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiForbiddenResponse,
@@ -10,7 +18,10 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { DashboardService } from './dashboard.service';
-import { DashboardQueryDto } from './dto/dashboard-query.dto';
+import {
+  DashboardQueryDto,
+  PortalOnboardingDto,
+} from './dto/dashboard-query.dto';
 
 /**
  * Painel do portal.
@@ -42,5 +53,19 @@ export class DashboardController {
     @Query() query: DashboardQueryDto,
   ) {
     return this.service.getDashboard(user.sub, query);
+  }
+
+  @Post('onboarding')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Marca que a pessoa passou pelas boas-vindas do portal',
+    description:
+      'Concluídas ou puladas: as boas-vindas não abrem sozinhas de novo naquele papel.',
+  })
+  async finishOnboarding(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: PortalOnboardingDto,
+  ) {
+    return this.service.finishOnboarding(user.sub, dto.role);
   }
 }

@@ -36,10 +36,16 @@ import {
   MaintenanceTaskId,
 } from './maintenance-catalog';
 import {
+  DeleteOrphansDto,
+  DeleteTaskRunsDto,
+  ListOrphansQueryDto,
   ListMaintenanceFailuresDto,
+  ListTaskRunsQueryDto,
   RunMaintenanceTaskDto,
   SetMaintenanceScheduleDto,
 } from './dto/admin-maintenance.dto';
+import { TaskRunsService } from '../../common/queue/task-runs.service';
+import { OrphanFilesService } from './orphan-files.service';
 
 /**
  * Manutenção da plataforma.
@@ -59,7 +65,83 @@ export class AdminMaintenanceController {
   constructor(
     private readonly maintenance: AdminMaintenanceService,
     private readonly health: SystemHealthService,
+    private readonly runs: TaskRunsService,
+    private readonly orphans: OrphanFilesService,
   ) {}
+
+  @Get('orphans')
+  @ApiOperation({
+    summary: 'Arquivos órfãos, um a um',
+    description:
+      'A imagem, de onde era (e o nome do registro removido, quando a ' +
+      'remoção passou pela auditoria), quem enviou, quando e quanto pesa. ' +
+      '`tipo=sem-dono` lista os que não declaram dono — indeterminados, não ' +
+      'órfãos de certeza. Sem datas, todos.',
+  })
+  @ApiOkResponse({ description: 'Órfãos paginados, com o resumo' })
+  async listOrphans(@Query() query: ListOrphansQueryDto) {
+    return this.orphans.listar(
+      { de: query.de, ate: query.ate, tipo: query.tipo },
+      query.page ?? 1,
+      query.limit ?? 40,
+    );
+  }
+
+  @Post('orphans/delete')
+  @HttpCode(HttpStatus.OK)
+  @Audited({ action: 'storage.orphan.delete', entityType: 'storedAsset' })
+  @ApiOperation({
+    summary: 'Remove arquivos órfãos',
+    description:
+      'Confere de novo cada arquivo antes de apagar (o dono pode ter voltado). ' +
+      'Apaga do armazenamento e deixa o registro como removido. Até 200 por vez.',
+  })
+  @ApiOkResponse({ description: 'Quantos saíram e quais foram recusados' })
+  async deleteOrphans(@Body() dto: DeleteOrphansDto) {
+    return this.orphans.remover(dto.ids);
+  }
+
+  @Get('runs')
+  @ApiOperation({
+    summary: 'Histórico de execuções das tarefas',
+    description:
+      'Manutenção, varreduras do portal, publicação de artigos e rodadas de ' +
+      'scraper: quem disparou (o agendamento ou uma pessoa), quanto levou, o ' +
+      'que mudou e uma amostra do que foi afetado. As varreduras de minuto ' +
+      'só entram quando fizeram algo.',
+  })
+  @ApiOkResponse({ description: 'Execuções paginadas, da mais recente' })
+  async listRuns(@Query() query: ListTaskRunsQueryDto) {
+    return this.runs.listar(query, query.page ?? 1, query.limit ?? 30);
+  }
+
+  @Get('runs/summary')
+  @ApiOperation({
+    summary: 'Por tarefa: quantas vezes rodou, a última, falhas',
+  })
+  @ApiOkResponse({ description: 'Uma linha por tarefa que já rodou' })
+  async runsSummary() {
+    return { tarefas: await this.runs.resumo() };
+  }
+
+  @Post('runs/delete')
+  @HttpCode(HttpStatus.OK)
+  @Audited({ action: 'task-run.delete', entityType: 'taskRun' })
+  @ApiOperation({
+    summary: 'Apaga execuções do histórico',
+    description:
+      'As escolhidas (`ids`) ou todas antes de `before` (de uma tarefa, com ' +
+      '`task`). Sem nenhum dos dois, não apaga nada.',
+  })
+  @ApiOkResponse({ description: 'Quantas foram apagadas' })
+  async deleteRuns(@Body() dto: DeleteTaskRunsDto) {
+    if (!dto.ids?.length && !dto.before) {
+      throw new BadRequestException(
+        'Escolha as execuções ou uma data para apagar as anteriores.',
+      );
+    }
+    return this.runs.apagar(dto);
+  }
 
   @Get('tasks')
   @ApiOperation({

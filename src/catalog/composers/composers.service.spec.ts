@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AppCacheService } from '../../common/cache/cache.service';
 import { ComposersService } from './composers.service';
 
 const ID = '685d7a5ba35690a68f9df8ed';
@@ -55,8 +56,16 @@ describe('ComposersService', () => {
       findUnique: jest.Mock;
       count: jest.Mock;
     };
-    work: { findMany: jest.Mock; count: jest.Mock; groupBy: jest.Mock };
+    work: {
+      findMany: jest.Mock;
+      count: jest.Mock;
+      groupBy: jest.Mock;
+      aggregateRaw: jest.Mock;
+    };
     role: { findMany: jest.Mock };
+    wantToLearn: { groupBy: jest.Mock };
+    learned: { groupBy: jest.Mock };
+    favoriteWork: { groupBy: jest.Mock };
   };
   let cache: { get: jest.Mock; set: jest.Mock };
   let service: ComposersService;
@@ -73,17 +82,31 @@ describe('ComposersService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
         groupBy: jest.fn().mockResolvedValue([]),
+        aggregateRaw: jest
+          .fn()
+          .mockResolvedValue([
+            { _id: { $oid: 'c1' } },
+            { _id: { $oid: 'c2' } },
+          ]),
       },
       role: {
         findMany: jest
           .fn()
           .mockResolvedValue([{ name: 'Compositor' }, { name: 'Pianista' }]),
       },
+      wantToLearn: { groupBy: jest.fn().mockResolvedValue([]) },
+      learned: { groupBy: jest.fn().mockResolvedValue([]) },
+      favoriteWork: { groupBy: jest.fn().mockResolvedValue([]) },
     };
     cache = { get: jest.fn().mockResolvedValue(undefined), set: jest.fn() };
     service = new ComposersService(
       prisma as unknown as PrismaService,
       cache as unknown as Cache,
+      {
+        remember: jest.fn((_key: string, _opts: unknown, load: () => unknown) =>
+          load(),
+        ),
+      } as unknown as AppCacheService,
     );
   });
 
@@ -129,6 +152,63 @@ describe('ComposersService', () => {
       cache.get.mockResolvedValue([{ id: 'x' }]);
       await expect(service.findAll({})).resolves.toEqual([{ id: 'x' }]);
       expect(prisma.composer.count).not.toHaveBeenCalled();
+    });
+
+    it('a busca também olha os nomes alternativos', async () => {
+      await service.findAll({ search: 'szopen' });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND[1].OR[2].AND[0]).toEqual({
+        alternativeNames: { contains: 'szopen', mode: 'insensitive' },
+      });
+    });
+
+    it('país, retrato, nascimento e instrumento viram filtros', async () => {
+      await service.findAll({
+        nationality: 'German, Alemão',
+        withPortrait: true,
+        bornFrom: 1700,
+        bornTo: 1800,
+        instrumentId: '685d591c1e3db0c5aaa893e4',
+      });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { nationality: { in: ['Alemão', 'German'] } },
+          { hasValidImage: true },
+          { birthYear: { not: null, gte: 1700, lte: 1800 } },
+          { id: { in: ['c1', 'c2'] } },
+        ]),
+      );
+    });
+
+    // "Mais antigos / mais recentes" é o registro (quando entrou no acervo), não o
+    // nascimento; o ano de nascimento é o filtro "Nasceu entre".
+    it('mais antigos e mais recentes ordenam pelo registro, sem exigir o ano de nascimento', async () => {
+      await service.findAll({ sort: 'oldest' });
+      await service.findAll({ sort: 'newest' });
+
+      const [[asc], [desc]] = prisma.composer.findMany.mock.calls;
+      expect(asc.orderBy).toEqual([{ createdAt: 'asc' }]);
+      expect(desc.orderBy).toEqual([{ createdAt: 'desc' }]);
+      expect(asc.where.AND ?? []).not.toContainEqual({
+        birthYear: { not: null },
+      });
+    });
+
+    it('só verificados filtra pelo selo da equipe', async () => {
+      await service.findAll({ verified: true });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND).toContainEqual({ isVerified: true });
+    });
+
+    it('em destaque: retrato e ficha completa primeiro', async () => {
+      await service.findAll({ sort: 'featured' });
+
+      const [{ orderBy }] = prisma.composer.findMany.mock.calls[0];
+      expect(orderBy[0]).toEqual({ hasValidImage: 'desc' });
     });
 
     it('sem filtro, só o papel de compositor', async () => {
@@ -286,6 +366,7 @@ describe('ComposersService', () => {
         workType: 'SINGLE',
         difficultyLevel: 'ADVANCED',
         search: 'op.',
+        sort: 'title',
       });
 
       const [{ where }] = prisma.work.findMany.mock.calls[0];
@@ -309,6 +390,38 @@ describe('ComposersService', () => {
         workGenresArr: [],
         imslpTags: [],
       });
+    });
+
+    it('as mais conhecidas: escolhas da equipe, depois quem estuda, depois gravação', async () => {
+      prisma.composer.findUnique.mockResolvedValue({
+        id: ID,
+        startingWorkIds: ['w4'],
+      });
+      prisma.work.findMany
+        .mockResolvedValueOnce([
+          { id: 'w1', title: 'A', spotifyTrackId: null, youtubeVideoId: null },
+          { id: 'w2', title: 'B', spotifyTrackId: 's', youtubeVideoId: null },
+          { id: 'w3', title: 'C', spotifyTrackId: null, youtubeVideoId: null },
+          { id: 'w4', title: 'D', spotifyTrackId: null, youtubeVideoId: null },
+        ])
+        .mockImplementationOnce(({ where }) =>
+          Promise.resolve(
+            where.id.in.map((id: string) => ({ ...workRow, id, title: id })),
+          ),
+        );
+      prisma.wantToLearn.groupBy.mockResolvedValue([
+        { workId: 'w3', _count: { _all: 2 } },
+      ]);
+      prisma.favoriteWork.groupBy.mockResolvedValue([
+        { workId: 'w3', _count: { _all: 1 } },
+        { workId: 'w1', _count: { _all: 1 } },
+      ]);
+
+      const result = await service.findWorks(ID, { page: 1, limit: 3 });
+
+      expect(result.works.map((w) => w.id)).toEqual(['w4', 'w3', 'w1']);
+      expect(result).toMatchObject({ totalCount: 4, hasMore: true });
+      expect(prisma.work.count).not.toHaveBeenCalled();
     });
 
     it('compositor inexistente é 404; em cache não conta de novo', async () => {

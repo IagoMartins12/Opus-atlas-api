@@ -33,7 +33,7 @@ describe('AdminNewsletterService', () => {
     };
   };
   let mail: { send: jest.Mock };
-  let dispatch: { enqueuePlan: jest.Mock };
+  let dispatch: { enqueuePlan: jest.Mock; preview: jest.Mock };
 
   const campanha = (over: Record<string, unknown> = {}) => ({
     id: 'campaign-1',
@@ -90,6 +90,13 @@ describe('AdminNewsletterService', () => {
       enqueuePlan: jest
         .fn()
         .mockResolvedValue({ jobId: 'newsletter.plan.camp-1' }),
+      preview: jest.fn(
+        (c: { subject: string; html: string; text: string }) => ({
+          subject: c.subject,
+          html: c.html,
+          text: c.text,
+        }),
+      ),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -219,7 +226,12 @@ describe('AdminNewsletterService', () => {
 
       expect(mail.send).toHaveBeenCalledTimes(1);
       expect(mail.send.mock.calls[0][0].to).toBe('admin@opusatlas.com');
-      expect(mail.send.mock.calls[0][0].subject).toContain('[TESTE]');
+      expect(mail.send.mock.calls[0][0].subject).toBe(
+        '[TESTE] Cinco obras novas',
+      );
+      expect(dispatch.preview).toHaveBeenCalledWith(
+        expect.objectContaining({ html: '<p>oi</p>', source: 'custom' }),
+      );
       expect(result.sentTo).toBe('admin@opusatlas.com');
     });
 

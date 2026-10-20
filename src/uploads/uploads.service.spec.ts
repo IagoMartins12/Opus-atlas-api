@@ -8,7 +8,10 @@ import { UploadsService } from './uploads.service';
 
 describe('UploadsService', () => {
   let service: UploadsService;
-  let prisma: { storedAsset: { findUnique: jest.Mock } };
+  let prisma: {
+    storedAsset: { findUnique: jest.Mock };
+    user: { findUnique: jest.Mock };
+  };
   let storage: {
     createSignedUpload: jest.Mock;
     confirmUpload: jest.Mock;
@@ -33,7 +36,12 @@ describe('UploadsService', () => {
   };
 
   beforeEach(async () => {
-    prisma = { storedAsset: { findUnique: jest.fn() } };
+    prisma = {
+      storedAsset: { findUnique: jest.fn() },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ emailVerified: new Date() }),
+      },
+    };
 
     storage = {
       createSignedUpload: jest.fn().mockResolvedValue({
@@ -75,6 +83,44 @@ describe('UploadsService', () => {
     }).compile();
 
     service = module.get(UploadsService);
+  });
+
+  describe('e-mail confirmado', () => {
+    it('vídeo e partitura só de quem confirmou o e-mail, antes de reservar espaço', async () => {
+      prisma.user.findUnique.mockResolvedValue({ emailVerified: null });
+
+      await expect(
+        service.createSignedUpload('user-1', {
+          kind: StorageAssetKind.PERFORMANCE_VIDEO,
+          scopeId: 'work1',
+        }),
+      ).rejects.toThrow('Confirme seu e-mail para contribuir com o acervo.');
+      await expect(
+        service.uploadFile(
+          'user-1',
+          StorageAssetKind.SCORE_FILE,
+          'work1',
+          {} as never,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(storage.createSignedUpload).not.toHaveBeenCalled();
+      expect(storage.uploadFile).not.toHaveBeenCalled();
+    });
+
+    // Foto de perfil e miniatura não são contribuição: não pedem e-mail.
+    it('arquivo sem limite de plano não olha o e-mail', async () => {
+      prisma.user.findUnique.mockResolvedValue({ emailVerified: null });
+
+      await service
+        .createSignedUpload('user-1', {
+          kind: StorageAssetKind.PROFILE_IMAGE,
+          scopeId: 'user-1',
+        })
+        .catch(() => undefined);
+
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   describe('limite por plano (RN-1)', () => {
@@ -156,6 +202,24 @@ describe('UploadsService', () => {
         plan: 'MAESTRO',
         hasAccess: true,
         limit: undefined,
+      });
+      storage.countActiveByOwner.mockResolvedValue(999);
+
+      await expect(
+        service.createSignedUpload('user-1', {
+          kind: StorageAssetKind.PERFORMANCE_VIDEO,
+          scopeId: 'work1',
+        }),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('plano pago (limite -1)', () => {
+    it('não barra quem tem limite ilimitado, que a matriz de planos manda como -1', async () => {
+      subscriptions.checkFeatureAccess.mockResolvedValue({
+        plan: 'PLUS',
+        hasAccess: true,
+        limit: -1,
       });
       storage.countActiveByOwner.mockResolvedValue(999);
 

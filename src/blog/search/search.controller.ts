@@ -25,7 +25,7 @@ export class SearchController {
   @ApiOperation({
     summary: 'Busca textual em artigos publicados do blog',
     description:
-      'Chamadores admin (`role >= 1`) buscam em artigos de qualquer status.',
+      'Administradores (`role >= 2`) buscam em artigos de qualquer status.',
   })
   @ApiOkResponse({ type: SearchArticlesResponseDto })
   async search(

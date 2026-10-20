@@ -1,4 +1,13 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
@@ -14,7 +23,10 @@ import { AdminAuditService } from './admin-audit.service';
 import {
   AuditSummaryQueryDto,
   ListAuditQueryDto,
+  PurgeAuditDto,
 } from './dto/admin-operations.dto';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 
 /**
  * Operação: trilha de auditoria administrativa.
@@ -50,6 +62,23 @@ export class AdminOperationsController {
     return this.audit.list(query);
   }
 
+  @Post('purge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Apaga registros da trilha',
+    description:
+      'Os escolhidos (`ids`) ou os que casam com os filtros. Exige um dos ' +
+      'dois. Cada limpeza grava um `audit.purge` com quem, quantos e o ' +
+      'critério — e esse registro nenhuma limpeza alcança.',
+  })
+  @ApiOkResponse({ description: 'Quantos foram apagados' })
+  async purge(
+    @Body() dto: PurgeAuditDto,
+    @CurrentUser() user: AccessTokenPayload,
+  ) {
+    return this.audit.purge(dto, user.sub);
+  }
+
   @Get('summary')
   @ApiOperation({
     summary: 'Resumo do período',
@@ -58,6 +87,17 @@ export class AdminOperationsController {
   @ApiOkResponse({ description: 'Totais, taxa de falha e concentração' })
   async summary(@Query() query: AuditSummaryQueryDto) {
     return this.audit.summary(query);
+  }
+
+  @Get('facets')
+  @ApiOperation({
+    summary: 'Filtros disponíveis',
+    description:
+      'Ações, tipos de entidade e pessoas que aparecem na trilha, com contagem.',
+  })
+  @ApiOkResponse({ description: 'Ações, tipos e pessoas' })
+  async facets() {
+    return this.audit.facets();
   }
 
   @Get('export')

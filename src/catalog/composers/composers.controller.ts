@@ -23,6 +23,7 @@ import {
   ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/api-key.decorator';
+import { PublicCache } from '../../common/decorators/public-cache.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { ComposerCountQueryDto } from './dto/composer-count-query.dto';
 import { ComposerDetailDto } from './dto/composer-detail.dto';
@@ -34,6 +35,10 @@ import { ComposerWorksResponseDto } from './dto/composer-works-response.dto';
 import { ComposerWorkTypeCountsResponseDto } from './dto/composer-work-type-counts-response.dto';
 import { FeaturedComposerResponseDto } from './dto/featured-composer-response.dto';
 import { ComposersService } from './composers.service';
+import { ComposerOnThisDayService } from './composer-on-this-day.service';
+import { ComposerOverviewService } from './composer-overview.service';
+import { OnThisDayDto, OnThisDayQueryDto } from './dto/on-this-day.dto';
+import { ComposerOverviewDto } from './dto/composer-overview.dto';
 import { BiographyResult, ComposerBioService } from './composer-bio.service';
 import { BiographyRequestDto } from './dto/biography-request.dto';
 import {
@@ -49,6 +54,8 @@ export class ComposersController {
   constructor(
     private readonly composersService: ComposersService,
     private readonly bioService: ComposerBioService,
+    private readonly overview: ComposerOverviewService,
+    private readonly onThisDay: ComposerOnThisDayService,
   ) {}
 
   @Public()
@@ -139,6 +146,36 @@ export class ComposersController {
   })
   async findFeatured(): Promise<FeaturedComposerResponseDto> {
     return this.composersService.findFeatured();
+  }
+
+  @Public()
+  @PublicCache({ maxAgeSeconds: 3600, staleWhileRevalidateSeconds: 86400 })
+  @Get('on-this-day')
+  @ApiOperation({
+    summary: 'Composers born and who died on a calendar day',
+    description:
+      'For "born on a day like today": up to 48 each, best known first. ' +
+      'Only records whose date has month and day.',
+  })
+  @ApiOkResponse({ type: OnThisDayDto })
+  getOnThisDay(@Query() query: OnThisDayQueryDto): Promise<OnThisDayDto> {
+    return this.onThisDay.get(query.month, query.day);
+  }
+
+  @Public()
+  @PublicCache({ maxAgeSeconds: 300, staleWhileRevalidateSeconds: 3600 })
+  @Get(':id/overview')
+  @ApiOperation({
+    summary: 'What the composer wrote for, where to start and contemporaries',
+    description:
+      'One cached response for the composer page: top instrumentations, ' +
+      'the three easiest of the most studied works, and up to 15 random ' +
+      'composers alive at the same time (reshuffled hourly).',
+  })
+  @ApiOkResponse({ type: ComposerOverviewDto })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  getOverview(@Param('id') id: string): Promise<ComposerOverviewDto> {
+    return this.overview.getOverview(id);
   }
 
   @Public()

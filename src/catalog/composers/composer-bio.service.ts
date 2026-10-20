@@ -1,3 +1,4 @@
+import { composerDetailCacheKey } from './composer-cache-keys';
 import {
   HttpException,
   HttpStatus,
@@ -9,7 +10,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { isMongoId } from 'class-validator';
 import { AiTextService, AiUnavailableError } from '../../ai/ai-text.service';
-import { CacheNamespace } from '../../common/cache/cache-keys';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { localDate } from '../../common/utils/time-zone';
@@ -21,6 +21,7 @@ import {
   cleanBio,
   hasBio,
   TRANSLATION_SYSTEM,
+  TRANSLATION_TO_PT_SYSTEM,
   translationPrompt,
 } from './composer-bio.prompt';
 
@@ -227,11 +228,15 @@ export class ComposerBioService {
     };
   }
 
-  /** Traduz para o inglês um texto em português do formulário, sem gravar. */
-  async translateText(portuguese: string): Promise<string> {
+  /**
+   * Traduz um texto sem gravar: português → inglês (o padrão, o do
+   * formulário) ou inglês → português (`to: 'pt'`, a biografia contribuída
+   * em inglês).
+   */
+  async translateText(text: string, to: BioLanguage = 'en'): Promise<string> {
     const completion = await this.call({
-      system: TRANSLATION_SYSTEM,
-      prompt: translationPrompt(portuguese),
+      system: to === 'en' ? TRANSLATION_SYSTEM : TRANSLATION_TO_PT_SYSTEM,
+      prompt: translationPrompt(text),
       maxTokens: TRANSLATION_MAX_TOKENS,
     });
 
@@ -314,6 +319,9 @@ export class ComposerBioService {
         bio: text,
         bioGeneratedBy: completion.generatedBy,
         bioGeneratedAt: new Date(),
+        // A new AI text: whatever review there was belonged to the old one.
+        bioReviewedAt: null,
+        bioReviewedBy: null,
       },
     });
     await this.forgetDetail(composer.id);
@@ -386,6 +394,6 @@ export class ComposerBioService {
   }
 
   private async forgetDetail(composerId: string): Promise<void> {
-    await this.cache.del(`${CacheNamespace.COMPOSERS}:detail:${composerId}`);
+    await this.cache.del(composerDetailCacheKey(composerId));
   }
 }

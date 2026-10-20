@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsInt,
   IsOptional,
@@ -100,4 +101,105 @@ export class FreeSlotsQueryDto {
   @Min(15)
   @Max(480)
   minMinutes?: number;
+}
+
+/**
+ * O esquema de aulas do professor (04/10/2026) — a régua do motor de agenda.
+ * Tudo opcional: o PATCH muda só o que veio.
+ */
+export class SchedulingSettingsDto {
+  @ApiPropertyOptional({
+    example: 60,
+    description: 'Duração padrão de uma aula, em minutos.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(15)
+  @Max(240)
+  defaultLessonDuration?: number;
+
+  @ApiPropertyOptional({
+    example: 15,
+    description: 'Folga mínima entre duas aulas.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(120)
+  bufferMinutes?: number;
+
+  @ApiPropertyOptional({
+    example: 40,
+    description: 'Tempo para ir de um lugar físico a outro.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(240)
+  travelMinutes?: number;
+
+  @ApiPropertyOptional({
+    example: 6,
+    nullable: true,
+    description: 'Sem valor: sem limite.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  maxLessonsPerDay?: number | null;
+
+  @ApiPropertyOptional({ example: 25, nullable: true })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  maxLessonsPerWeek?: number | null;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  acceptsLessonRequests?: boolean;
+
+  @ApiPropertyOptional({
+    example: 12,
+    description: 'Antecedência mínima de um pedido de aula, em horas.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(168)
+  requestLeadHours?: number;
+
+  @ApiPropertyOptional({
+    example: 45,
+    description: 'Até quantos dias à frente o aluno pode pedir.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(180)
+  requestHorizonDays?: number;
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [1440, 30],
+    description: 'Lembretes, em minutos antes da aula.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @Min(5, { each: true })
+  @Max(10080, { each: true })
+  lessonReminderMinutes?: number[];
 }

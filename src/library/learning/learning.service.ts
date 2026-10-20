@@ -4,7 +4,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { StorageAssetKind, StorageAssetStatus } from '@prisma/client';
+import {
+  SchoolActivityAction,
+  StorageAssetKind,
+  StorageAssetStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { errorMessage } from '../../common/utils/error.util';
@@ -20,12 +24,15 @@ import {
 } from './utils/progress-milestones.util';
 import { toJsonInput } from '../../common/utils/json.util';
 import { ActivityTracker } from '../../common/events/activity-tracker.service';
+import { SchoolActivitiesService } from '../../portal/school-activities/school-activities.service';
 
 const WORK_SELECT = {
   id: true,
   title: true,
   opOrCatalog: true,
-  composer: { select: { name: true, fullName: true } },
+  composer: {
+    select: { id: true, name: true, fullName: true, portraitUrl: true },
+  },
 } as const;
 
 const WORK_SELECT_WITH_INSTRUMENT = {
@@ -51,6 +58,7 @@ export class LearningService {
     private readonly prisma: PrismaService,
     private readonly activity: ActivityTracker,
     private readonly storage: StorageService,
+    private readonly schoolActivities: SchoolActivitiesService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -129,6 +137,7 @@ export class LearningService {
     });
 
     this.activity.track(userId, 'learning', 'learning.want-to-learn.added');
+    await this.recordForStudent(userId, 'want', item.work);
 
     return { success: true, action: 'added' as const, item };
   }
@@ -300,6 +309,7 @@ export class LearningService {
     }
 
     this.activity.track(userId, 'learning', 'learning.learned.added');
+    await this.recordForStudent(userId, 'learned', item.work);
 
     return { success: true, action: 'added' as const, item };
   }
@@ -463,6 +473,38 @@ export class LearningService {
    * do Next) não tem registro aqui e fica onde está. Falha no provedor não
    * desfaz a mudança do item: o arquivo vira órfão, e a varredura o acha.
    */
+  /**
+   * Quem é aluno vê o "quero aprender" e o "já aprendi" no histórico do
+   * portal (05/10/2026). Quem não é aluno não tem histórico escolar: nada a
+   * registrar.
+   */
+  private async recordForStudent(
+    userId: string,
+    list: 'want' | 'learned',
+    work: { id: string; title: string },
+  ) {
+    const student = await this.prisma.student.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!student) return;
+    await this.schoolActivities.record({
+      userId,
+      userType: 'student',
+      action:
+        list === 'want'
+          ? SchoolActivityAction.WORK_WANTED
+          : SchoolActivityAction.WORK_LEARNED,
+      entityType: 'work',
+      entityId: work.id,
+      entityName: work.title,
+      title:
+        list === 'want'
+          ? `Pôs "${work.title}" no quero aprender`
+          : `Pôs "${work.title}" no já aprendi`,
+    });
+  }
+
   private async dropVideo(
     userId: string,
     videoUrl: string | null | undefined,
@@ -491,7 +533,7 @@ export class LearningService {
   }
 
   private async assertWorkScoreBelongsToWork(
-    selectedWorkScoreId: string | undefined,
+    selectedWorkScoreId: string | null | undefined,
     workId: string,
   ): Promise<void> {
     if (!selectedWorkScoreId) return;

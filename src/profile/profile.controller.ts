@@ -50,6 +50,7 @@ import {
 import { ProfileQueryDto } from './dto/profile-query.dto';
 import { RequestEmailChangeDto } from './dto/request-email-change.dto';
 import { OnboardingDto, UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdateLanguageDto } from './dto/update-language.dto';
 import { PersonalDataExportService } from './export/personal-data-export.service';
 import { ProfileService, ProfileView } from './profile.service';
 
@@ -142,6 +143,24 @@ export class ProfileController {
     @Body() dto: OnboardingDto,
   ): Promise<ProfileView> {
     return this.profileService.completeOnboarding(user.sub, dto);
+  }
+
+  @Patch('language')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Guarda o idioma do site',
+    description:
+      'Chamada quando a pessoa troca o idioma no site. Os e-mails passam a ' +
+      'chegar nesse idioma.',
+  })
+  @ApiNoContentResponse({ description: 'Idioma guardado' })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  async updateLanguage(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: UpdateLanguageDto,
+  ): Promise<void> {
+    await this.profileService.setLanguage(user.sub, dto.language);
   }
 
   @Patch('password')

@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsMongoId,
   IsOptional,
@@ -19,6 +20,16 @@ export class InviteStudentDto {
   })
   @IsMongoId()
   studentUserId: string;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Evita a verificação: o vínculo nasce aceito, sem e-mail de convite (só para conta existente).',
+  })
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  skipVerification?: boolean;
 
   @ApiPropertyOptional({ default: 1, maximum: 7 })
   @IsOptional()

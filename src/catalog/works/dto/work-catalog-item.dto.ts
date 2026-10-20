@@ -12,6 +12,9 @@ class WorkCatalogComposerDto {
 
   @ApiProperty({ example: 'Romantismo', nullable: true })
   epochName: string | null;
+
+  @ApiProperty({ nullable: true, required: false })
+  portraitUrl?: string;
 }
 
 class WorkCatalogInstrumentDto {
@@ -54,6 +57,16 @@ export class WorkCatalogItemDto {
 
   @ApiProperty({ example: true })
   isVerified: boolean;
+
+  @ApiProperty({ description: 'Tem gravação (Spotify, YouTube ou áudio)' })
+  hasRecording: boolean;
+
+  @ApiProperty({
+    nullable: true,
+    required: false,
+    description: 'Nível IMSLP 1–12, ou BEGINNER/INTERMEDIATE/ADVANCED',
+  })
+  difficultyLevel?: string;
 
   @ApiProperty({ type: WorkCatalogEpochDto, required: false, nullable: true })
   epoch?: WorkCatalogEpochDto;

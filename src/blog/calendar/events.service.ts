@@ -14,6 +14,7 @@ import { urlField } from '../shared/url-field';
 import {
   CreateEventDto,
   CreateVenueDto,
+  MAX_FEATURED_EVENTS,
   UpdateEventDto,
   UpdateVenueDto,
 } from './dto/calendar.dto';
@@ -75,16 +76,20 @@ export class EventsService {
     const status = dto.status ?? EventStatus.PENDING;
     const now = new Date();
 
+    const startDate = new Date(dto.startDate);
+    const featured = await this.featuredPlan(dto, null, startDate);
+
     const event = await this.prisma.event.create({
       data: {
         ...this.eventData(dto),
+        ...featured.data,
         title: dto.title.trim(),
         slug: await this.uniqueSlug('event', dto.title),
         type: dto.type,
         status,
         source: EventSource.ADMIN,
         venueId: dto.venueId,
-        startDate: new Date(dto.startDate),
+        startDate,
         submittedBy: userId,
         submittedAt: now,
         publishedAt: status === EventStatus.PUBLISHED ? now : null,
@@ -95,6 +100,7 @@ export class EventsService {
       include: { venue: true },
     });
 
+    await featured.release(event.id);
     await this.invalidate();
 
     return { success: true, event, message: 'Evento criado com sucesso' };
@@ -103,7 +109,14 @@ export class EventsService {
   async updateEvent(id: string, dto: UpdateEventDto, userId: string) {
     const existing = await this.prisma.event.findUnique({
       where: { id: this.validId(id, 'Evento') },
-      select: { publishedAt: true, isVerified: true, startDate: true },
+      select: {
+        publishedAt: true,
+        isVerified: true,
+        startDate: true,
+        isFeatured: true,
+        featuredOrder: true,
+        featuredSize: true,
+      },
     });
 
     if (!existing) {
@@ -135,12 +148,22 @@ export class EventsService {
       data.verifiedAt = now;
     }
 
+    const featured = await this.featuredPlan(
+      dto,
+      { id, ...existing },
+      dto.startDate !== undefined
+        ? new Date(dto.startDate)
+        : existing.startDate,
+    );
+    Object.assign(data, featured.data);
+
     const event = await this.prisma.event.update({
       where: { id },
       data: data as Prisma.EventUncheckedUpdateInput,
       include: { venue: true },
     });
 
+    await featured.release(event.id);
     await this.invalidate();
 
     return { success: true, event, message: 'Evento atualizado com sucesso' };
@@ -241,6 +264,89 @@ export class EventsService {
 
   // -------------------------------------------------------------------
 
+  /**
+   * O destaque do evento no mosaico da agenda: até três por mês (o mês em
+   * que o evento começa, no fuso de Brasília), cada um numa posição.
+   *
+   * Sem posição, o evento entra na menor livre; com o mês cheio e sem
+   * posição, a gravação é recusada. **Posição ocupada é substituída**: o
+   * evento que estava nela deixa de ser destaque (`release`, depois de
+   * gravar). Mudar o evento de mês leva o destaque junto e confere de novo.
+   */
+  private async featuredPlan(
+    dto: UpdateEventDto,
+    existing: {
+      id: string;
+      isFeatured: boolean;
+      featuredOrder: number | null;
+      featuredSize: string | null;
+    } | null,
+    startDate: Date,
+  ): Promise<{ data: Data; release: (id: string) => Promise<void> }> {
+    const nothing = { data: {}, release: async () => undefined };
+    const featuring = dto.isFeatured ?? existing?.isFeatured ?? false;
+
+    if (!featuring) {
+      return dto.isFeatured === false
+        ? {
+            data: {
+              isFeatured: false,
+              featuredOrder: null,
+              featuredSize: null,
+            },
+            release: nothing.release,
+          }
+        : nothing;
+    }
+
+    const touched =
+      dto.isFeatured !== undefined ||
+      dto.featuredOrder !== undefined ||
+      dto.featuredSize !== undefined ||
+      dto.startDate !== undefined;
+    if (!touched) return nothing;
+
+    const { start, end } = monthOf(startDate);
+    const others = await this.prisma.event.findMany({
+      where: {
+        isFeatured: true,
+        startDate: { gte: start, lt: end },
+        ...(existing ? { id: { not: existing.id } } : {}),
+      },
+      select: { id: true, featuredOrder: true },
+    });
+    const taken = new Set(others.map((o) => o.featuredOrder));
+
+    let order = dto.featuredOrder ?? existing?.featuredOrder ?? null;
+    if (!order || (dto.featuredOrder == null && taken.has(order))) {
+      order =
+        Array.from({ length: MAX_FEATURED_EVENTS }, (_, i) => i + 1).find(
+          (n) => !taken.has(n),
+        ) ?? null;
+      if (!order) {
+        throw new BadRequestException(
+          `Este mês já tem ${MAX_FEATURED_EVENTS} eventos em destaque. ` +
+            'Escolha uma posição para substituir um deles.',
+        );
+      }
+    }
+
+    const displaced = others.filter((o) => o.featuredOrder === order);
+    const size = dto.featuredSize ?? existing?.featuredSize ?? 'normal';
+
+    return {
+      data: { isFeatured: true, featuredOrder: order, featuredSize: size },
+      release: async (id: string) => {
+        const ids = displaced.map((o) => o.id).filter((other) => other !== id);
+        if (!ids.length) return;
+        await this.prisma.event.updateMany({
+          where: { id: { in: ids } },
+          data: { isFeatured: false, featuredOrder: null, featuredSize: null },
+        });
+      },
+    };
+  }
+
   private eventData(dto: UpdateEventDto, currentStart?: Date): Data {
     const data: Data = {};
     const set = (key: string, value: unknown) => {
@@ -276,9 +382,8 @@ export class EventsService {
     }
 
     set('isFree', dto.isFree);
-    set('isFeatured', dto.isFeatured);
-    set('featuredOrder', dto.featuredOrder);
     set('isVerified', dto.isVerified);
+    set('showOnMainHome', dto.showOnMainHome);
     set('duration', dto.duration);
 
     set(
@@ -404,4 +509,18 @@ export class EventsService {
 function trimmed(value: string | null | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   return value?.trim() || null;
+}
+
+/**
+ * O mês (de Brasília) em que um instante cai, como intervalo em UTC. O
+ * Brasil não tem horário de verão desde 2019: o deslocamento é fixo.
+ */
+function monthOf(date: Date): { start: Date; end: Date } {
+  const local = new Date(date.getTime() - 3 * 3_600_000);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  return {
+    start: new Date(Date.UTC(year, month, 1, 3)),
+    end: new Date(Date.UTC(year, month + 1, 1, 3)),
+  };
 }

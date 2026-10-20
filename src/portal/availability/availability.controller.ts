@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -28,6 +29,7 @@ import {
   CreateAvailabilityBlockDto,
   FreeSlotsQueryDto,
   ReplaceAvailabilityDto,
+  SchedulingSettingsDto,
 } from './dto/availability.dto';
 
 /**
@@ -52,6 +54,36 @@ export class AvailabilityController {
   })
   getMine(@CurrentUser() user: AccessTokenPayload) {
     return this.service.getMine(user.sub);
+  }
+
+  @Get('settings')
+  @ApiOperation({
+    summary: 'Meu esquema de aulas',
+    description:
+      'Duração padrão, folga, deslocamento, limites e regras de pedido de aula.',
+  })
+  @ApiOkResponse({ description: 'O esquema' })
+  @ApiForbiddenResponse({
+    description: 'Sem perfil de professor',
+    type: ErrorResponseDto,
+  })
+  getSettings(@CurrentUser() user: AccessTokenPayload) {
+    return this.service.getSettings(user.sub);
+  }
+
+  @Patch('settings')
+  @ApiOperation({
+    summary: 'Ajustar o esquema de aulas',
+    description:
+      'Muda só os campos enviados. `null` em um limite tira o limite.',
+  })
+  @ApiOkResponse({ description: 'O esquema como ficou' })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  updateSettings(
+    @CurrentUser() user: AccessTokenPayload,
+    @Body() dto: SchedulingSettingsDto,
+  ) {
+    return this.service.updateSettings(user.sub, dto);
   }
 
   @Put()

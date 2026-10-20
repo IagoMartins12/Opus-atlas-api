@@ -1,4 +1,5 @@
 import { AppCacheService } from '../../common/cache/cache.service';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { TeacherInvitationService } from './teacher-invitation.service';
 import {
   BadRequestException,
@@ -11,7 +12,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdminUsersService } from './admin-users.service';
 
 describe('AdminUsersService', () => {
-  const invitations = { send: jest.fn().mockResolvedValue(true) };
+  const invitations = {
+    send: jest.fn().mockResolvedValue(true),
+    getPending: jest.fn().mockResolvedValue(null),
+    updatePending: jest.fn().mockResolvedValue({}),
+  };
+  const subscriptions = { updateGrantedPlan: jest.fn().mockResolvedValue({}) };
+  /** Convidar exige o plano: é ele que dá o limite de alunos. */
+  const convite = {
+    isTeacher: true,
+    teacherPlanGrant: { planType: 'MENTOR' as const },
+  };
 
   let service: AdminUsersService;
   let prisma: {
@@ -27,6 +38,10 @@ describe('AdminUsersService', () => {
     favoriteWork: { groupBy: jest.Mock };
     learned: { groupBy: jest.Mock };
     storedAsset: { groupBy: jest.Mock };
+    wantToLearn: { groupBy: jest.Mock; findMany: jest.Mock; count: jest.Mock };
+    uploadHistory: { groupBy: jest.Mock };
+    subscription: { findFirst: jest.Mock; findMany: jest.Mock };
+    adminAuditLog: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let tx: {
@@ -52,6 +67,11 @@ describe('AdminUsersService', () => {
     };
 
     prisma = {
+      subscription: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      adminAuditLog: { findMany: jest.fn().mockResolvedValue([]) },
       user: {
         findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(alvo()),
@@ -67,6 +87,12 @@ describe('AdminUsersService', () => {
       favoriteWork: { groupBy: jest.fn().mockResolvedValue([]) },
       learned: { groupBy: jest.fn().mockResolvedValue([]) },
       storedAsset: { groupBy: jest.fn().mockResolvedValue([]) },
+      wantToLearn: {
+        groupBy: jest.fn().mockResolvedValue([]),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      uploadHistory: { groupBy: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((fn: (client: typeof tx) => unknown) => fn(tx)),
     };
 
@@ -76,6 +102,7 @@ describe('AdminUsersService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: AppCacheService, useValue: { invalidateMany: jest.fn() } },
         { provide: TeacherInvitationService, useValue: invitations },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -147,7 +174,7 @@ describe('AdminUsersService', () => {
     // No legado o `teacher.create` acontecia antes do `user.update`: falhando o
     // segundo, sobrava perfil de professor numa conta que não é professor.
     it('conta e perfil mudam na mesma transação', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(tx.user.update).toHaveBeenCalled();
@@ -156,14 +183,14 @@ describe('AdminUsersService', () => {
     });
 
     it('promover a professor cria o perfil e marca a conta', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.user.update.mock.calls[0][0].data.isTeacher).toBe(true);
     });
 
     // Promover a professor não é o mesmo que aprovar o professor.
     it('o perfil nasce pendente e não verificado', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.teacher.create.mock.calls[0][0].data).toEqual({
         userId: 'user-2',
@@ -177,7 +204,7 @@ describe('AdminUsersService', () => {
         alvo({ teacherProfile: { id: 'teacher-1' } }),
       );
 
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
       expect(tx.teacher.create).not.toHaveBeenCalled();
     });
@@ -198,9 +225,150 @@ describe('AdminUsersService', () => {
     });
 
     it('promover a professor envia o convite', async () => {
-      await service.update('admin-1', 'user-2', { isTeacher: true });
+      await service.update('admin-1', 'user-2', convite);
 
-      expect(invitations.send).toHaveBeenCalledWith('user-2', 'admin-1');
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        { planType: 'MENTOR', expiresAt: null },
+        undefined,
+      );
+    });
+
+    // Sem plano, o professor ficava no Free, com 0 alunos.
+    it('convidar sem plano é recusado', async () => {
+      invitations.send.mockClear();
+      await expect(
+        service.update('admin-1', 'user-2', { isTeacher: true }),
+      ).rejects.toThrow('Escolha o plano do professor convidado');
+      expect(invitations.send).not.toHaveBeenCalled();
+    });
+
+    it('a validade escolhida para o convite vai junto', async () => {
+      const ate = new Date(Date.now() + 10 * 86_400_000).toISOString();
+
+      await service.update('admin-1', 'user-2', {
+        ...convite,
+        teacherInviteExpiresAt: ate,
+      });
+
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        expect.anything(),
+        new Date(ate),
+      );
+    });
+
+    it('validade do convite no passado é recusada', async () => {
+      await expect(
+        service.update('admin-1', 'user-2', {
+          ...convite,
+          teacherInviteExpiresAt: '2020-01-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow('A validade do convite precisa ser futura');
+    });
+
+    it('editar o convite pendente passa datas como Date e nulo como nulo', async () => {
+      const ate = new Date(Date.now() + 5 * 86_400_000).toISOString();
+
+      await service.updateTeacherInvitation('admin-1', 'user-2', {
+        planType: 'MAESTRO',
+        planExpiresAt: null,
+        inviteExpiresAt: ate,
+      });
+
+      expect(invitations.updatePending).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        {
+          planType: 'MAESTRO',
+          planExpiresAt: null,
+          inviteExpiresAt: new Date(ate),
+          resend: undefined,
+        },
+      );
+    });
+
+    it('editar o plano concedido de uma conta que não existe é 404', async () => {
+      await expect(
+        service.updateGrantedPlan('admin-1', 'user-x', { planType: 'MAESTRO' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      prisma.user.count.mockResolvedValue(1);
+      await service.updateGrantedPlan('admin-1', 'user-2', {
+        expiresAt: null,
+      });
+      expect(subscriptions.updateGrantedPlan).toHaveBeenCalledWith(
+        'user-2',
+        { planType: undefined, expiresAt: null },
+        'admin-1',
+      );
+    });
+
+    // Antes, quem já tinha sido professor voltava sem convite e com o perfil
+    // ainda inativo.
+    it('reconvidar um ex-professor volta o perfil a pendente e envia o convite', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        alvo({ teacherProfile: { id: 'teacher-1' } }),
+      );
+
+      await service.update('admin-1', 'user-2', convite);
+
+      expect(tx.teacher.update.mock.calls[0][0].data).toEqual({
+        status: 'PENDING',
+      });
+      expect(invitations.send).toHaveBeenCalled();
+    });
+
+    it('o plano escolhido pelo admin vai com o convite', async () => {
+      const ate = new Date(Date.now() + 60 * 86_400_000).toISOString();
+
+      await service.update('admin-1', 'user-2', {
+        isTeacher: true,
+        teacherPlanGrant: { planType: 'MAESTRO', expiresAt: ate },
+      });
+
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        { planType: 'MAESTRO', expiresAt: new Date(ate) },
+        undefined,
+      );
+    });
+
+    it('plano sem vencimento vai como nulo', async () => {
+      await service.update('admin-1', 'user-2', {
+        isTeacher: true,
+        teacherPlanGrant: { planType: 'MENTOR' },
+      });
+
+      expect(invitations.send).toHaveBeenCalledWith(
+        'user-2',
+        'admin-1',
+        { planType: 'MENTOR', expiresAt: null },
+        undefined,
+      );
+    });
+
+    it('plano sem convite de professor é recusado', async () => {
+      await expect(
+        service.update('admin-1', 'user-2', {
+          teacherPlanGrant: { planType: 'MENTOR' },
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('vencimento no passado é recusado', async () => {
+      await expect(
+        service.update('admin-1', 'user-2', {
+          isTeacher: true,
+          teacherPlanGrant: {
+            planType: 'MENTOR',
+            expiresAt: '2020-01-01T00:00:00.000Z',
+          },
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     // Papel 1 é administrador. O legado usava role 1 para "fazer professor".
@@ -255,8 +423,34 @@ describe('AdminUsersService', () => {
 
       const { where } = prisma.user.findMany.mock.calls[0][0];
 
-      expect(where.OR).toHaveLength(4);
-      expect(where.OR[0].email.mode).toBe('insensitive');
+      expect(where.AND[0].OR).toHaveLength(4);
+      expect(where.AND[0].OR[0].email.mode).toBe('insensitive');
+    });
+
+    it('filtra por e-mail confirmado, atividade e plano vivo', async () => {
+      prisma.subscription.findMany.mockResolvedValue([{ userId: 'pagante' }]);
+
+      await service.list({
+        emailVerified: false,
+        activity: 'never',
+        plan: 'PLUS',
+      });
+
+      const { where } = prisma.user.findMany.mock.calls[0][0];
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { emailVerified: null },
+          { lastSeen: null },
+          { id: { in: ['pagante'] } },
+        ]),
+      );
+    });
+
+    it('Free é quem não tem assinatura viva', async () => {
+      prisma.subscription.findMany.mockResolvedValue([{ userId: 'pagante' }]);
+      await service.list({ plan: 'FREE' });
+      const { where } = prisma.user.findMany.mock.calls[0][0];
+      expect(where.AND).toContainEqual({ id: { notIn: ['pagante'] } });
     });
 
     it('sem busca, não monta OR vazio', async () => {
@@ -397,6 +591,42 @@ describe('AdminUsersService', () => {
 
       expect(prisma.user.findMany.mock.calls[0][0].take).toBe(10_000);
       expect(result).toMatchObject({ truncated: false });
+    });
+  });
+
+  describe('itens da conta', () => {
+    it('quero aprender vem com a obra e o compositor, paginado', async () => {
+      prisma.user.count.mockResolvedValue(1);
+      prisma.wantToLearn.findMany.mockResolvedValue([
+        {
+          id: 'w1',
+          addedAt: new Date('2026-09-01'),
+          progress: 40,
+          work: { id: 'obra', title: 'Rêverie', composer: { name: 'Debussy' } },
+        },
+      ]);
+      prisma.wantToLearn.count.mockResolvedValue(21);
+
+      const r = await service.items('user-2', {
+        kind: 'quero-aprender',
+        page: 2,
+        limit: 20,
+      });
+
+      expect(prisma.wantToLearn.findMany.mock.calls[0][0].skip).toBe(20);
+      expect(r.items[0]).toMatchObject({
+        titulo: 'Rêverie',
+        detalhe: 'Debussy · 40% do caminho',
+        workId: 'obra',
+      });
+      expect(r.pagination.totalPages).toBe(2);
+    });
+
+    it('conta que não existe é 404', async () => {
+      prisma.user.count.mockResolvedValue(0);
+      await expect(
+        service.items('nada', { kind: 'favoritos' }),
+      ).rejects.toThrow('Usuário não encontrado');
     });
   });
 });

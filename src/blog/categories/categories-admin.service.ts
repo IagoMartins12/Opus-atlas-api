@@ -198,6 +198,38 @@ export class CategoriesAdminService {
    * transação: um id inexistente derrubava a rota com 500 depois de parte das
    * posições já gravadas.
    */
+  /**
+   * As seções do início, de cima para baixo. Quem está na lista ganha seção
+   * na posição dela; quem não está, sai do início. Uma transação: o início
+   * nunca fica com duas seções na mesma posição.
+   */
+  async setHomeSections(ids: string[]) {
+    if (new Set(ids).size !== ids.length) {
+      throw new BadRequestException('Uma mesma categoria aparece duas vezes');
+    }
+
+    await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const found = await tx.blogCategory.count({ where: { id: { in: ids } } });
+      if (found !== ids.length) {
+        throw new BadRequestException('Categoria inexistente na lista');
+      }
+      await tx.blogCategory.updateMany({
+        where: { id: { notIn: ids } },
+        data: { showOnHome: false, homeOrder: null },
+      });
+      for (const [i, id] of ids.entries()) {
+        await tx.blogCategory.update({
+          where: { id },
+          data: { showOnHome: true, homeOrder: i },
+        });
+      }
+    });
+
+    await this.invalidate();
+
+    return { success: true, message: 'Seções do início gravadas' };
+  }
+
   async reorder(items: CategoryOrderDto[]) {
     const ids = items.map((item) => item.id);
 
@@ -331,6 +363,11 @@ export class CategoriesAdminService {
     set('showInMenu', dto.showInMenu);
     set('metaTitle', trimmed(dto.metaTitle));
     set('metaDescription', trimmed(dto.metaDescription));
+    set('inMoreMenu', dto.inMoreMenu);
+    set('showOnHome', dto.showOnHome);
+    if (dto.translation !== undefined) {
+      data.translation = translationJson(dto.translation);
+    }
 
     return data;
   }
@@ -439,4 +476,15 @@ export class CategoriesAdminService {
 function trimmed(value: string | null | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   return value?.trim() || null;
+}
+
+/** Tradução sem campos vazios; nada preenchido vira `null` no banco. */
+function translationJson(value: object | null): Prisma.InputJsonValue | null {
+  if (!value) return null;
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(value)) {
+    const trimmedText = typeof text === 'string' ? text.trim() : '';
+    if (trimmedText) out[key] = trimmedText;
+  }
+  return Object.keys(out).length ? out : null;
 }

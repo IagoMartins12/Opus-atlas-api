@@ -44,11 +44,21 @@ export const QUEUE_SCRAPER = 'scraper';
  */
 export const QUEUE_NOTIFICATIONS = 'notifications';
 
+/**
+ * Partituras do IMSLP sob demanda (01/10).
+ *
+ * Fila própria, e não a de scraping: aquela é das casas de espetáculo, abre
+ * navegador e roda um job por vez durante minutos; esta é uma leitura curta
+ * por obra, pedida por quem visita, com limitador próprio para o IMSLP.
+ */
+export const QUEUE_IMSLP = 'imslp';
+
 export const QUEUE_NAMES = [
   QUEUE_NEWSLETTER,
   QUEUE_MAINTENANCE,
   QUEUE_SCRAPER,
   QUEUE_NOTIFICATIONS,
+  QUEUE_IMSLP,
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -105,3 +115,13 @@ export const JOB_MODERATION_SLA_SWEEP = 'moderation.sla-sweep';
  * seria um lugar a mais para um consumidor faltar.
  */
 export const JOB_BLOG_PUBLISH_SCHEDULED = 'blog.publish-scheduled';
+
+/**
+ * Paga o XP das contribuições que passaram sete dias sem denúncia
+ * procedente. Na fila de notificações pelo mesmo motivo da varredura de
+ * moderação: varredura periódica de produto, que termina avisando alguém.
+ */
+export const JOB_CONTRIBUTIONS_GRANT_XP = 'contributions.grant-xp';
+
+/** Lê no IMSLP as partituras de uma obra e grava. Um job por obra (`jobId`). */
+export const JOB_IMSLP_SCORES = 'imslp.work.scores';

@@ -22,6 +22,10 @@ export const ASSIGNMENT_FILTERS = [
   'IN_PROGRESS',
   'COMPLETED',
   'OVERDUE',
+  // Entregue e sem retorno do professor (04/10/2026).
+  'AWAITING_FEEDBACK',
+  // Ainda não entregue, pendente ou em andamento (04/10/2026).
+  'OPEN',
 ] as const;
 
 export type AssignmentFilter = (typeof ASSIGNMENT_FILTERS)[number];

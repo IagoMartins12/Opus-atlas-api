@@ -1,7 +1,10 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { LessonStatus } from '@prisma/client';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AvailabilityService } from '../availability/availability.service';
+import { PracticeService } from '../practice/practice.service';
 import { DashboardService } from './dashboard.service';
 
 const at = (iso: string) => new Date(iso);
@@ -16,7 +19,10 @@ describe('DashboardService', () => {
   let service: DashboardService;
   let prisma: {
     teacher: { findUnique: jest.Mock };
-    student: { findUnique: jest.Mock };
+    student: { findUnique: jest.Mock; findMany: jest.Mock };
+    lessonRequest: { findMany: jest.Mock };
+    sharedProgressReport: { groupBy: jest.Mock };
+    work: { findMany: jest.Mock };
     teacherStudent: { count: jest.Mock; findMany: jest.Mock };
     lesson: {
       groupBy: jest.Mock;
@@ -25,7 +31,7 @@ describe('DashboardService', () => {
       findMany: jest.Mock;
       findFirst: jest.Mock;
     };
-    assignment: { count: jest.Mock; findMany: jest.Mock };
+    assignment: { count: jest.Mock; findMany: jest.Mock; groupBy: jest.Mock };
     wantToLearn: { findMany: jest.Mock };
     learned: { findMany: jest.Mock };
     workAnnotation: { findMany: jest.Mock };
@@ -101,9 +107,33 @@ describe('DashboardService', () => {
     return result;
   };
 
+  let availability: { computeFreeTime: jest.Mock };
+  let practice: { list: jest.Mock; totalsFor: jest.Mock };
+  let subscriptions: { checkFeatureAccess: jest.Mock };
+
   beforeEach(async () => {
+    availability = {
+      computeFreeTime: jest.fn().mockResolvedValue({ slots: [], hours: null }),
+    };
+    practice = {
+      list: jest.fn().mockResolvedValue({
+        weeklyGoalMinutes: 240,
+        totalMinutes: 90,
+        days: [],
+        subjects: [],
+      }),
+      totalsFor: jest.fn().mockResolvedValue(new Map()),
+    };
     prisma = {
-      teacher: { findUnique: jest.fn().mockResolvedValue({ id: 'teacher-1' }) },
+      teacher: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'teacher-1',
+          timezone: 'America/Sao_Paulo',
+        }),
+      },
+      lessonRequest: { findMany: jest.fn().mockResolvedValue([]) },
+      sharedProgressReport: { groupBy: jest.fn().mockResolvedValue([]) },
+      work: { findMany: jest.fn().mockResolvedValue([]) },
       student: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'student-1',
@@ -113,6 +143,7 @@ describe('DashboardService', () => {
           level: 'INTERMEDIATE',
           mainInstrument: 'Piano',
         }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       teacherStudent: {
         count: jest.fn().mockResolvedValue(0),
@@ -128,16 +159,26 @@ describe('DashboardService', () => {
       assignment: {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
+        groupBy: jest.fn().mockResolvedValue([]),
       },
       wantToLearn: { findMany: jest.fn().mockResolvedValue([]) },
       learned: { findMany: jest.fn().mockResolvedValue([]) },
       workAnnotation: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
+    subscriptions = {
+      checkFeatureAccess: jest
+        .fn()
+        .mockResolvedValue({ plan: 'MENTOR', hasAccess: true, limit: 7 }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DashboardService,
         { provide: PrismaService, useValue: prisma },
+        { provide: AvailabilityService, useValue: availability },
+        { provide: PracticeService, useValue: practice },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -451,6 +492,65 @@ describe('DashboardService', () => {
       expect(fim.getDate()).toBe(1);
     });
 
+    // A casca mostra "3 de 7" e abre a troca de plano; vaga é vínculo aceito.
+    it('traz o plano e as vagas usadas, contando só vínculo aceito', async () => {
+      prisma.teacherStudent.count.mockImplementation(({ where }) =>
+        Promise.resolve(where.inviteStatus === 'ACCEPTED' ? 3 : 4),
+      );
+
+      const result = await teacher();
+
+      expect(result.plan).toEqual({
+        name: 'MENTOR',
+        maxStudents: 7,
+        activeStudents: 3,
+      });
+    });
+
+    // O convite pendente não é aluno ainda: vem à parte, para o painel
+    // mostrar "convite enviado" em vez de um aluno sem aula.
+    it('lista só vínculo aceito e traz os convites pendentes à parte', async () => {
+      prisma.teacherStudent.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(
+          where.inviteStatus === 'PENDING'
+            ? [
+                {
+                  id: 'rel-2',
+                  startDate: new Date('2026-09-25T12:00:00Z'),
+                  student: person('s2', 'Beatriz', 'Nogueira'),
+                },
+              ]
+            : [],
+        ),
+      );
+
+      const result = await teacher();
+
+      const alunos = prisma.teacherStudent.findMany.mock.calls.find(
+        (call) => call[0]?.select?.totalLessons,
+      );
+      expect(alunos?.[0].where.inviteStatus).toBe('ACCEPTED');
+      expect(result.pendingInvites).toEqual([
+        expect.objectContaining({
+          relationshipId: 'rel-2',
+          studentId: 's2',
+          name: 'Beatriz Nogueira',
+        }),
+      ]);
+    });
+
+    it('plano sem teto vem com `maxStudents` nulo', async () => {
+      subscriptions.checkFeatureAccess.mockResolvedValue({
+        plan: 'MAESTRO',
+        hasAccess: true,
+        limit: -1,
+      });
+
+      const result = await teacher();
+
+      expect(result.plan.maxStudents).toBeNull();
+    });
+
     it('"aluno com atividade recente" exclui aula futura', async () => {
       await teacher();
 
@@ -574,6 +674,119 @@ describe('DashboardService', () => {
       const result = await teacherDashboard();
 
       expect(result.students[0].nextLessonAt).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------
+  describe('o que entrou no painel em 04/10/2026', () => {
+    it('aula sem desfecho: só a que já terminou e continua agendada', async () => {
+      const past = new Date(Date.now() - 3 * 3_600_000);
+      const running = new Date(Date.now() - 10 * 60_000);
+      prisma.lesson.findMany.mockImplementation(
+        (args: {
+          where?: { scheduledAt?: { lt?: Date } };
+          select?: Record<string, unknown>;
+        }) => {
+          if (
+            args.where?.scheduledAt?.lt &&
+            'objectives' in (args.select ?? {})
+          ) {
+            return Promise.resolve([
+              {
+                id: 'done',
+                title: 'A',
+                scheduledAt: past,
+                duration: 60,
+                status: 'SCHEDULED',
+                location: null,
+                objectives: [],
+                homework: null,
+                publicNotes: null,
+                student: person('s1', 'Rafael', 'Lima'),
+              },
+              {
+                id: 'now',
+                title: 'B',
+                scheduledAt: running,
+                duration: 60,
+                status: 'SCHEDULED',
+                location: null,
+                objectives: [],
+                homework: null,
+                publicNotes: null,
+                student: person('s2', 'Ana', 'Costa'),
+              },
+            ]);
+          }
+          return Promise.resolve([]);
+        },
+      );
+
+      const result = await service.getDashboard('user-1', { as: 'teacher' });
+      if (result.role !== 'teacher') throw new Error('professor');
+      expect(result.pendingOutcome.map((l) => l.id)).toEqual(['done']);
+    });
+
+    it('sem agenda declarada, horas livres são "não sei", não zero', async () => {
+      const result = await service.getDashboard('user-1', { as: 'teacher' });
+      if (result.role !== 'teacher') throw new Error('professor');
+      expect(result.freeMinutesThisWeek).toBeNull();
+      expect(result.weeklySchedule.every((d) => d.freeMinutes === null)).toBe(
+        true,
+      );
+    });
+
+    it('a semana tem o dia local de cada coluna, no fuso do professor', async () => {
+      const result = await service.getDashboard('user-1', { as: 'teacher' });
+      if (result.role !== 'teacher') throw new Error('professor');
+      const days = result.weeklySchedule.map((d) => d.localDate);
+      expect(days).toHaveLength(7);
+      expect(new Date(`${days[0]}T12:00:00Z`).getUTCDay()).toBe(0); // domingo
+    });
+
+    it('prática abaixo da metade da meta vira sinal de atenção', async () => {
+      prisma.teacherStudent.findMany.mockImplementation(
+        (args: { where: { inviteStatus?: string } }) =>
+          Promise.resolve(
+            args.where.inviteStatus === 'PENDING'
+              ? []
+              : [
+                  {
+                    startDate: new Date('2026-01-01'),
+                    totalLessons: 3,
+                    student: {
+                      ...person('s1', 'Tomás', 'Ribeiro'),
+                      level: 'BEGINNER',
+                      mainInstrument: 'Piano',
+                    },
+                  },
+                ],
+          ),
+      );
+      prisma.student.findMany.mockResolvedValue([
+        { id: 's1', practiceTime: 90 },
+      ]);
+      practice.totalsFor.mockResolvedValue(new Map([['s1', 10]]));
+
+      const result = await service.getDashboard('user-1', { as: 'teacher' });
+      if (result.role !== 'teacher') throw new Error('professor');
+      expect(result.attention).toEqual([
+        expect.objectContaining({
+          kind: 'practice',
+          studentId: 's1',
+          minutes: 10,
+          goalMinutes: 90,
+        }),
+      ]);
+      expect(result.students[0].practiceMinutes7d).toBe(10);
+      expect(result.students[0].practiceGoalMinutes).toBe(90);
+    });
+
+    it('o painel do aluno traz a prática da semana e os pedidos pendentes', async () => {
+      const result = await service.getDashboard('user-1', { as: 'student' });
+      if (result.role !== 'student') throw new Error('aluno');
+      expect(result.practice.totalMinutes).toBe(90);
+      expect(result.lessonRequests).toEqual([]);
     });
   });
 });

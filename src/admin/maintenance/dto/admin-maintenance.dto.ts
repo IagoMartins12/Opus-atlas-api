@@ -1,8 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { OWNER_TYPES, OwnerType } from '../orphan-owners';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
+  IsDateString,
+  IsIn,
   IsInt,
+  IsMongoId,
   IsOptional,
   IsString,
   Max,
@@ -73,4 +79,118 @@ export class ListMaintenanceFailuresDto {
   @Min(1)
   @Max(100)
   limit?: number = 20;
+}
+
+export class ListTaskRunsQueryDto {
+  @ApiPropertyOptional({
+    description: 'Id da tarefa ("tokens.prune", "scraper:osesp")',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  task?: string;
+
+  @ApiPropertyOptional({ enum: ['agendado', 'manual'] })
+  @IsOptional()
+  @IsIn(['agendado', 'manual'])
+  trigger?: 'agendado' | 'manual';
+
+  @ApiPropertyOptional({ enum: ['ok', 'falhou'] })
+  @IsOptional()
+  @IsIn(['ok', 'falhou'])
+  status?: 'ok' | 'falhou';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ default: 30 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+/** Os escolhidos, ou tudo antes de uma data (de uma tarefa ou de todas). */
+export class DeleteTaskRunsDto {
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsMongoId({ each: true })
+  ids?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Apaga as execuções que começaram antes desta data',
+  })
+  @IsOptional()
+  @IsDateString()
+  before?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  task?: string;
+}
+
+export class ListOrphansQueryDto {
+  @ApiPropertyOptional({
+    description: 'Enviados a partir de (ISO). Sem datas, todos.',
+  })
+  @IsOptional()
+  @IsDateString()
+  de?: string;
+
+  @ApiPropertyOptional({ description: 'Enviados até (ISO)' })
+  @IsOptional()
+  @IsDateString()
+  ate?: string;
+
+  @ApiPropertyOptional({
+    enum: [...OWNER_TYPES, 'sem-dono'],
+    description:
+      'Tipo do dono removido, ou `sem-dono` para os sem dono declarado',
+  })
+  @IsOptional()
+  @IsIn([...OWNER_TYPES, 'sem-dono'])
+  tipo?: OwnerType | 'sem-dono';
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ default: 40 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class DeleteOrphansDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsMongoId({ each: true })
+  ids!: string[];
 }
