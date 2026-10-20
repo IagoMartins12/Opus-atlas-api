@@ -363,6 +363,29 @@ export class ContributionsService {
     }
   }
 
+  /** Tells the author the team rejected a contribution, and why. */
+  async notifyRejected(
+    userId: string,
+    contributionId: string,
+    reason: string,
+    xpReturned: number,
+  ): Promise<void> {
+    await this.notifications.notify({
+      userId,
+      type: NotificationType.GENERAL_ANNOUNCEMENT,
+      priority: NotificationPriority.MEDIUM,
+      title: 'Uma contribuição sua foi reprovada',
+      message:
+        `${reason}` +
+        (xpReturned > 0
+          ? ` O XP dela (${xpReturned}) foi devolvido.`
+          : ' Ela não rendeu XP.'),
+      relatedEntityType: 'contribution',
+      relatedEntityId: contributionId,
+      uniqueHash: `contribution-rejected:${contributionId}`,
+    });
+  }
+
   /** Undoes a hold: the contribution returns if nothing replaced the old value meanwhile. */
   async reapply(contributionId: string): Promise<void> {
     const contribution = await this.prisma.contribution.findUnique({
