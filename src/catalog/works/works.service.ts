@@ -97,16 +97,32 @@ const CATALOG_ORDER: Record<
   WorkCatalogSort,
   Prisma.WorkOrderByWithRelationInput[]
 > = {
-  recent: [{ createdAt: 'desc' }, { id: 'desc' }],
+  // `featured` is two queries, not one order (see `findFeaturedPage`): this is
+  // the order of the rest, after the famous composers' works.
+  featured: [{ title: 'asc' }, { id: 'asc' }],
   title: [{ title: 'asc' }, { id: 'asc' }],
   'title-desc': [{ title: 'desc' }, { id: 'desc' }],
+  oldest: [{ createdAt: 'asc' }, { id: 'asc' }],
+  newest: [{ createdAt: 'desc' }, { id: 'desc' }],
 };
 
-/** The same orders for the text-search pipeline (`_id` follows creation). */
+/** The order of the famous composers' works in `featured`: the most studied first. */
+const FEATURED_HEAD_ORDER: Prisma.WorkOrderByWithRelationInput[] = [
+  { annotationsCount: 'desc' },
+  { title: 'asc' },
+  { id: 'asc' },
+];
+
+/**
+ * The same orders for the text-search pipeline (`_id` follows creation). In a
+ * search, `featured` is A–Z: the text match is the ranking that matters.
+ */
 const CATALOG_RAW_ORDER: Record<WorkCatalogSort, Record<string, 1 | -1>> = {
-  recent: { _id: -1 },
+  featured: { title: 1, _id: 1 },
   title: { title: 1, _id: 1 },
   'title-desc': { title: -1, _id: -1 },
+  oldest: { _id: 1 },
+  newest: { _id: -1 },
 };
 
 const WORK_DEFAULT_ORDER_BY = [
@@ -622,7 +638,7 @@ export class WorksService {
           ? this.getCatalogWithoutFilters(
               normalizedQuery.page!,
               normalizedQuery.limit!,
-              normalizedQuery.sort ?? 'recent',
+              normalizedQuery.sort ?? 'newest',
             )
           : this.getCatalogWithFilters(
               normalizedQuery.page!,
@@ -878,6 +894,7 @@ export class WorksService {
       query.categoryNames,
       query.workGenresArr,
       query.workGenreId,
+      query.verified,
     ].filter(Boolean);
 
     if (!query.search && activeFilters.length === 0) {
@@ -892,7 +909,7 @@ export class WorksService {
   }
 
   private buildCatalogCacheKey(query: GetWorksCatalogQueryDto): string {
-    return `${CacheNamespace.WORKS}:catalog:v1:${JSON.stringify({
+    return `${CacheNamespace.WORKS}:catalog:v2:${JSON.stringify({
       page: query.page,
       limit: query.limit,
       sort: query.sort ?? null,
@@ -903,6 +920,7 @@ export class WorksService {
       workGenresArr: query.workGenresArr ?? null,
       categoryNames: query.categoryNames ?? null,
       difficultyLevel: query.difficultyLevel ?? null,
+      verified: query.verified === true,
       search: query.search ?? null,
     })}`;
   }
@@ -915,12 +933,14 @@ export class WorksService {
     const skip = (page - 1) * limit;
 
     const [works, totalCount] = await Promise.all([
-      this.prisma.work.findMany({
-        select: WORK_CATALOG_BASE_SELECT,
-        orderBy: CATALOG_ORDER[sort],
-        skip,
-        take: limit,
-      }),
+      sort === 'featured'
+        ? this.findFeaturedPage({}, WORK_CATALOG_BASE_SELECT, skip, limit)
+        : this.prisma.work.findMany({
+            select: WORK_CATALOG_BASE_SELECT,
+            orderBy: CATALOG_ORDER[sort],
+            skip,
+            take: limit,
+          }),
       this.getCachedTotalWorkCount(),
     ]);
 
@@ -1005,15 +1025,22 @@ export class WorksService {
     const whereClause = await this.buildCatalogWhereClause(query);
 
     const [works, totalCount] = await Promise.all([
-      this.prisma.work.findMany({
-        where: whereClause,
-        select: WORK_CATALOG_FALLBACK_SELECT,
-        // Every order ends on `id`: with `title` alone two works sharing a
-        // title swap places between pages and one of them disappears.
-        orderBy: CATALOG_ORDER[query.sort ?? 'title'],
-        skip,
-        take: limit,
-      }),
+      query.sort === 'featured'
+        ? this.findFeaturedPage(
+            whereClause,
+            WORK_CATALOG_FALLBACK_SELECT,
+            skip,
+            limit,
+          )
+        : this.prisma.work.findMany({
+            where: whereClause,
+            select: WORK_CATALOG_FALLBACK_SELECT,
+            // Every order ends on `id`: with `title` alone two works sharing a
+            // title swap places between pages and one of them disappears.
+            orderBy: CATALOG_ORDER[query.sort ?? 'title'],
+            skip,
+            take: limit,
+          }),
       this.prisma.work.count({ where: whereClause }),
     ]);
 
@@ -1022,6 +1049,83 @@ export class WorksService {
       totalCount,
       hasMore: skip + works.length < totalCount,
     };
+  }
+
+  /**
+   * The ids of the curated famous composers (the same list the filters use),
+   * kept for six hours: it only changes when the list changes in the code.
+   */
+  private famousComposerIds(): Promise<string[]> {
+    return this.appCache.remember(
+      `${CacheNamespace.WORKS}:famous-composer-ids`,
+      {
+        ttlMs: 6 * 60 * 60 * 1000,
+        hotTtlMs: WORK_HOT_CACHE_TTL_MS,
+        metricRoute: 'works/famous-composers',
+      },
+      async () => {
+        const rows = await this.prisma.composer.findMany({
+          where: {
+            OR: [
+              { fullName: { in: FAMOUS_COMPOSERS } },
+              { name: { in: FAMOUS_COMPOSERS } },
+            ],
+          },
+          select: { id: true },
+        });
+        return rows.map((row) => row.id);
+      },
+    );
+  }
+
+  /**
+   * The "featured" order: the famous composers' works first (the most studied
+   * ahead), then every other work from A to Z.
+   *
+   * Two queries, not one order, because "is by a famous composer" is not a
+   * column: sorting 200 thousand works by a computed rank would scan them all
+   * on every page. The first set is small and counted once; a page is cut from
+   * it and, if it falls short, filled from the rest.
+   */
+  private async findFeaturedPage<S extends Prisma.WorkSelect>(
+    where: Prisma.WorkWhereInput,
+    select: S,
+    skip: number,
+    take: number,
+  ): Promise<Prisma.WorkGetPayload<{ select: S }>[]> {
+    const famous = await this.famousComposerIds();
+    const head: Prisma.WorkWhereInput = {
+      AND: [where, { composerId: { in: famous } }],
+    };
+    const tail: Prisma.WorkWhereInput = {
+      AND: [where, { composerId: { notIn: famous } }],
+    };
+    const headCount = await this.prisma.work.count({ where: head });
+
+    const rows: Prisma.WorkGetPayload<{ select: S }>[] = [];
+    if (skip < headCount) {
+      rows.push(
+        ...(await this.prisma.work.findMany({
+          where: head,
+          select,
+          orderBy: FEATURED_HEAD_ORDER,
+          skip,
+          take,
+        })),
+      );
+    }
+    if (rows.length < take) {
+      rows.push(
+        ...(await this.prisma.work.findMany({
+          where: tail,
+          select,
+          orderBy: CATALOG_ORDER.featured,
+          skip: Math.max(0, skip - headCount),
+          take: take - rows.length,
+        })),
+      );
+    }
+    return rows;
   }
 
   /**
@@ -1230,6 +1334,7 @@ export class WorksService {
     if (query.difficultyLevel) filter.difficultyLevel = query.difficultyLevel;
     if (query.categoryNames) filter.categoryNames = query.categoryNames;
     if (query.workGenresArr) filter.workGenresArr = query.workGenresArr;
+    if (query.verified) filter.isVerified = true;
 
     return filter;
   }
@@ -1257,6 +1362,7 @@ export class WorksService {
       whereClause.categoryNames = { has: query.categoryNames };
     if (query.workGenresArr)
       whereClause.workGenresArr = { has: query.workGenresArr };
+    if (query.verified) whereClause.isVerified = true;
 
     if (query.search) {
       const contains = {

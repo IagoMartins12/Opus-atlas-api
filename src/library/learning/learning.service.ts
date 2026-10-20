@@ -533,7 +533,7 @@ export class LearningService {
   }
 
   private async assertWorkScoreBelongsToWork(
-    selectedWorkScoreId: string | undefined,
+    selectedWorkScoreId: string | null | undefined,
     workId: string,
   ): Promise<void> {
     if (!selectedWorkScoreId) return;

@@ -25,6 +25,7 @@ import { AchievementsService } from './achievements.service';
 import {
   AchievementCatalogResponseDto,
   AchievementListResponseDto,
+  AchievementNewResponseDto,
   AchievementProgressResponseDto,
   AchievementStatsResponseDto,
   CheckAchievementsResponseDto,
@@ -56,6 +57,17 @@ export class AchievementsController {
   @ApiOkResponse({ type: AchievementListResponseDto })
   async list(@CurrentUser() user: AccessTokenPayload) {
     return this.service.listForUser(user.sub);
+  }
+
+  @Get('new')
+  @ApiOperation({
+    summary: 'Conquistas ainda não vistas',
+    description:
+      'Leve, para o aviso em tempo real. Sem cache: o ponto é saber agora.',
+  })
+  @ApiOkResponse({ type: AchievementNewResponseDto })
+  async listNew(@CurrentUser() user: AccessTokenPayload) {
+    return this.service.listNew(user.sub);
   }
 
   @Post('check')

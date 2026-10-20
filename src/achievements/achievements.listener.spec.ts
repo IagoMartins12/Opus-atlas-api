@@ -48,6 +48,26 @@ describe('AchievementsListener', () => {
     expect(achievements.evaluate).not.toHaveBeenCalled();
   });
 
+  // A conquista completada por uma ação dentro da janela não pode esperar a
+  // ação seguinte: uma reavaliação fica agendada para o fim da espera.
+  it('reavalia ao fim da janela, uma vez, mesmo com várias ações', async () => {
+    jest.useFakeTimers();
+    try {
+      cache.get.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+      await listener.onActivity(event);
+      await listener.onActivity(event);
+      expect(achievements.evaluate).not.toHaveBeenCalled();
+
+      cache.get.mockResolvedValue(undefined);
+      await jest.advanceTimersByTimeAsync(31_000);
+
+      expect(achievements.evaluate).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('grava a espera antes de avaliar', async () => {
     await listener.onActivity(event);
 

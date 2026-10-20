@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -10,7 +11,18 @@ import {
   Min,
 } from 'class-validator';
 
-export const WORK_CATALOG_SORTS = ['recent', 'title', 'title-desc'] as const;
+/**
+ * - `featured`: the works of the curated famous composers first (the most
+ *   studied ahead), then the rest from A to Z.
+ * - `oldest` / `newest`: by the record, when the work entered the library.
+ */
+export const WORK_CATALOG_SORTS = [
+  'featured',
+  'title',
+  'title-desc',
+  'oldest',
+  'newest',
+] as const;
 export type WorkCatalogSort = (typeof WORK_CATALOG_SORTS)[number];
 
 export class GetWorksCatalogQueryDto {
@@ -106,9 +118,17 @@ export class GetWorksCatalogQueryDto {
   difficultyLevel?: string;
 
   @ApiPropertyOptional({
+    description: 'Só obras conferidas pela equipe (selo de verificado)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  verified?: boolean;
+
+  @ApiPropertyOptional({
     enum: WORK_CATALOG_SORTS,
     description:
-      'Ordem. Sem ela: as recém-chegadas sem filtro, A–Z com filtro (como antes).',
+      'Ordem. Sem ela: as mais recentes sem filtro, A–Z com filtro (como antes).',
   })
   @IsOptional()
   @IsIn(WORK_CATALOG_SORTS)

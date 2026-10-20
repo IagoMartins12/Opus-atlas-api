@@ -71,10 +71,10 @@ export class UpdateWantToLearnDto {
   difficulty?: DifficultyLevel;
   @ApiPropertyOptional() @IsOptional() @IsString() motivation?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() context?: string;
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsMongoId()
-  selectedWorkScoreId?: string;
+  selectedWorkScoreId?: string | null;
   @ApiPropertyOptional()
   @IsOptional()
   @IsObject()

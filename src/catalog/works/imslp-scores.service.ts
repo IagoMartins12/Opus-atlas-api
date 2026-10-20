@@ -4,7 +4,7 @@ import { Prisma, ScoreSource } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { isMongoId } from 'class-validator';
 import { AppCacheService } from '../../common/cache/cache.service';
-import { envelope } from '../../common/queue/job-contract';
+import { buildIdempotencyKey, envelope } from '../../common/queue/job-contract';
 import {
   JOB_IMSLP_SCORES,
   QUEUE_IMSLP,
@@ -52,6 +52,19 @@ const LOCK_TTL_MS = 60 * 1000;
 
 // Fora dos namespaces de cache de propósito: uma escrita no catálogo limpa
 // `works:*`, e a marca de tentativa não deve sumir junto.
+/**
+ * O `jobId` da leitura de uma obra: um por obra, e **sem `:`**.
+ *
+ * O BullMQ recusa `:` num `jobId` ("Custom Id cannot contain :"). Aqui ele
+ * estava escrito à mão como `imslp-scores:<id>` — fora do contrato de jobs
+ * (`buildIdempotencyKey`, que usa pontos) — e **toda** leitura lançava, o
+ * erro era engolido como "indisponível" e nenhuma partitura do IMSLP chegava
+ * a ser buscada. Os testes usavam fila simulada e não viam: ver o teste que
+ * valida o id com a regra de verdade do BullMQ.
+ */
+export const imslpScoresJobId = (workId: string) =>
+  buildIdempotencyKey('imslp.scores', workId);
+
 const triedKey = (workId: string) => `imslp-scores:tried:${workId}`;
 const lockKey = (workId: string) => `imslp-scores:lock:${workId}`;
 const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
@@ -136,11 +149,11 @@ export class ImslpScoresService {
       await this.queue.add(
         JOB_IMSLP_SCORES,
         envelope<ImslpScoresJobPayload>({
-          idempotencyKey: `imslp-scores:${workId}`,
+          idempotencyKey: imslpScoresJobId(workId),
           payload: { workId },
         }),
         {
-          jobId: `imslp-scores:${workId}`,
+          jobId: imslpScoresJobId(workId),
           attempts: 1,
           removeOnComplete: true,
           removeOnFail: true,
@@ -164,7 +177,7 @@ export class ImslpScoresService {
       const known = await this.knownStatus(workId);
       if (known) return known;
 
-      const job = await this.queue.getJob(`imslp-scores:${workId}`);
+      const job = await this.queue.getJob(imslpScoresJobId(workId));
       return job ? 'pending' : 'unavailable';
     } catch {
       return 'unavailable';

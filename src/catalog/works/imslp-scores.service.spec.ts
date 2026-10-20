@@ -1,11 +1,11 @@
 import * as cheerio from 'cheerio';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { Queue } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExternalPageFetcher } from '../../scrapers/imslp/external-page.fetcher';
-import { ImslpScoresService } from './imslp-scores.service';
+import { ImslpScoresService, imslpScoresJobId } from './imslp-scores.service';
 
 const WORK = '68600fb6df23f271f94bb803';
 const PAGE = cheerio.load(
@@ -88,6 +88,27 @@ describe('ImslpScoresService', () => {
     );
   });
 
+  // O BullMQ recusa `:` no jobId ("Custom Id cannot contain :"). Com a fila
+  // simulada dos outros testes isso passava despercebido: o jobId era
+  // `imslp-scores:<id>`, toda leitura lançava e nenhuma partitura era buscada.
+  it('o jobId passa na validação de verdade do BullMQ', () => {
+    const queueLike = { opts: {}, toKey: (k: string) => k, keys: {} };
+    const job = new Job(
+      queueLike as never,
+      'imslp.work.scores',
+      {},
+      { jobId: imslpScoresJobId(WORK) },
+    );
+
+    // `validateOptions` é protegido, mas é o que o `Queue.add` chama.
+    const validate = (
+      job as unknown as { validateOptions(data: object): void }
+    ).validateOptions.bind(job);
+
+    expect(() => validate({})).not.toThrow();
+    expect(imslpScoresJobId(WORK)).not.toContain(':');
+  });
+
   describe('pedir (a rota pública)', () => {
     it('obra sem partitura: enfileira com id fixo e responde na hora', async () => {
       await expect(service.request(WORK)).resolves.toBe('pending');
@@ -96,7 +117,7 @@ describe('ImslpScoresService', () => {
         'imslp.work.scores',
         expect.objectContaining({ payload: { workId: WORK } }),
         expect.objectContaining({
-          jobId: `imslp-scores:${WORK}`,
+          jobId: imslpScoresJobId(WORK),
           attempts: 1,
           removeOnComplete: true,
           removeOnFail: true,
@@ -165,7 +186,7 @@ describe('ImslpScoresService', () => {
 
   describe('situação (o que a tela pergunta)', () => {
     it('com job na fila, está buscando; sem job nem marca, indisponível', async () => {
-      queue.getJob.mockResolvedValue({ id: `imslp-scores:${WORK}` });
+      queue.getJob.mockResolvedValue({ id: imslpScoresJobId(WORK) });
       await expect(service.status(WORK)).resolves.toBe('pending');
 
       queue.getJob.mockResolvedValue(undefined);
