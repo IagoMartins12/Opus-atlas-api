@@ -9,9 +9,11 @@ import { EMAIL_SAMPLES, renderSample } from '../mail/templates/samples';
  *
  *   npm run mail:send-samples -- --to <email> [--lang pt|en|both] [--only <id,id>]
  *
- * Uses the environment's SMTP. The seal and emblems go attached and inline
- * (`cid:`), because the site does not serve them publicly yet; real sends
- * keep the image URLs.
+ * Uses the environment's SMTP. By default the seal and emblems go attached and
+ * inline (`cid:`), for when the site does not serve them publicly yet. With
+ * `--assets <site address>` (for example `https://hml.opusatlas.com.br`) the
+ * email keeps the real image URLs, exactly as a real send does, and nothing is
+ * attached: it is the way to see what a customer sees.
  */
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -29,7 +31,8 @@ async function main() {
         : (['pt'] as const);
   const only = arg('--only')?.split(',');
   const publicDir = resolve(arg('--public') ?? '../Classical-Music/public');
-  const base = 'https://assets.invalid';
+  const assets = arg('--assets')?.replace(/\/$/, '');
+  const base = assets ?? 'https://assets.invalid';
 
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -42,19 +45,24 @@ async function main() {
   for (const sample of samples) {
     for (const language of languages) {
       const email = renderSample(sample, language, base);
-      const images = [
-        ...new Set(
-          [
-            ...email.html.matchAll(
-              /https:\/\/assets\.invalid\/email\/([\w-]+\.png)/g,
+      // Com o endereço real, o HTML segue como está e nada vai anexado.
+      const images = assets
+        ? []
+        : [
+            ...new Set(
+              [
+                ...email.html.matchAll(
+                  /https:\/\/assets\.invalid\/email\/([\w-]+\.png)/g,
+                ),
+              ].map((m) => m[1]),
             ),
-          ].map((m) => m[1]),
-        ),
-      ];
-      const html = email.html.replace(
-        /https:\/\/assets\.invalid\/email\/([\w-]+)\.png/g,
-        'cid:$1',
-      );
+          ];
+      const html = assets
+        ? email.html
+        : email.html.replace(
+            /https:\/\/assets\.invalid\/email\/([\w-]+)\.png/g,
+            'cid:$1',
+          );
       await transporter.sendMail({
         from: process.env.EMAIL_FROM,
         to,
