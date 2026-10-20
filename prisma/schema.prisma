@@ -887,16 +887,16 @@ model Composer {
   deathMonth Int?
   deathDay   Int?
 
-  portraitUrl     String?
-  epochId         String    @db.ObjectId
-  epochName       String?
-  bio             String?
+  portraitUrl       String?
+  epochId           String    @db.ObjectId
+  epochName         String?
+  bio               String?
   // Biografia em inglês — antes num JSON em disco do front (composers-bio.json).
-  bioEn           String?
+  bioEn             String?
   // "anthropic/claude-opus-5" quando o texto em português saiu da IA; null
   // quando alguém escreveu ou revisou. É o que permite ao front avisar.
-  bioGeneratedBy  String?
-  bioGeneratedAt  DateTime?
+  bioGeneratedBy    String?
+  bioGeneratedAt    DateTime?
   /// The biography's original language ("pt" | "en") when the other one is
   /// a machine translation nobody reviewed yet. Null: both written by people.
   bioTranslatedFrom String?
@@ -908,12 +908,12 @@ model Composer {
   bioReviewedBy     String?   @db.ObjectId
   /// "Por onde começar" chosen by the team, in order (up to three); the
   /// page completes them with the automatic picks.
-  startingWorkIds String[]  @default([]) @db.ObjectId
-  videoUrl        String?
+  startingWorkIds   String[]  @default([]) @db.ObjectId
+  videoUrl          String?
   // Dados IMSLP
-  permLinkImslp   String?
-  imslpId         String?
-  wikipediaLink   String?
+  permLinkImslp     String?
+  imslpId           String?
+  wikipediaLink     String?
 
   // Dados estatísticos e geográficos
   nationality String? // País/nacionalidade (ex: "German", "Austrian", "Brazilian")
@@ -4185,4 +4185,77 @@ model CalendarFeed {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("calendar_feeds")
+}
+
+enum FinanceDirection {
+  COST
+  INCOME
+}
+
+enum FinanceKind {
+  ONCE
+  INSTALLMENTS
+  RECURRING
+}
+
+enum FinanceMetric {
+  MRR
+  SUBSCRIBERS
+  TEACHERS
+}
+
+/// A cost (a bill the project pays) or a manual income (sponsorship, grant,
+/// donation, prize) in the finance panel. Subscription income is NOT here: it
+/// comes from `Payment`. Money is whole cents, never a float; a foreign
+/// currency keeps its rate so the history does not move when the dollar does.
+model FinanceEntry {
+  id             String           @id @default(auto()) @map("_id") @db.ObjectId
+  direction      FinanceDirection
+  name           String
+  /// Who is paid (a cost) or who pays (an income).
+  counterparty   String?
+  category       String
+  /// ONCE: the amount. INSTALLMENTS: the TOTAL, split over `installments`.
+  /// RECURRING: the amount of each charge. Always in `currency`, in cents.
+  amountCents    Int
+  currency       String           @default("BRL")
+  /// BRL per unit of `currency` on the launch date (1 for BRL); can be
+  /// corrected to the card statement.
+  fxRate         Float            @default(1)
+  kind           FinanceKind
+  /// ONCE: the date. INSTALLMENTS: the first installment. RECURRING: the first charge.
+  startDate      DateTime
+  installments   Int?
+  /// RECURRING: every N months (1 monthly, 12 yearly).
+  intervalMonths Int?
+  /// RECURRING: the last charge, if it ends.
+  endDate        DateTime?
+  /// RECURRING paused or ended: nothing is counted from this date on.
+  pausedAt       DateTime?
+  note           String?
+  receiptUrl     String?
+  createdBy      String           @db.ObjectId
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([direction, startDate])
+  @@index([category])
+  @@map("finance_entries")
+}
+
+/// A target in the finance panel, with a deadline: MRR (in cents),
+/// subscribers or active teachers.
+model FinanceGoal {
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  metric     FinanceMetric
+  /// Cents for MRR; a count for the others.
+  target     Int
+  deadline   DateTime
+  note       String?
+  achievedAt DateTime?
+  createdBy  String        @db.ObjectId
+  createdAt  DateTime      @default(now())
+
+  @@index([deadline])
+  @@map("finance_goals")
 }

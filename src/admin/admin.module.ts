@@ -46,6 +46,14 @@ import { EmailEventsController } from './newsletter/events/email-events.controll
 import { EmailEventsService } from './newsletter/events/email-events.service';
 import { NewsletterDispatchService } from './newsletter/newsletter-dispatch.service';
 import { AdminCatalogController } from './catalog/admin-catalog.controller';
+import { AdminContributionsController } from './contributions/admin-contributions.controller';
+import { AdminContributionsService } from './contributions/admin-contributions.service';
+import { ContributionsModule } from '../library/contributions/contributions.module';
+import { CatalogQualityController } from './catalog/catalog-quality.controller';
+import { CatalogQualityService } from './catalog/catalog-quality.service';
+import { FinanceController } from './finance/finance.controller';
+import { FinanceService } from './finance/finance.service';
+import { FxService } from './finance/fx.service';
 import { BioReviewController } from './catalog/bio-review.controller';
 import { BioReviewService } from './catalog/bio-review.service';
 import { AdminCatalogService } from './catalog/admin-catalog.service';
@@ -73,7 +81,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
 @Module({
   // `MailModule` entra pelo envio de prévia e pelo disparo de campanha;
   // `AuthModule` pelo `UserTokenService`, que emite o link de descadastro.
-  imports: [MailModule, AuthModule, BillingModule],
+  imports: [MailModule, AuthModule, BillingModule, ContributionsModule],
   controllers: [
     AdminPortalController,
     EmailEventsController,
@@ -81,6 +89,9 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     TeacherInvitationsController,
     AdminCatalogController,
     BioReviewController,
+    FinanceController,
+    CatalogQualityController,
+    AdminContributionsController,
     AdminUploadsController,
     AdminAdsController,
     AdminBillingController,
@@ -101,6 +112,10 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     TeacherInvitationService,
     AdminCatalogService,
     BioReviewService,
+    FinanceService,
+    FxService,
+    CatalogQualityService,
+    AdminContributionsService,
     AdminCatalogMetricsService,
     WorkCountFiltersService,
     AdminUploadsService,

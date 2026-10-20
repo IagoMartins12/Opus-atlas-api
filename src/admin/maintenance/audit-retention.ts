@@ -65,6 +65,15 @@ export const GRAVE_ACTIONS = [
   'subscription.update',
   'subscription.grant',
   'user.teacher-invitation.update',
+  'finance.entry.create',
+  'finance.entry.update',
+  'finance.entry.delete',
+  'finance.entry.pause',
+  'finance.entry.resume',
+  'finance.goal.create',
+  'finance.goal.delete',
+  'finance.export',
+  'contribution.reject',
 ] as const;
 
 /** A classe de uma ação. O que não está classificado é `write`. */

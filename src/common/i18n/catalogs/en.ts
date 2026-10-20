@@ -297,6 +297,7 @@ export const en: Catalog = {
   'Redirecionando para o checkout seguro...':
     'Redirecting to the secure checkout…',
   'Cupom aplicado! Você economizou {0}%': 'Coupon applied. You saved {0}%',
+  'Esta contribuição já foi reprovada.': 'This contribution was already rejected.',
   'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.':
     'There is an overdue charge. Settle the payment before changing plans.',
   'Plano {0} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.':
