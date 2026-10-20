@@ -29,6 +29,7 @@ import {
   CreateFinanceEntryDto,
   CreateFinanceGoalDto,
   FinanceExportQueryDto,
+  FinanceMrrQueryDto,
   FinanceMonthQueryDto,
   UpdateFinanceEntryDto,
 } from './dto/finance.dto';
@@ -56,6 +57,31 @@ export class FinanceController {
   @ApiOkResponse({ description: 'O resumo' })
   summary(@Query() query: FinanceMonthQueryDto) {
     return this.service.summary(query.month);
+  }
+
+  @Get('mrr')
+  @ApiOperation({
+    summary: 'O MRR mês a mês: o fim de cada mês e a ponte entre eles',
+    description:
+      'Do retrato diário do MRR: novo, expansão, contração e cancelamento (a diferença entre dois retratos, assinatura por assinatura). `since` é o dia do primeiro retrato; antes dele não há número.',
+  })
+  @ApiOkResponse({ description: 'Os meses, do mais antigo ao atual' })
+  mrr(@Query() query: FinanceMrrQueryDto) {
+    return this.service.mrrSeries(query.months ?? 12);
+  }
+
+  @Post('stripe-fees/sync')
+  @Audited({ action: 'finance.stripe-fees.sync', entityType: 'finance' })
+  @ApiOperation({
+    summary: 'Lê no Stripe a taxa dos pagamentos que ainda não a têm',
+    description:
+      'Em lotes de 25. `pending` é o que ainda falta; chame de novo até zerar.',
+  })
+  @ApiOkResponse({
+    description: 'Quantos foram vistos, atualizados e quantos faltam',
+  })
+  syncStripeFees() {
+    return this.service.syncStripeFees();
   }
 
   @Get('entries')

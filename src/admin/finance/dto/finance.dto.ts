@@ -205,3 +205,13 @@ export class FinanceExportQueryDto {
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
   to: string;
 }
+
+export class FinanceMrrQueryDto {
+  @ApiPropertyOptional({ default: 12, minimum: 2, maximum: 24 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(24)
+  months?: number;
+}

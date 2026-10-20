@@ -38,7 +38,12 @@ describe('SubscriptionsService', () => {
       count: jest.Mock;
     };
     subscriptionHistory: { create: jest.Mock; findMany: jest.Mock };
-    payment: { findMany: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
+    payment: {
+      findMany: jest.Mock;
+      findFirst: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+    };
     user: {
       findUniqueOrThrow: jest.Mock;
       findUnique: jest.Mock;
@@ -57,6 +62,8 @@ describe('SubscriptionsService', () => {
     cancelSubscriptionNow: jest.Mock;
     changePriceAtRenewal: jest.Mock;
     changePriceNow: jest.Mock;
+    feeForInvoice: jest.Mock;
+    feeForSession: jest.Mock;
   };
   let catalog: { priceIdFor: jest.Mock; checkoutCouponId: jest.Mock };
   let invoices: { createFromPayment: jest.Mock };
@@ -90,6 +97,7 @@ describe('SubscriptionsService', () => {
         create: jest.fn(({ data }) =>
           Promise.resolve({ id: 'pay-1', ...data }),
         ),
+        update: jest.fn().mockResolvedValue({}),
       },
       user: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -132,6 +140,17 @@ describe('SubscriptionsService', () => {
       setCancelAtPeriodEnd: jest.fn().mockResolvedValue(undefined),
       cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined),
       changePriceAtRenewal: jest.fn().mockResolvedValue(undefined),
+      // A taxa que o Stripe cobrou: 3,99% + R$ 0,39 sobre R$ 39,90 = R$ 1,98.
+      feeForInvoice: jest.fn().mockResolvedValue({
+        feeCents: 198,
+        currency: 'BRL',
+        paymentIntentId: 'pi_1',
+      }),
+      feeForSession: jest.fn().mockResolvedValue({
+        feeCents: 198,
+        currency: 'BRL',
+        paymentIntentId: 'pi_1',
+      }),
       changePriceNow: jest.fn().mockResolvedValue({
         invoiceId: 'in_up',
         amountPaid: 21.5,
@@ -984,6 +1003,30 @@ describe('SubscriptionsService', () => {
         ...subscription(),
         user: { email: 'ana@x.com', firstName: 'Ana' },
       });
+    });
+
+    // A receita líquida do financeiro depende da taxa estar no pagamento.
+    it('grava no pagamento a taxa que o Stripe cobrou', async () => {
+      await service.registerRenewal(fatura());
+
+      expect(stripe.feeForInvoice).toHaveBeenCalledWith('in_1');
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: 'pay-1' },
+        data: {
+          stripeFeeCents: 198,
+          stripeFeeCurrency: 'BRL',
+          stripePaymentIntentId: 'pi_1',
+        },
+      });
+    });
+
+    it('sem a taxa lida (Stripe ainda não registrou), o pagamento vale igual', async () => {
+      stripe.feeForInvoice.mockResolvedValue(null);
+
+      await service.registerRenewal(fatura());
+
+      expect(prisma.payment.create).toHaveBeenCalled();
+      expect(prisma.payment.update).not.toHaveBeenCalled();
     });
 
     it('estende o acesso até a data que o Stripe cobrou', async () => {

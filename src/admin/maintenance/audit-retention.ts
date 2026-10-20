@@ -73,6 +73,7 @@ export const GRAVE_ACTIONS = [
   'finance.goal.create',
   'finance.goal.delete',
   'finance.export',
+  'finance.stripe-fees.sync',
   'contribution.reject',
 ] as const;
 

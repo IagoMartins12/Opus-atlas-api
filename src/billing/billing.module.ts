@@ -7,6 +7,8 @@ import { InvoicesService } from './services/invoices.service';
 import { PaymentsService } from './services/payments.service';
 import { PlanPricingService } from './services/plan-pricing.service';
 import { StripeCatalogService } from './services/stripe-catalog.service';
+import { MrrService } from './services/mrr.service';
+import { PaymentAdjustmentsService } from './services/payment-adjustments.service';
 import { StripeService } from './services/stripe.service';
 import { SubscriptionsCronService } from './services/subscriptions-cron.service';
 import { SubscriptionsService } from './services/subscriptions.service';
@@ -18,6 +20,8 @@ import { WebhookService } from './services/webhook.service';
     PlanPricingService,
     CouponsService,
     StripeService,
+    MrrService,
+    PaymentAdjustmentsService,
     StripeCatalogService,
     InvoicesService,
     SubscriptionsService,
@@ -25,6 +29,11 @@ import { WebhookService } from './services/webhook.service';
     WebhookService,
     SubscriptionsCronService,
   ],
-  exports: [SubscriptionsService, StripeService, StripeCatalogService],
+  exports: [
+    SubscriptionsService,
+    StripeService,
+    StripeCatalogService,
+    MrrService,
+  ],
 })
 export class BillingModule {}

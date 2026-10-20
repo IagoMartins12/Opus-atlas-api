@@ -19,6 +19,8 @@ import {
   INCOME_CATEGORIES,
   UpdateFinanceEntryDto,
 } from './dto/finance.dto';
+import { MrrService } from '../../billing/services/mrr.service';
+import { StripeService } from '../../billing/services/stripe.service';
 import { FxService } from './fx.service';
 import {
   breakEven,
@@ -100,6 +102,8 @@ export class FinanceService {
     private readonly prisma: PrismaService,
     private readonly fx: FxService,
     private readonly cache: AppCacheService,
+    private readonly mrrService: MrrService,
+    private readonly stripe: StripeService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -278,23 +282,88 @@ export class FinanceService {
     const sum = (list: { brlCents: number }[]) =>
       list.reduce((total, o) => total + o.brlCents, 0);
 
-    const [payments, subscriptions, trials, pastDue, teachers] =
+    const [payments, subscriptions, trials, lateSubs, teachers, adjustments] =
       await Promise.all([
         this.prisma.payment.findMany({
           where: { status: 'APPROVED', paidAt: { gte: from, lt: to } },
-          select: { finalAmount: true },
+          select: {
+            finalAmount: true,
+            currency: true,
+            paidAt: true,
+            stripeFeeCents: true,
+            stripeFeeCurrency: true,
+          },
         }),
         this.prisma.subscription.findMany({
           where: { status: 'ACTIVE', planType: { not: 'FREE' } },
           select: { price: true, billingPeriod: true, planType: true },
         }),
         this.prisma.subscription.count({ where: { status: 'TRIAL' } }),
-        this.prisma.subscription.count({ where: { status: 'PAST_DUE' } }),
+        this.prisma.subscription.findMany({
+          where: { status: 'PAST_DUE', planType: { not: 'FREE' } },
+          select: { price: true, billingPeriod: true },
+        }),
         this.prisma.teacher.count({ where: { status: 'ACTIVE' } }),
+        this.prisma.paymentAdjustment.findMany({
+          where: { at: { gte: from, lt: to } },
+          select: { kind: true, amountCents: true, currency: true, at: true },
+        }),
       ]);
 
-    const subscriptionCash = payments.reduce(
-      (total, p) => total + Math.round(p.finalAmount * 100),
+    // Pagamento, taxa e ajuste em outra moeda viram reais pela PTAX do dia em
+    // que o dinheiro se mexeu. Sem cotação, o valor fica de fora da soma e é
+    // contado em `unconverted`: melhor avisar do que misturar moedas.
+    const rates = new Map<string, Promise<number | null>>();
+    let unconverted = 0;
+    const brl = async (cents: number, currency: string | null, at: Date) => {
+      const code = (currency ?? 'BRL').toUpperCase();
+      if (code === 'BRL') return cents;
+      const key = `${code}:${at.toISOString().slice(0, 10)}`;
+      if (!rates.has(key)) rates.set(key, this.fx.rateFor(code, at));
+      const rate = await rates.get(key);
+      if (rate == null) {
+        unconverted++;
+        return 0;
+      }
+      return Math.round(cents * rate);
+    };
+
+    let subscriptionCash = 0;
+    let stripeFees = 0;
+    let feesPending = 0;
+    for (const p of payments) {
+      const at = p.paidAt ?? from;
+      subscriptionCash += await brl(
+        Math.round(p.finalAmount * 100),
+        p.currency,
+        at,
+      );
+      // A taxa do Stripe: só a já lida. Pagamento com valor e sem taxa lida
+      // ainda não está descontado — a tela avisa, e a leitura se pede à parte.
+      if (p.stripeFeeCents == null) {
+        if (p.finalAmount > 0) feesPending++;
+      } else {
+        stripeFees += await brl(
+          p.stripeFeeCents,
+          p.stripeFeeCurrency ?? p.currency,
+          at,
+        );
+      }
+    }
+
+    // Reembolso e contestação: o que saiu depois do pagamento. A contestação
+    // aberta tira o valor; se for ganha, o Stripe o devolve; a tarifa fica.
+    let refunds = 0;
+    let disputes = 0;
+    for (const a of adjustments) {
+      const cents = await brl(a.amountCents, a.currency, a.at);
+      if (a.kind === 'REFUND') refunds += cents;
+      else if (a.kind === 'DISPUTE_WON') disputes -= cents;
+      else disputes += cents;
+    }
+    const lateMrr = lateSubs.reduce(
+      (total, s) =>
+        total + monthlyRevenueCents(s.price ?? 0, s.billingPeriod ?? null),
       0,
     );
     const mrr = subscriptions.reduce(
@@ -355,11 +424,26 @@ export class FinanceService {
         subscriptionCashCents: subscriptionCash,
         manualCents: manualIncome,
         grossCents: subscriptionCash + manualIncome,
-        // O Stripe cobra taxa sobre cada pagamento; ela ainda não é lida da
-        // transação de saldo, então o líquido não é calculado.
-        netCents: null as number | null,
+        stripeFeeCents: stripeFees,
+        /** Reembolsos feitos no mês (saem da receita). */
+        refundsCents: refunds,
+        /** Contestações: valor retirado, menos o devolvido, mais a tarifa. */
+        disputesCents: disputes,
+        /** Valores em moeda sem cotação, deixados de fora da soma. */
+        unconverted,
+        /** Pagamentos do mês com valor e sem a taxa lida: o líquido ainda não os desconta. */
+        feesPending,
+        /** Receita menos a taxa do Stripe (as entradas manuais não têm taxa). */
+        netCents:
+          subscriptionCash - stripeFees - refunds - disputes + manualIncome,
       },
-      resultCents: subscriptionCash + manualIncome - costTotal,
+      resultCents:
+        subscriptionCash -
+        stripeFees -
+        refunds -
+        disputes +
+        manualIncome -
+        costTotal,
       accrual: {
         // Competência: a assinatura anual vale 1/12 por mês. Só se conhece o
         // MRR de hoje, então vale para o mês atual.
@@ -370,7 +454,9 @@ export class FinanceService {
         active: subscriptions.length,
         byPlan,
         trial: trials,
-        pastDue,
+        pastDue: lateSubs.length,
+        /** O que as atrasadas valem por mês: fora do MRR, em risco. */
+        pastDueMrrCents: lateMrr,
         teachers,
       },
       breakEven: breakEven(fixedMonthly, mrr, subscriptions.length),
@@ -379,6 +465,71 @@ export class FinanceService {
     };
     await this.cache.set(SUMMARY_KEY(key), result, SUMMARY_TTL_MS);
     return result;
+  }
+
+  /** O MRR dos últimos meses: o fim de cada um e o que entrou, cresceu, encolheu e saiu. */
+  async mrrSeries(months = 12) {
+    return this.mrrService.series(months);
+  }
+
+  /**
+   * Lê no Stripe a taxa dos pagamentos aprovados que ainda não a têm: os
+   * anteriores a esta função, ou os que o Stripe ainda não tinha registrado
+   * na hora. Em lotes, para uma chamada não demorar; chame de novo até
+   * `pending` zerar.
+   */
+  async syncStripeFees(batch = 25) {
+    const where: Prisma.PaymentWhereInput = {
+      status: { in: ['APPROVED', 'REFUNDED'] },
+      finalAmount: { gt: 0 },
+      AND: [
+        {
+          // Sem a taxa, ou sem o PaymentIntent (que um reembolso ou uma
+          // contestação usam para achar o pagamento).
+          OR: [
+            { stripeFeeCents: { isSet: false } },
+            { stripeFeeCents: null },
+            { stripePaymentIntentId: { isSet: false } },
+            { stripePaymentIntentId: null },
+          ],
+        },
+        {
+          OR: [
+            { stripeInvoiceId: { not: null } },
+            { stripeSessionId: { not: null } },
+          ],
+        },
+      ],
+    };
+    const rows = await this.prisma.payment.findMany({
+      where,
+      select: { id: true, stripeInvoiceId: true, stripeSessionId: true },
+      orderBy: { createdAt: 'desc' },
+      take: batch,
+    });
+
+    let updated = 0;
+    for (const row of rows) {
+      const fee = row.stripeInvoiceId
+        ? await this.stripe.feeForInvoice(row.stripeInvoiceId)
+        : row.stripeSessionId
+          ? await this.stripe.feeForSession(row.stripeSessionId)
+          : null;
+      if (!fee) continue;
+      await this.prisma.payment.update({
+        where: { id: row.id },
+        data: {
+          stripeFeeCents: fee.feeCents,
+          stripeFeeCurrency: fee.currency,
+          stripePaymentIntentId: fee.paymentIntentId,
+        },
+      });
+      updated++;
+    }
+
+    if (updated > 0) await this.forgetSummaries();
+    const pending = await this.prisma.payment.count({ where });
+    return { checked: rows.length, updated, pending };
   }
 
   /** O CSV das cobranças e entradas manuais de um período, mês a mês. */
