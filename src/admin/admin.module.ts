@@ -49,6 +49,8 @@ import { AdminCatalogController } from './catalog/admin-catalog.controller';
 import { AdminContributionsController } from './contributions/admin-contributions.controller';
 import { AdminContributionsService } from './contributions/admin-contributions.service';
 import { ContributionsModule } from '../library/contributions/contributions.module';
+import { CatalogJobsController } from './catalog/catalog-jobs.controller';
+import { CatalogJobsService } from './catalog/catalog-jobs.service';
 import { CatalogQualityController } from './catalog/catalog-quality.controller';
 import { CatalogQualityService } from './catalog/catalog-quality.service';
 import { FinanceController } from './finance/finance.controller';
@@ -91,6 +93,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     BioReviewController,
     FinanceController,
     CatalogQualityController,
+    CatalogJobsController,
     AdminContributionsController,
     AdminUploadsController,
     AdminAdsController,
@@ -139,6 +142,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminAuditService,
     AdminMaintenanceService,
     MaintenanceTasksService,
+    CatalogJobsService,
     OrphanFilesService,
     AdminPortalService,
     BackupService,
@@ -151,6 +155,10 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
   ],
   // Exportados para o `WorkerModule`: os processors são adaptadores finos e
   // chamam estes serviços.
-  exports: [NewsletterDispatchService, MaintenanceTasksService],
+  exports: [
+    NewsletterDispatchService,
+    MaintenanceTasksService,
+    CatalogJobsService,
+  ],
 })
 export class AdminModule {}

@@ -2,9 +2,12 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   AchievementCategory,
   AchievementRarity,
+  NotificationPriority,
+  NotificationType,
   Prisma,
   UserAchievement,
 } from '@prisma/client';
+import { NotificationsService } from '../portal/notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { errorMessage } from '../common/utils/error.util';
 import {
@@ -37,6 +40,7 @@ export class AchievementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stats: AchievementStatsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -83,8 +87,42 @@ export class AchievementsService {
     }
 
     await this.persistProgress(userId, stats, ownedIds);
+    await this.announce(userId, granted);
 
     return granted;
+  }
+
+  /**
+   * Avisa no sino que a conquista chegou. Uma conquista, um aviso; a primeira
+   * avaliação de quem já tinha histórico pode soltar várias de uma vez, e aí
+   * sai um aviso só, para o sino não virar uma lista de dez linhas iguais.
+   */
+  private async announce(
+    userId: string,
+    granted: UnlockedAchievement[],
+  ): Promise<void> {
+    if (granted.length === 0) return;
+
+    const [first] = granted;
+    const many = granted.length > 3;
+    await this.notifications.notify({
+      userId,
+      type: NotificationType.ACHIEVEMENT_UNLOCKED,
+      priority: NotificationPriority.LOW,
+      title: many
+        ? `${granted.length} conquistas desbloqueadas`
+        : granted.length > 1
+          ? 'Novas conquistas'
+          : 'Conquista desbloqueada',
+      message: many
+        ? `${first.name} e mais ${granted.length - 1}. Veja todas na sua página de conquistas.`
+        : granted.map((g) => `${g.name} (+${g.xpReward} XP)`).join(' · '),
+      actionText: 'Ver conquistas',
+      actionUrl: '/achievements',
+      relatedEntityType: 'achievement',
+      relatedEntityId: first.badgeId,
+      metadata: { badgeIds: granted.map((g) => g.badgeId) },
+    });
   }
 
   /**

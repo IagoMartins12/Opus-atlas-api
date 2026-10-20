@@ -53,12 +53,21 @@ export const QUEUE_NOTIFICATIONS = 'notifications';
  */
 export const QUEUE_IMSLP = 'imslp';
 
+/**
+ * Rotinas do acervo disparadas pelo painel (correções em lote do catálogo).
+ *
+ * Fila própria, de concorrência 1: uma rotina pode levar horas (ler o IMSLP
+ * obra por obra) e, na fila de manutenção, seguraria o backup e os expurgos.
+ */
+export const QUEUE_CATALOG = 'catalog';
+
 export const QUEUE_NAMES = [
   QUEUE_NEWSLETTER,
   QUEUE_MAINTENANCE,
   QUEUE_SCRAPER,
   QUEUE_NOTIFICATIONS,
   QUEUE_IMSLP,
+  QUEUE_CATALOG,
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -122,6 +131,9 @@ export const JOB_BLOG_PUBLISH_SCHEDULED = 'blog.publish-scheduled';
  * moderação: varredura periódica de produto, que termina avisando alguém.
  */
 export const JOB_CONTRIBUTIONS_GRANT_XP = 'contributions.grant-xp';
+
+/** Executa uma rotina do acervo (`CatalogJobRun`). Um job por execução. */
+export const JOB_CATALOG_RUN = 'catalog.job.run';
 
 /** Lê no IMSLP as partituras de uma obra e grava. Um job por obra (`jobId`). */
 export const JOB_IMSLP_SCORES = 'imslp.work.scores';

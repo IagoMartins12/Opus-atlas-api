@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PortalModule } from '../portal/portal.module';
 import { AchievementsController } from './achievements.controller';
 import { AchievementsListener } from './achievements.listener';
 import { AchievementsService } from './achievements.service';
@@ -12,6 +13,7 @@ import { AchievementStatsService } from './achievement-stats.service';
  * cada módulo precise conhecer as conquistas.
  */
 @Module({
+  imports: [PortalModule],
   controllers: [AchievementsController],
   providers: [
     AchievementsService,

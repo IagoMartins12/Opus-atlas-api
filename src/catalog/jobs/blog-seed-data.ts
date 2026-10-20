@@ -1,45 +1,36 @@
+import type { Prisma, PrismaClient } from '@prisma/client';
+
 /**
- * Semeia o blog no banco LOCAL com uma massa parecida com a de produção:
- * três autores, categorias e tags novas, 16 artigos publicados ao longo de
- * dois meses (com capa, compositores e obras reais do catálogo, visitas,
- * curtidas e comentários), e destaques da agenda nos próximos meses.
+ * Massa editorial do blog: categorias, tags, três autores de exemplo e 16
+ * artigos publicados ao longo de dois meses (com capa, compositores e obras
+ * reais do catálogo, visitas, curtidas e comentários).
  *
- * **Só roda contra `localhost`.** Recusa qualquer outro `DATABASE_URL`.
- *
- * **Idempotente.** Tudo o que cria é marcado pelos autores de semente
- * (e-mail `@seed.opusatlas.local`): rodar de novo apaga os artigos deles e
- * recria. Categorias e tags são atualizadas pelo slug; as que já existiam
- * antes (Barroco, Clássico, Romântico) só são usadas, nunca alteradas.
- *
- * Uso: `npm run build && node --env-file=.env.local dist/scripts/seed-blog.js`
+ * Os compositores são achados **pelo nome** no catálogo do banco em que a
+ * rotina roda; quem não existe lá fica sem capa, sem erro.
  */
-import { escapeRegex } from '../common/utils/regex.util';
-import { PrismaClient, Prisma } from '@prisma/client';
+export const DOMINIO = '@seed.opusatlas.local';
+export const DIA = 86_400_000;
 
-const DOMINIO = '@seed.opusatlas.local';
-const DIA = 86_400_000;
+export const COMPOSITORES: readonly string[] = [
+  'Ludwig van Beethoven',
+  'Heitor Villa-Lobos',
+  'Frédéric Chopin',
+  'Wolfgang Amadeus Mozart',
+  'Claude Debussy',
+  'Carlos Gomes',
+  'Clara Schumann',
+  'Antonio Vivaldi',
+  'Gustav Mahler',
+  'Pyotr Tchaikovsky',
+  'Johann Sebastian Bach',
+  'Chiquinha Gonzaga',
+  'Maurice Ravel',
+  'Giuseppe Verdi',
+  'Igor Stravinsky',
+  'Franz Schubert',
+];
 
-/** Ids no catálogo do banco local (conferidos em 01/10/2026). */
-const COMPOSITORES: Record<string, string> = {
-  'Ludwig van Beethoven': '685d9bd98803000f9b61d369',
-  'Heitor Villa-Lobos': '685f89c1c6bd886c5b4995bc',
-  'Frédéric Chopin': '685e1087c6bd886c5b495d66',
-  'Wolfgang Amadeus Mozart': '685ef349c6bd886c5b497f8f',
-  'Claude Debussy': '685e2b6fc6bd886c5b49611d',
-  'Carlos Gomes': '685e6976c6bd886c5b496acc',
-  'Clara Schumann': '685f4b9dc6bd886c5b498cee',
-  'Antonio Vivaldi': '685f8b71c6bd886c5b4995fe',
-  'Gustav Mahler': '685ed386c6bd886c5b497af9',
-  'Pyotr Tchaikovsky': '685f72bec6bd886c5b49928b',
-  'Johann Sebastian Bach': '685d8f9a8803000f9b61d151',
-  'Chiquinha Gonzaga': '685e69d1c6bd886c5b496adb',
-  'Maurice Ravel': '685f248cc6bd886c5b498739',
-  'Giuseppe Verdi': '685f8721c6bd886c5b49955c',
-  'Igor Stravinsky': '685f6a0bc6bd886c5b499135',
-  'Franz Schubert': '685f4a93c6bd886c5b498cce',
-};
-
-type No = Record<string, unknown>;
+export type No = Record<string, unknown>;
 const texto = (t: string, marcas?: string[]): No =>
   marcas
     ? { type: 'text', text: t, marks: marcas.map((type) => ({ type })) }
@@ -63,7 +54,7 @@ const em = (t: string) => texto(t, ['italic']);
 const forte = (t: string) => texto(t, ['bold']);
 
 /** O retrato original do IMSLP a partir da miniatura de 180px gravada no catálogo. */
-function original(url: string | null | undefined): string | null {
+export function original(url: string | null | undefined): string | null {
   if (!url) return null;
   const m = url.match(
     /^(https:\/\/imslp\.org\/images)\/thumb\/(.+?)\/\d+px-[^/]+$/,
@@ -71,7 +62,7 @@ function original(url: string | null | undefined): string | null {
   return m ? `${m[1]}/${m[2]}` : url;
 }
 
-interface Autor {
+export interface Autor {
   chave: string;
   firstName: string;
   lastName: string;
@@ -79,7 +70,7 @@ interface Autor {
   bio: string | null;
 }
 
-const AUTORES: Autor[] = [
+export const AUTORES: Autor[] = [
   {
     chave: 'helena',
     firstName: 'Helena',
@@ -104,7 +95,7 @@ const AUTORES: Autor[] = [
   },
 ];
 
-const CATEGORIAS = [
+export const CATEGORIAS = [
   {
     slug: 'seculo-xx',
     name: 'Século XX',
@@ -148,7 +139,7 @@ const CATEGORIAS = [
   },
 ];
 
-const TAGS = [
+export const TAGS = [
   ['sinfonia', 'symphony'],
   ['piano', 'piano'],
   ['concerto', 'concerto'],
@@ -163,7 +154,7 @@ const TAGS = [
   ['impressionismo', 'impressionism'],
 ] as const;
 
-interface Artigo {
+export interface Artigo {
   slug: string;
   titulo: string;
   resumo: string;
@@ -180,7 +171,7 @@ interface Artigo {
   en?: { titulo: string; resumo: string; corpo: No };
 }
 
-const ARTIGOS: Artigo[] = [
+export const ARTIGOS: Artigo[] = [
   {
     slug: 'a-nona-de-beethoven-duzentos-anos-depois',
     titulo: 'A Nona de Beethoven, duzentos anos depois',
@@ -719,274 +710,92 @@ const ARTIGOS: Artigo[] = [
   },
 ];
 
-async function main() {
-  const url = process.env.DATABASE_URL ?? '';
-  if (!/^mongodb(\+srv)?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(url)) {
-    throw new Error(
-      `Recusado: a semeadura só roda no banco local (DATABASE_URL=${url.replace(/\/\/[^@]*@/, '//***@')})`,
-    );
-  }
-
-  const prisma = new PrismaClient();
-  try {
-    // 1. Autores
-    const autores = new Map<string, string>();
-    for (const a of AUTORES) {
-      const email = `${a.username}${DOMINIO}`;
-      const user = await prisma.user.upsert({
-        where: { email },
-        update: {
-          firstName: a.firstName,
-          lastName: a.lastName,
-          username: a.username,
-          bio: a.bio,
-          role: 2,
-        },
-        create: {
-          email,
-          firstName: a.firstName,
-          lastName: a.lastName,
-          username: a.username,
-          bio: a.bio,
-          role: 2,
-        },
-      });
-      autores.set(a.chave, user.id);
-    }
-    const idsDosAutores = [...autores.values()];
-
-    // 2. Limpa o que a semeadura criou antes
-    const antigos = await prisma.blogArticle.findMany({
-      where: { authorId: { in: idsDosAutores } },
-      select: { id: true },
-    });
-    // As respostas primeiro: a relação entre comentários não apaga em cascata.
-    const idsAntigos = antigos.map((x) => x.id);
-    await prisma.blogComment.deleteMany({
-      where: { articleId: { in: idsAntigos }, parentId: { not: null } },
-    });
-    await prisma.blogComment.deleteMany({
-      where: { articleId: { in: idsAntigos } },
-    });
-    await prisma.blogArticle.deleteMany({
-      where: { id: { in: antigos.map((x) => x.id) } },
-    });
-
-    // 3. Categorias (as novas; as que já existiam só são lidas)
-    for (const c of CATEGORIAS) {
-      await prisma.blogCategory.upsert({
-        where: { slug: c.slug },
-        update: {
-          name: c.name,
-          description: c.description,
-          order: c.order,
-          inMoreMenu: c.more,
-          showOnHome: c.slug === 'seculo-xx',
-          translation: { name: c.en },
-        },
-        create: {
-          slug: c.slug,
-          name: c.name,
-          description: c.description,
-          order: c.order,
-          inMoreMenu: c.more,
-          showOnHome: c.slug === 'seculo-xx',
-          showInMenu: true,
-          isActive: true,
-          translation: { name: c.en },
-        },
-      });
-    }
-    // Romântico (anterior à semente) também ganha seção no início.
-    await prisma.blogCategory.updateMany({
-      where: { slug: 'romantico' },
-      data: { showOnHome: true },
-    });
-    const categorias = new Map(
-      (
-        await prisma.blogCategory.findMany({ select: { id: true, slug: true } })
-      ).map((c) => [c.slug, c.id]),
-    );
-
-    // 4. Tags
-    for (const [slug, en] of TAGS) {
-      const nome = slug.replace(/-/g, ' ');
-      const existente = await prisma.blogTag.findFirst({
-        where: { OR: [{ slug }, { name: nome }] },
-      });
-      if (existente) {
-        await prisma.blogTag.update({
-          where: { id: existente.id },
-          data: { translation: { name: en } },
-        });
-      } else {
-        await prisma.blogTag.create({
-          data: { slug, name: nome, translation: { name: en } },
-        });
-      }
-    }
-    const tags = new Map(
-      (await prisma.blogTag.findMany({ select: { id: true, slug: true } })).map(
-        (t) => [t.slug, t.id],
-      ),
-    );
-
-    // 5. Artigos. Destaque: os da semente tomam as posições 1 a 3.
-    await prisma.blogArticle.updateMany({
-      where: { isFeatured: true },
-      data: { isFeatured: false, featuredOrder: null },
-    });
-    const leitores = await prisma.user.findMany({
-      where: { email: { not: { endsWith: DOMINIO } } },
-      select: { id: true },
-      take: 6,
-    });
-
-    for (const a of ARTIGOS) {
-      const compositor = await prisma.composer.findUnique({
-        where: { id: COMPOSITORES[a.compositor] },
-        select: { id: true, portraitUrl: true },
-      });
-      const obras: string[] = [];
-      if (compositor) {
-        for (const trecho of a.obras ?? []) {
-          const obra = await prisma.work.findFirst({
-            where: {
-              composerId: compositor.id,
-              title: { contains: escapeRegex(trecho), mode: 'insensitive' },
-            },
-            select: { id: true },
-          });
-          if (obra) obras.push(obra.id);
-        }
-      }
-      const publicado = new Date(Date.now() - a.dias * DIA - 9 * 3_600_000);
-      const capa = original(compositor?.portraitUrl);
-      const palavras = JSON.stringify(a.corpo).split(/\s+/).length;
-
-      const artigo = await prisma.blogArticle.create({
-        data: {
-          title: a.titulo,
-          slug: a.slug,
-          description: a.resumo,
-          content: a.corpo as Prisma.InputJsonValue,
-          coverImage: capa,
-          coverImageAlt: capa ? `Retrato de ${a.compositor}` : null,
-          coverImageCredit: capa ? 'IMSLP, domínio público' : null,
-          status: 'PUBLISHED',
-          publishedAt: publicado,
-          createdAt: publicado,
-          isFeatured: Boolean(a.destaque),
-          featuredOrder: a.destaque ?? null,
-          authorId: autores.get(a.autor)!,
-          composerIds: compositor ? [compositor.id] : [],
-          workIds: obras,
-          viewCount: a.visitas,
-          readCount: Math.round(a.visitas * 0.42),
-          estimatedReadTime: Math.max(2, Math.round(palavras / 220)),
-          backgroundMusicAutoplay: false,
-          language: 'pt',
-          translation: a.en
-            ? ({
-                title: a.en.titulo,
-                description: a.en.resumo,
-                content: a.en.corpo,
-              } as Prisma.InputJsonValue)
-            : undefined,
-          categories: {
-            create: a.categorias
-              .filter((s) => categorias.has(s))
-              .map((s) => ({ categoryId: categorias.get(s)! })),
-          },
-          tags: {
-            create: a.tags
-              .filter((s) => tags.has(s))
-              .map((s) => ({ tagId: tags.get(s)! })),
-          },
-        },
-      });
-
-      // Curtidas e comentários dos leitores que já existem no banco local.
-      const quantos = Math.min(leitores.length, Math.round(a.visitas / 800));
-      for (const leitor of leitores.slice(0, quantos)) {
-        await prisma.blogLike
-          .create({ data: { articleId: artigo.id, userId: leitor.id } })
-          .catch(() => undefined);
-      }
-      if (a.visitas > 2000 && leitores.length >= 2) {
-        const primeiro = await prisma.blogComment.create({
-          data: {
-            articleId: artigo.id,
-            userId: leitores[0].id,
-            content:
-              'Que texto bom. Fui ouvir de novo depois de ler e reparei em coisas que nunca tinha notado.',
-          },
-        });
-        await prisma.blogComment.create({
-          data: {
-            articleId: artigo.id,
-            userId: leitores[1].id,
-            parentId: primeiro.id,
-            content:
-              'Aconteceu o mesmo comigo. A lista do que ouvir ajudou muito.',
-          },
-        });
-      }
-    }
-
-    // 6. Contagem das tags
-    for (const [slug, id] of tags) {
-      const n = await prisma.blogArticleTag.count({ where: { tagId: id } });
-      await prisma.blogTag.update({ where: { id }, data: { articleCount: n } });
-      void slug;
-    }
-
-    // 7. Agenda: três destaques em cada um dos próximos três meses
-    await prisma.event.updateMany({
-      where: { isFeatured: true },
-      data: { isFeatured: false, featuredOrder: null, featuredSize: null },
-    });
-    const hoje = new Date();
-    for (let m = 0; m < 3; m++) {
-      const inicio = new Date(
-        Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + m, 1, 3),
-      );
-      const fim = new Date(
-        Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() + m + 1, 1, 3),
-      );
-      const eventos = await prisma.event.findMany({
-        where: {
-          status: 'PUBLISHED',
-          startDate: { gte: m === 0 ? hoje : inicio, lt: fim },
-        },
-        orderBy: { startDate: 'asc' },
-        take: 3,
-        select: { id: true },
-      });
-      for (const [i, e] of eventos.entries()) {
-        await prisma.event.update({
-          where: { id: e.id },
-          data: {
-            isFeatured: true,
-            featuredOrder: i + 1,
-            featuredSize: i === 0 ? 'large' : 'normal',
-          },
-        });
-      }
-    }
-
-    const total = await prisma.blogArticle.count({
-      where: { status: 'PUBLISHED' },
-    });
-    console.log(
-      `Blog semeado: ${ARTIGOS.length} artigos da semente, ${total} publicados no total.`,
-    );
-  } finally {
-    await prisma.$disconnect();
-  }
+/** O compositor do catálogo pelo nome (o de mais obras, se houver homônimos). */
+export function compositorPorNome(prisma: PrismaClient, nome: string) {
+  return prisma.composer.findFirst({
+    where: { OR: [{ fullName: nome }, { name: nome }] },
+    orderBy: { works: { _count: 'desc' } },
+    select: { id: true, portraitUrl: true },
+  });
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+/** Cria ou atualiza as categorias e as tags da semente. Devolve o que mudou. */
+export async function garantirCategoriasETags(
+  prisma: PrismaClient,
+  apply: boolean,
+) {
+  const existentes = new Set(
+    (await prisma.blogCategory.findMany({ select: { slug: true } })).map(
+      (c) => c.slug,
+    ),
+  );
+  const tagsExistentes = new Set(
+    (await prisma.blogTag.findMany({ select: { slug: true } })).map(
+      (t) => t.slug,
+    ),
+  );
+  const novasCategorias = CATEGORIAS.filter((c) => !existentes.has(c.slug));
+  const novasTags = TAGS.filter(([slug]) => !tagsExistentes.has(slug));
+  if (!apply)
+    return {
+      categoriasNovas: novasCategorias.length,
+      categoriasAtualizadas: CATEGORIAS.length - novasCategorias.length,
+      tagsNovas: novasTags.length,
+      tagsAtualizadas: TAGS.length - novasTags.length,
+    };
+
+  for (const c of CATEGORIAS) {
+    await prisma.blogCategory.upsert({
+      where: { slug: c.slug },
+      update: {
+        name: c.name,
+        description: c.description,
+        order: c.order,
+        inMoreMenu: c.more,
+        showOnHome: c.slug === 'seculo-xx',
+        translation: { name: c.en },
+      },
+      create: {
+        slug: c.slug,
+        name: c.name,
+        description: c.description,
+        order: c.order,
+        inMoreMenu: c.more,
+        showOnHome: c.slug === 'seculo-xx',
+        showInMenu: true,
+        isActive: true,
+        translation: { name: c.en },
+      },
+    });
+  }
+  // Romântico (anterior à semente) também ganha seção no início.
+  await prisma.blogCategory.updateMany({
+    where: { slug: 'romantico' },
+    data: { showOnHome: true },
+  });
+
+  for (const [slug, en] of TAGS) {
+    const nome = slug.replace(/-/g, ' ');
+    const existente = await prisma.blogTag.findFirst({
+      where: { OR: [{ slug }, { name: nome }] },
+    });
+    if (existente) {
+      await prisma.blogTag.update({
+        where: { id: existente.id },
+        data: { translation: { name: en } },
+      });
+    } else {
+      await prisma.blogTag.create({
+        data: { slug, name: nome, translation: { name: en } },
+      });
+    }
+  }
+  return {
+    categoriasNovas: novasCategorias.length,
+    categoriasAtualizadas: CATEGORIAS.length - novasCategorias.length,
+    tagsNovas: novasTags.length,
+    tagsAtualizadas: TAGS.length - novasTags.length,
+  };
+}
+
+export type { Prisma };

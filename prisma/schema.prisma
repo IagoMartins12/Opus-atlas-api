@@ -308,6 +308,7 @@ enum NotificationType {
   PROGRESS_REPORT_SHARED // Professor compartilhou um relatório
   STUDENT_ADDED_BY_TEACHER // Professor vinculou o aluno sem convite (conta existente)
   WORK_SUGGESTED // Professor sugeriu uma obra para o "quero aprender"
+  ACHIEVEMENT_UNLOCKED // Conquista desbloqueada (20/10/2026)
   // NOTIFICAÇÕES ANTIGAS (manter para compatibilidade)
   LESSON_NO_SHOW
   ASSIGNMENT_FEEDBACK_NEEDED // 🗑️ SERÁ REMOVIDA do check/route.ts
@@ -776,6 +777,10 @@ model WorkScore {
   lastAccessed DateTime @default(now())
   accessCount  Int      @default(0)
 
+  // Downloads feitos pelo botão do site (o `downloadCount` é o do IMSLP)
+  siteDownloads    Int       @default(0)
+  lastDownloadedAt DateTime?
+
   // Campos para sistema incremental
   imslpTotalCounts String? // JSON com totais reais do IMSLP por tipo
 
@@ -791,6 +796,7 @@ model WorkScore {
 
   // Índices otimizados para performance
   @@unique([workId, sourceId, source], name: "workId_sourceId_source")
+  @@index([siteDownloads])
   @@index([workId, isActive])
   @@index([workId, type, groupIndex])
   @@index([source, processingStatus])
@@ -1052,6 +1058,8 @@ model Work {
   epochId          String   @db.ObjectId
   videoUrl         String?
   imslpPermlink    String
+  /// Quando a ficha das edições das partituras foi relida no IMSLP (rotina de edições).
+  editionsCheckedAt DateTime?
   imslpId          String
   opOrCatalog      String?
   compositionYear  String?
@@ -4324,4 +4332,35 @@ model PaymentAdjustment {
   @@index([at])
   @@index([paymentId])
   @@map("payment_adjustments")
+}
+
+/// Uma execução de rotina do acervo disparada pelo painel (21/10/2026).
+/// O worker atualiza o progresso e o log enquanto roda; `heartbeatAt` parado
+/// por mais de dois minutos significa que o worker caiu no meio.
+model CatalogJobRun {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  job             String
+  jobName         String
+  /// queued | running | ok | failed | stopped | interrupted
+  status          String
+  apply           Boolean   @default(false)
+  args            Json?
+  requestedBy     String?   @db.ObjectId
+  stopRequested   Boolean   @default(false)
+  progressDone    Int       @default(0)
+  progressTotal   Int?
+  progressMessage String?
+  log             String[]  @default([])
+  summary         Json?
+  sample          String[]  @default([])
+  warnings        String[]  @default([])
+  error           String?
+  queuedAt        DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  heartbeatAt     DateTime?
+
+  @@index([job, queuedAt])
+  @@index([status])
+  @@map("catalog_job_runs")
 }

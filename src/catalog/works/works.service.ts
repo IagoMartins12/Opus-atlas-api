@@ -1,3 +1,4 @@
+import { isMongoId } from 'class-validator';
 import { escapeRegex } from '../../common/utils/regex.util';
 import {
   BadRequestException,
@@ -1827,6 +1828,22 @@ export class WorksService {
    * independentemente, mesma lógica da rota legada `work-scores`), além da
    * busca direta por `sourceId`+`source` (que incrementa o contador de acesso).
    */
+  /**
+   * Conta um download feito pelo botão do site. Uma partitura que não existe
+   * ou está desativada não conta; quem chama não precisa saber (a resposta é
+   * a mesma), e o arquivo abre de qualquer jeito.
+   */
+  async registerScoreDownload(scoreId: string): Promise<void> {
+    if (!isMongoId(scoreId)) return;
+    await this.prisma.workScore.updateMany({
+      where: { id: scoreId, isActive: true },
+      data: {
+        siteDownloads: { increment: 1 },
+        lastDownloadedAt: new Date(),
+      },
+    });
+  }
+
   async getScores(
     workId: string,
     query: GetWorkScoresQueryDto,
