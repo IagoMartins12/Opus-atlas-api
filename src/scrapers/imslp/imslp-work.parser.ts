@@ -561,7 +561,40 @@ export function determineWorkType(
   return 'INDIVIDUAL';
 }
 
-/** Primeiro instrumento reconhecido no título, na instrumentação ou nas categorias. */
+/**
+ * "Bass" sozinho é o contrabaixo; em "bassoon", "bass voice", "bass clarinet",
+ * "figured bass" ou "without bass" é outra coisa. As chaves compostas e as
+ * palavras mais longas têm a sua própria entrada no mapa, então "bass" só vale
+ * quando está sozinho e fora dessas expressões.
+ */
+const BASS_NOT_THE_INSTRUMENT =
+  /(?:figured|thorough|without|basso|double|contra)\s+bass|bass\s+(?:voice|voices|clarinet|recorder|viol|drum|trombone|tuba|flute|horn|guitar|saxophone|sax|continuo|line|solo|part|parts)(?![a-z])/g;
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * O nome inglês no texto, como palavra inteira (com plural): "bass" não casa
+ * com "bassoon" nem "lute" com "flute". `cello` também vale dentro de
+ * "violoncello".
+ */
+function mentions(text: string, english: string): boolean {
+  const source =
+    english === 'bass' ? text.replace(BASS_NOT_THE_INSTRUMENT, ' ') : text;
+  const stem = english === 'cello' ? '(?:violon)?cello' : escapeRegExp(english);
+
+  return new RegExp(`(?<![a-z])${stem}(?:s|es)?(?![a-z])`).test(source);
+}
+
+/**
+ * Primeiro instrumento reconhecido no título, na instrumentação ou nas
+ * categorias, na ordem do mapa.
+ *
+ * **Os nomes eram procurados como trecho de texto**: "bass" casava com
+ * "bassoon", "bass voice" e "figured bass", e "lute" com "flute". Cinco mil
+ * obras (fagote, voz grave, orquestra, baixo contínuo) foram gravadas como
+ * contrabaixo.
+ */
 export function determinePrimaryInstrument(
   title: string,
   instrumentation?: string,
@@ -572,7 +605,7 @@ export function determinePrimaryInstrument(
     .toLowerCase();
 
   for (const [english, portuguese] of Object.entries(INSTRUMENT_MAPPING)) {
-    if (text.includes(english)) {
+    if (mentions(text, english)) {
       return portuguese;
     }
   }

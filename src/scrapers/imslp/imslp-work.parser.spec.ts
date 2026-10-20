@@ -276,6 +276,36 @@ describe('determinePrimaryInstrument', () => {
   it('devolve nulo quando não reconhece nenhum', () => {
     expect(determinePrimaryInstrument('Peça', 'nada disso', [])).toBeNull();
   });
+
+  // "bass" era achado dentro de "bassoon", "bass voice" e "figured bass": cinco
+  // mil obras foram gravadas como contrabaixo.
+  describe('"bass" só vale como o instrumento', () => {
+    it('contrabaixo de verdade', () => {
+      expect(determinePrimaryInstrument('Andante for Double Bass')).toBe(
+        'Contrabaixo',
+      );
+      expect(determinePrimaryInstrument('Sonata', 'bass, piano')).toBe(
+        'Contrabaixo',
+      );
+    });
+
+    it.each([
+      ['10 Etudes for Bassoon solo', 'Fagote'],
+      ['2 Solos for Bass Voice', 'Voz'],
+      ['3 Solos for Bass Recorder', null],
+      ['12 Fantasias for Flute without Bass', 'Flauta'],
+    ])('%s não é contrabaixo', (title, expected) => {
+      const found = determinePrimaryInstrument(title);
+      expect(found).not.toBe('Contrabaixo');
+      if (expected) expect(found).toBe(expected);
+    });
+
+    it('baixo cifrado e contínuo não são contrabaixo', () => {
+      expect(determinePrimaryInstrument('Sonata', 'figured bass')).not.toBe(
+        'Contrabaixo',
+      );
+    });
+  });
 });
 
 describe('dataCompleteness', () => {
