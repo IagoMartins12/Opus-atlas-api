@@ -380,6 +380,55 @@ describe('ContributionsService', () => {
       expect(result).toMatchObject({ mine: true, held: false });
     });
 
+    // O nome só aparece se a pessoa marcou "mostrar meu nome".
+    it('sem a caixa marcada, a curiosidade não leva o nome de quem contou', async () => {
+      const unsigned = await service.addCuriosity('user-1', 'c-1', {
+        text: 'Tocava órgão na igreja da cidade aos doze anos.',
+        language: 'pt',
+      });
+      const signed = await service.addCuriosity('user-1', 'c-1', {
+        text: 'Escreveu a primeira sinfonia aos dezessete anos.',
+        language: 'pt',
+        showAuthor: true,
+      });
+
+      const [first, second] = prisma.composerCuriosity.create.mock.calls;
+      expect(first[0].data.showAuthor).toBe(false);
+      expect(second[0].data.showAuthor).toBe(true);
+      expect(unsigned.author).toBeNull();
+      expect(signed.author).toEqual({ id: 'user-1', name: 'Clara Schumann' });
+      // Quem contou sempre se reconhece, assinada ou não.
+      expect(unsigned.mine).toBe(true);
+    });
+
+    it('na lista, curiosidade antiga (sem a escolha) sai sem assinatura', async () => {
+      prisma.composerCuriosity.findMany.mockResolvedValue([
+        {
+          id: 'q-9',
+          text: 'Antiga.',
+          source: 'USER',
+          userId: 'outro',
+          isHidden: null,
+          showAuthor: null,
+          user: author,
+        },
+        {
+          id: 'q-10',
+          text: 'Assinada.',
+          source: 'USER',
+          userId: 'outro',
+          isHidden: null,
+          showAuthor: true,
+          user: author,
+        },
+      ]);
+
+      const list = await service.listCuriosities('c-1', 'pt');
+
+      expect(list[0].author).toBeNull();
+      expect(list[1].author).toMatchObject({ name: 'Clara Schumann' });
+    });
+
     it('recusa repetida', async () => {
       prisma.composerCuriosity.findFirst.mockResolvedValue({ id: 'q-0' });
 

@@ -900,6 +900,12 @@ model Composer {
   /// The biography's original language ("pt" | "en") when the other one is
   /// a machine translation nobody reviewed yet. Null: both written by people.
   bioTranslatedFrom String?
+  /// When a person on the team read the biography (and its translation) and
+  /// approved or rewrote it. Null: not reviewed. An AI-written biography with
+  /// this set reads "reviewed by the team"; without it, "not yet reviewed by a
+  /// person".
+  bioReviewedAt     DateTime?
+  bioReviewedBy     String?   @db.ObjectId
   /// "Por onde começar" chosen by the team, in order (up to three); the
   /// page completes them with the automatic picks.
   startingWorkIds String[]  @default([]) @db.ObjectId
@@ -1627,6 +1633,10 @@ model ComposerCuriosity {
   userId     String?         @db.ObjectId
   /// Held after a serious report: only its author still sees it.
   isHidden   Boolean?
+  /// The author chose to have their name shown ("Told by …"); without it the
+  /// curiosity is shown unsigned. Rows from before the choice existed read as
+  /// unsigned.
+  showAuthor Boolean?
   createdAt  DateTime        @default(now())
 
   composer Composer @relation(fields: [composerId], references: [id], onDelete: Cascade)

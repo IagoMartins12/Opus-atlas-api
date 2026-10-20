@@ -165,6 +165,7 @@ export class ContributionsService {
         language: dto.language,
         source: CuriositySource.USER,
         userId,
+        showAuthor: dto.showAuthor === true,
       },
       include: { user: { select: AUTHOR_SELECT } },
     });
@@ -593,6 +594,7 @@ export class ContributionsService {
       source: CuriositySource;
       userId: string | null;
       isHidden: boolean | null;
+      showAuthor: boolean | null;
       user: Author | null;
     },
     currentUserId?: string,
@@ -601,7 +603,11 @@ export class ContributionsService {
       id: row.id,
       text: row.text,
       source: row.source,
-      author: row.user ? { id: row.user.id, name: authorName(row.user) } : null,
+      // Signed only when the author asked for it.
+      author:
+        row.user && row.showAuthor
+          ? { id: row.user.id, name: authorName(row.user) }
+          : null,
       mine: !!currentUserId && row.userId === currentUserId,
       held: !!row.isHidden,
     };

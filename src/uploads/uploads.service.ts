@@ -17,6 +17,7 @@ import {
 import { CreateSignedUploadDto } from './dto/create-signed-upload.dto';
 import { SignedUploadResponseDto } from './dto/signed-upload-response.dto';
 import { StoredAssetDto } from './dto/stored-asset.dto';
+import { assertEmailVerified } from './shared/verified-email';
 
 /**
  * Que tipo de arquivo conta contra qual limite de plano.
@@ -152,6 +153,9 @@ export class UploadsService {
     if (!feature) {
       return;
     }
+
+    // Score files and performance videos are contributions to the library.
+    await assertEmailVerified(this.prisma, userId);
 
     const access = await this.subscriptions.checkFeatureAccess(userId, feature);
 

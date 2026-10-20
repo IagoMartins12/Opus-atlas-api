@@ -8,6 +8,7 @@ describe('ContributionLimitService', () => {
     composer: { count: jest.fn() },
     work: { count: jest.fn() },
     workScore: { count: jest.fn() },
+    user: { findUnique: jest.fn() },
   };
   const subscriptions = { checkFeatureAccess: jest.fn() };
   const service = new ContributionLimitService(
@@ -20,6 +21,25 @@ describe('ContributionLimitService', () => {
     prisma.composer.count.mockResolvedValue(5);
     prisma.work.count.mockResolvedValue(10);
     prisma.workScore.count.mockResolvedValue(4);
+    prisma.user.findUnique.mockResolvedValue({ emailVerified: new Date() });
+  });
+
+  // Contribuir ao acervo exige e-mail confirmado, como completar ficha.
+  it('e-mail não confirmado não contribui, nem chega a olhar o plano', async () => {
+    prisma.user.findUnique.mockResolvedValue({ emailVerified: null });
+
+    await expect(service.assertWithinLimit('u1')).rejects.toThrow(
+      'Confirme seu e-mail para contribuir com o acervo.',
+    );
+    expect(subscriptions.checkFeatureAccess).not.toHaveBeenCalled();
+  });
+
+  it('conta que não existe também não contribui', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+
+    await expect(service.assertWithinLimit('u1')).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it('soma compositores, obras e partituras criados pela pessoa', async () => {

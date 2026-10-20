@@ -183,12 +183,25 @@ describe('ComposersService', () => {
       );
     });
 
-    it('ordenar por nascimento lista só quem tem o ano', async () => {
-      await service.findAll({ sort: 'born-desc' });
+    // "Mais antigos / mais recentes" é o registro (quando entrou no acervo), não o
+    // nascimento; o ano de nascimento é o filtro "Nasceu entre".
+    it('mais antigos e mais recentes ordenam pelo registro, sem exigir o ano de nascimento', async () => {
+      await service.findAll({ sort: 'oldest' });
+      await service.findAll({ sort: 'newest' });
 
-      const [{ where, orderBy }] = prisma.composer.findMany.mock.calls[0];
-      expect(orderBy).toEqual([{ birthYear: 'desc' }, { name: 'asc' }]);
-      expect(where.AND).toContainEqual({ birthYear: { not: null } });
+      const [[asc], [desc]] = prisma.composer.findMany.mock.calls;
+      expect(asc.orderBy).toEqual([{ createdAt: 'asc' }]);
+      expect(desc.orderBy).toEqual([{ createdAt: 'desc' }]);
+      expect(asc.where.AND ?? []).not.toContainEqual({
+        birthYear: { not: null },
+      });
+    });
+
+    it('só verificados filtra pelo selo da equipe', async () => {
+      await service.findAll({ verified: true });
+
+      const [{ where }] = prisma.composer.findMany.mock.calls[0];
+      expect(where.AND).toContainEqual({ isVerified: true });
     });
 
     it('em destaque: retrato e ficha completa primeiro', async () => {

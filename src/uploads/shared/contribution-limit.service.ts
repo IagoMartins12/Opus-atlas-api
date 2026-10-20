@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SubscriptionsService } from '../../billing/services/subscriptions.service';
+import { assertEmailVerified } from './verified-email';
 
 /**
  * O limite de envios ao acervo do plano (`uploadLimit`, RN-1): **compositores,
@@ -21,7 +22,13 @@ export class ContributionLimitService {
     private readonly subscriptions: SubscriptionsService,
   ) {}
 
+  /**
+   * Can this person add a composer, work or score? A confirmed e-mail first,
+   * then the plan's limit.
+   */
   async assertWithinLimit(userId: string): Promise<void> {
+    await assertEmailVerified(this.prisma, userId);
+
     const access = await this.subscriptions.checkFeatureAccess(
       userId,
       'uploadLimit',

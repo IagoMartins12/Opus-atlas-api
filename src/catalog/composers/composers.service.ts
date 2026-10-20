@@ -35,6 +35,7 @@ interface ComposerFilters {
   nationality: string[];
   instrumentId: string;
   withPortrait: boolean;
+  verified: boolean;
   bornFrom: number;
   bornTo: number;
 }
@@ -50,8 +51,10 @@ const COMPOSER_ORDER: Record<
   ],
   name: [{ name: 'asc' }],
   'name-desc': [{ name: 'desc' }],
-  born: [{ birthYear: 'asc' }, { name: 'asc' }],
-  'born-desc': [{ birthYear: 'desc' }, { name: 'asc' }],
+  // By the record. `createdAt` is unique per composer, so no tie-break is
+  // needed — and one outside the index would drop it (see "Armadilhas").
+  oldest: [{ createdAt: 'asc' }],
+  newest: [{ createdAt: 'desc' }],
 };
 const COMPOSERS_CURATED_TTL_MS = 6 * 60 * 60 * 1000;
 const COMPOSER_DETAIL_TTL_MS = 5 * 60 * 1000;
@@ -255,6 +258,7 @@ const COMPOSER_DETAIL_SELECT = {
   bioEn: true,
   bioGeneratedBy: true,
   bioTranslatedFrom: true,
+  bioReviewedAt: true,
   roles: true,
   permLinkImslp: true,
   wikipediaLink: true,
@@ -359,12 +363,12 @@ export class ComposersService {
     const page = Math.max(query.page ?? 1, 1);
     const limit = Math.min(Math.max(query.limit ?? 30, 1), 100);
     const sort = query.sort ?? 'name';
-    const cacheKey = `${CacheNamespace.COMPOSERS}:list:v2:${JSON.stringify({ ...filters, page, limit, sort })}`;
+    const cacheKey = `${CacheNamespace.COMPOSERS}:list:v3:${JSON.stringify({ ...filters, page, limit, sort })}`;
     const cached = await this.cacheManager.get<ComposerListItemDto[]>(cacheKey);
     if (cached) return cached;
 
     const composers = await this.prisma.composer.findMany({
-      where: await this.buildWhereClause(filters, sort),
+      where: await this.buildWhereClause(filters),
       select: COMPOSER_LIST_SELECT,
       orderBy: COMPOSER_ORDER[sort],
       skip: (page - 1) * limit,
@@ -380,14 +384,12 @@ export class ComposersService {
 
   async count(query: ComposerCountQueryDto): Promise<number> {
     const filters = this.normalizeFilters(query);
-    // Birth sorts only list known years, so the count follows them.
-    const sort = query.sort ?? 'name';
-    const cacheKey = `${CacheNamespace.COMPOSERS}:count:v2:${JSON.stringify({ ...filters, born: sort.startsWith('born') })}`;
+    const cacheKey = `${CacheNamespace.COMPOSERS}:count:v3:${JSON.stringify(filters)}`;
     const cached = await this.cacheManager.get<number>(cacheKey);
     if (cached !== undefined && cached !== null) return cached;
 
     const count = await this.prisma.composer.count({
-      where: await this.buildWhereClause(filters, sort),
+      where: await this.buildWhereClause(filters),
     });
 
     await this.cacheManager.set(cacheKey, count, COMPOSERS_COUNT_TTL_MS);
@@ -842,6 +844,7 @@ export class ComposersService {
       bio: this.normalizeOptionalString(composer.bio),
       bioEn: this.normalizeOptionalString(composer.bioEn),
       bioGeneratedByAi: Boolean(composer.bioGeneratedBy),
+      bioReviewed: Boolean(composer.bioReviewedAt),
       bioTranslatedFrom:
         composer.bioTranslatedFrom === 'pt' ||
         composer.bioTranslatedFrom === 'en'
@@ -989,7 +992,6 @@ export class ComposersService {
 
   private async buildWhereClause(
     filters: ComposerFilters,
-    sort: ComposerSort,
   ): Promise<Prisma.ComposerWhereInput> {
     const and: Prisma.ComposerWhereInput[] = [IS_COMPOSER];
 
@@ -1012,7 +1014,8 @@ export class ComposersService {
       and.push({ nationality: { in: filters.nationality } });
     }
     if (filters.withPortrait) and.push({ hasValidImage: true });
-    if (filters.bornFrom || filters.bornTo || sort.startsWith('born')) {
+    if (filters.verified) and.push({ isVerified: true });
+    if (filters.bornFrom || filters.bornTo) {
       and.push({
         birthYear: {
           not: null,
@@ -1061,6 +1064,7 @@ export class ComposersService {
         .sort(),
       instrumentId: query.instrumentId ?? '',
       withPortrait: query.withPortrait === true,
+      verified: query.verified === true,
       bornFrom: query.bornFrom ?? 0,
       bornTo: query.bornTo ?? 0,
     };

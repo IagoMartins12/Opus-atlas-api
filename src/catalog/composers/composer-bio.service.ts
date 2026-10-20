@@ -319,6 +319,9 @@ export class ComposerBioService {
         bio: text,
         bioGeneratedBy: completion.generatedBy,
         bioGeneratedAt: new Date(),
+        // A new AI text: whatever review there was belonged to the old one.
+        bioReviewedAt: null,
+        bioReviewedBy: null,
       },
     });
     await this.forgetDetail(composer.id);

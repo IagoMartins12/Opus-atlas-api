@@ -16,14 +16,16 @@ const trimmed = ({ value }: { value: unknown }) =>
 
 /**
  * - `featured`: with a portrait and the most complete record first.
- * - `born` / `born-desc`: by birth year; only composers whose year is known.
+ * - `oldest` / `newest`: by the record, that is, when the composer entered the
+ *   library (`createdAt`) — not by birth year, which is a filter
+ *   (`bornFrom`/`bornTo`) and not a sort.
  */
 export const COMPOSER_SORTS = [
   'featured',
   'name',
   'name-desc',
-  'born',
-  'born-desc',
+  'oldest',
+  'newest',
 ] as const;
 export type ComposerSort = (typeof COMPOSER_SORTS)[number];
 
@@ -74,6 +76,14 @@ export class ComposerCountQueryDto {
   withPortrait?: boolean;
 
   @ApiPropertyOptional({
+    description: 'Só compositores conferidos pela equipe (selo de verificado)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  verified?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Nasceu a partir deste ano',
     example: 1600,
   })
@@ -95,8 +105,6 @@ export class ComposerCountQueryDto {
   @ApiPropertyOptional({
     enum: COMPOSER_SORTS,
     default: 'name',
-    description:
-      'Na contagem, só importa se é por nascimento (conta quem tem o ano)',
   })
   @IsOptional()
   @IsIn(COMPOSER_SORTS)

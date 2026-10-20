@@ -57,9 +57,15 @@ export class ComposerDetailDto {
 
   @ApiProperty({
     description:
-      'A biografia em português foi gerada por IA e ninguém a revisou — o front pode avisar',
+      'A biografia em português foi gerada por IA (a origem; segue verdadeiro depois da revisão) — o front avisa',
   })
   bioGeneratedByAi: boolean;
+
+  @ApiProperty({
+    description:
+      'Uma pessoa da equipe leu e aprovou a biografia (e a tradução). Com `bioGeneratedByAi`, o aviso passa a "revisada pela equipe"',
+  })
+  bioReviewed: boolean;
 
   @ApiPropertyOptional({
     nullable: true,

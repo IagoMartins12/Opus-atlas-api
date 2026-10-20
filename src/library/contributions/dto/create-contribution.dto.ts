@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsIn,
   IsMongoId,
   IsOptional,
@@ -54,4 +55,13 @@ export class CreateCuriosityDto {
   @IsString()
   @MaxLength(300)
   source?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Mostrar o nome da pessoa na curiosidade ("Contada por …"). Sem isso, ela aparece sem assinatura.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  showAuthor?: boolean;
 }

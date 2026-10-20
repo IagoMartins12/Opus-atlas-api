@@ -46,6 +46,8 @@ import { EmailEventsController } from './newsletter/events/email-events.controll
 import { EmailEventsService } from './newsletter/events/email-events.service';
 import { NewsletterDispatchService } from './newsletter/newsletter-dispatch.service';
 import { AdminCatalogController } from './catalog/admin-catalog.controller';
+import { BioReviewController } from './catalog/bio-review.controller';
+import { BioReviewService } from './catalog/bio-review.service';
 import { AdminCatalogService } from './catalog/admin-catalog.service';
 import { WorkCountFiltersService } from './catalog/work-count-filters.service';
 import { AdminUploadsController } from './uploads/admin-uploads.controller';
@@ -78,6 +80,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminUsersController,
     TeacherInvitationsController,
     AdminCatalogController,
+    BioReviewController,
     AdminUploadsController,
     AdminAdsController,
     AdminBillingController,
@@ -97,6 +100,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminUsersService,
     TeacherInvitationService,
     AdminCatalogService,
+    BioReviewService,
     AdminCatalogMetricsService,
     WorkCountFiltersService,
     AdminUploadsService,
