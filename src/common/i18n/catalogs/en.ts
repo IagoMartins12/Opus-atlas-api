@@ -297,6 +297,12 @@ export const en: Catalog = {
   'Redirecionando para o checkout seguro...':
     'Redirecting to the secure checkout…',
   'Cupom aplicado! Você economizou {0}%': 'Coupon applied. You saved {0}%',
+  'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.':
+    'There is an overdue charge. Settle the payment before changing plans.',
+  'Plano {0} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.':
+    'The {0} plan is active. We only charged the prorated difference for the rest of the cycle.',
+  'Plano {0} ativado. O valor novo vale a partir da primeira cobrança.':
+    'The {0} plan is active. The new price applies from the first charge.',
   'Downgrade agendado. Você continuará no plano {0} até o fim do ciclo atual.':
     'Downgrade scheduled. You stay on the {0} plan until the end of the current cycle.',
   'Nenhuma assinatura ativa encontrada': 'No active subscription found',

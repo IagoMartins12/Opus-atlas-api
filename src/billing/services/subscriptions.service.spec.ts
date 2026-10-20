@@ -56,6 +56,7 @@ describe('SubscriptionsService', () => {
     setCancelAtPeriodEnd: jest.Mock;
     cancelSubscriptionNow: jest.Mock;
     changePriceAtRenewal: jest.Mock;
+    changePriceNow: jest.Mock;
   };
   let catalog: { priceIdFor: jest.Mock; checkoutCouponId: jest.Mock };
   let invoices: { createFromPayment: jest.Mock };
@@ -131,6 +132,12 @@ describe('SubscriptionsService', () => {
       setCancelAtPeriodEnd: jest.fn().mockResolvedValue(undefined),
       cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined),
       changePriceAtRenewal: jest.fn().mockResolvedValue(undefined),
+      changePriceNow: jest.fn().mockResolvedValue({
+        invoiceId: 'in_up',
+        amountPaid: 21.5,
+        currency: 'brl',
+        periodEnd: new Date('2026-11-20T00:00:00Z'),
+      }),
     };
     catalog = {
       priceIdFor: jest.fn().mockResolvedValue('price_vigente'),
@@ -881,6 +888,81 @@ describe('SubscriptionsService', () => {
         metadata: { replacesSubscriptionId: SUB },
       });
       expect(result.payment?.checkoutUrl).toBe('https://checkout/cs_1');
+    });
+
+    // Antes: checkout novo, preço cheio e a antiga cancelada sem crédito.
+    describe('upgrade na própria assinatura (com Stripe)', () => {
+      beforeEach(() => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1' }),
+        );
+        prisma.subscription.update.mockResolvedValue(subscription());
+      });
+
+      it('troca o preço, cobra só a diferença e não abre checkout', async () => {
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(stripe.changePriceNow).toHaveBeenCalledWith(
+          'sub_1',
+          'price_vigente',
+        );
+        expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+        expect(prisma.subscription.create).not.toHaveBeenCalled();
+        expect(stripe.cancelSubscriptionNow).not.toHaveBeenCalled();
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data).toMatchObject({
+          planType: 'MAESTRO',
+          endDate: new Date('2026-11-20T00:00:00Z'),
+        });
+        expect(prisma.payment.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            stripeInvoiceId: 'in_up',
+            finalAmount: 21.5,
+            status: 'APPROVED',
+          }),
+        });
+        expect(result.message).toContain('diferença');
+      });
+
+      it('cartão recusado: o Stripe falha e nada muda aqui', async () => {
+        stripe.changePriceNow.mockRejectedValue(new Error('card_declined'));
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('card_declined');
+
+        expect(prisma.subscription.update).not.toHaveBeenCalled();
+        expect(prisma.payment.create).not.toHaveBeenCalled();
+      });
+
+      it('durante o teste não há cobrança nem pagamento', async () => {
+        stripe.changePriceNow.mockResolvedValue({
+          invoiceId: null,
+          amountPaid: 0,
+          currency: 'brl',
+          periodEnd: null,
+        });
+
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(prisma.payment.create).not.toHaveBeenCalled();
+        expect(result.message).toContain('primeira cobrança');
+      });
+
+      it('assinatura atrasada não sobe de plano', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1', status: 'PAST_DUE' }),
+        );
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('em atraso');
+        expect(stripe.changePriceNow).not.toHaveBeenCalled();
+      });
     });
   });
   /**

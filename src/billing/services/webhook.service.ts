@@ -203,6 +203,16 @@ export class WebhookService {
       return;
     }
 
+    // A diferença de um upgrade (`changePriceNow`) é registrada por quem o
+    // fez, com o pagamento e a nota. Tratá-la aqui como renovação mudaria o
+    // fim do ciclo e criaria o pagamento de novo.
+    if (invoice.billing_reason === 'subscription_update') {
+      this.logger.debug(
+        `Fatura ${invoice.id} é a diferença de um upgrade — registrada na troca de plano`,
+      );
+      return;
+    }
+
     const stripeSubscriptionId = subscriptionIdOf(invoice);
 
     if (!stripeSubscriptionId) {

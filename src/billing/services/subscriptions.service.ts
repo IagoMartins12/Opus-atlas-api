@@ -960,6 +960,18 @@ export class SubscriptionsService {
       };
     }
 
+    // Assinatura com Stripe: sobe na própria assinatura, cobrando só a
+    // diferença do que falta do ciclo. Antes abria um checkout novo, cobrava o
+    // preço cheio e encerrava a antiga sem devolver o que sobrava.
+    if (current.stripeSubscriptionId) {
+      if (current.status === 'PAST_DUE') {
+        throw new BadRequestException(
+          'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.',
+        );
+      }
+      return this.upgradeInPlace(current, dto, finalPrice);
+    }
+
     const frontendBaseUrl = this.getFrontendBaseUrl();
     const checkoutSession = await this.stripeService.createCheckoutSession({
       userId,
@@ -1014,6 +1026,85 @@ export class SubscriptionsService {
         sessionId: checkoutSession.id,
         checkoutUrl: checkoutSession.url!,
       },
+    };
+  }
+
+  /**
+   * O upgrade na própria assinatura do Stripe (ver `changePriceNow`). A
+   * diferença é cobrada na hora; recusada, nada muda aqui nem lá.
+   */
+  private async upgradeInPlace(
+    current: NonNullable<
+      Awaited<ReturnType<SubscriptionsService['getCurrentSubscription']>>
+    >,
+    dto: UpgradeSubscriptionDto,
+    finalPrice: number,
+  ): Promise<SubscriptionActionResponseDto> {
+    const billingPeriod =
+      dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY';
+    const charge = await this.stripeService.changePriceNow(
+      current.stripeSubscriptionId!,
+      await this.stripeCatalog.priceIdFor(dto.newPlanType, billingPeriod),
+    );
+
+    const metadata = { ...metadataOf(current) };
+    delete metadata.pendingDowngrade;
+
+    const updated = await this.prisma.subscription.update({
+      where: { id: current.id },
+      data: {
+        planType: dto.newPlanType,
+        billingPeriod,
+        price: finalPrice,
+        autoRenew: true,
+        cancelledAt: null,
+        ...(charge.periodEnd ? { endDate: charge.periodEnd } : {}),
+        metadata,
+      },
+    });
+
+    if (charge.invoiceId && charge.amountPaid > 0) {
+      const payment = await this.prisma.payment.create({
+        data: {
+          subscriptionId: current.id,
+          stripeInvoiceId: charge.invoiceId,
+          amount: charge.amountPaid,
+          finalAmount: charge.amountPaid,
+          currency: charge.currency.toUpperCase(),
+          status: 'APPROVED',
+          paymentMethod: 'CREDIT_CARD',
+          paidAt: new Date(),
+        },
+      });
+      await this.invoicesService.createFromPayment(current.id, payment.id);
+    }
+
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: current.id,
+        userId: current.userId,
+        action: 'UPGRADED',
+        fromPlan: current.planType,
+        toPlan: dto.newPlanType,
+        fromPrice: current.price,
+        toPrice: finalPrice,
+        reason:
+          charge.amountPaid > 0
+            ? 'Upgrade na própria assinatura, com cobrança proporcional'
+            : 'Upgrade durante o teste: o preço novo vale na primeira cobrança',
+      },
+    });
+
+    await this.activateTeacherForPlan(current.userId, dto.newPlanType);
+    await this.updateUserPlanCache(current.userId);
+
+    return {
+      success: true,
+      message:
+        charge.amountPaid > 0
+          ? `Plano ${dto.newPlanType} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.`
+          : `Plano ${dto.newPlanType} ativado. O valor novo vale a partir da primeira cobrança.`,
+      subscription: updated,
     };
   }
 

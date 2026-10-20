@@ -167,6 +167,59 @@ export class StripeService {
     });
   }
 
+  /**
+   * Sobe de plano **agora**, na própria assinatura: troca o preço do item e o
+   * Stripe cobra na hora só a diferença proporcional ao que falta do ciclo
+   * (o que sobrou do plano antigo vira crédito). Sem checkout novo e sem
+   * cancelar nada.
+   *
+   * `error_if_incomplete`: se o cartão recusar a diferença, o Stripe devolve
+   * erro e **nada muda** — a pessoa segue no plano que tinha. Durante o teste
+   * não há o que cobrar: o preço novo vale a partir da primeira cobrança.
+   */
+  async changePriceNow(
+    stripeSubscriptionId: string,
+    priceId: string,
+  ): Promise<{
+    invoiceId: string | null;
+    amountPaid: number;
+    currency: string;
+    periodEnd: Date | null;
+  }> {
+    const client = this.getClient();
+    const subscription =
+      await client.subscriptions.retrieve(stripeSubscriptionId);
+    const item = subscription.items.data[0];
+    if (!item) {
+      throw new Error(`Assinatura ${stripeSubscriptionId} sem item de preço`);
+    }
+
+    const trialing = subscription.status === 'trialing';
+    const updated = await client.subscriptions.update(stripeSubscriptionId, {
+      items: [{ id: item.id, price: priceId }],
+      proration_behavior: trialing ? 'none' : 'always_invoice',
+      payment_behavior: 'error_if_incomplete',
+      // Subir de plano desfaz um cancelamento ou uma descida já agendados.
+      cancel_at_period_end: false,
+      expand: ['latest_invoice'],
+    });
+
+    const invoice =
+      typeof updated.latest_invoice === 'object'
+        ? updated.latest_invoice
+        : null;
+    const charged =
+      !trialing && invoice?.billing_reason === 'subscription_update';
+    const end = updated.items.data[0]?.current_period_end;
+
+    return {
+      invoiceId: charged ? (invoice?.id ?? null) : null,
+      amountPaid: charged ? (invoice?.amount_paid ?? 0) / 100 : 0,
+      currency: invoice?.currency ?? 'brl',
+      periodEnd: end ? new Date(end * 1000) : null,
+    };
+  }
+
   async createBillingPortalSession(
     customerId: string,
     returnUrl: string,
