@@ -23,6 +23,8 @@ export interface MrrMonth {
   /** O MRR no fim do mês (o último retrato dele); `null` sem retrato. */
   mrrCents: number | null;
   active: number | null;
+  /** O que as assinaturas atrasadas valem por mês: fora do MRR, mas em risco. */
+  atRiskCents: number | null;
   newCents: number;
   expansionCents: number;
   contractionCents: number;
@@ -49,13 +51,16 @@ export class MrrService {
 
   /** Tira (ou refaz) o retrato de um dia; o último do dia é o que vale. */
   async takeSnapshot(at: Date = new Date()) {
-    const [subs, trial, pastDue, teachers] = await Promise.all([
+    const [subs, trial, late, teachers] = await Promise.all([
       this.prisma.subscription.findMany({
         where: { status: 'ACTIVE', planType: { not: 'FREE' } },
         select: { id: true, price: true, billingPeriod: true, planType: true },
       }),
       this.prisma.subscription.count({ where: { status: 'TRIAL' } }),
-      this.prisma.subscription.count({ where: { status: 'PAST_DUE' } }),
+      this.prisma.subscription.findMany({
+        where: { status: 'PAST_DUE', planType: { not: 'FREE' } },
+        select: { price: true, billingPeriod: true },
+      }),
       this.prisma.teacher.count({ where: { status: 'ACTIVE' } }),
     ]);
 
@@ -70,7 +75,12 @@ export class MrrService {
       mrrCents: sumMrr(perSub),
       active: subs.length,
       trial,
-      pastDue,
+      pastDue: late.length,
+      pastDueMrrCents: late.reduce(
+        (total, s) =>
+          total + monthlyRevenueCents(s.price ?? 0, s.billingPeriod ?? null),
+        0,
+      ),
       teachers,
       byPlan,
       subs: perSub,
@@ -106,7 +116,13 @@ export class MrrService {
     const snapshots = await this.prisma.mrrSnapshot.findMany({
       where: { day: { gte: `${addMonths(first, -1)}-01` } },
       orderBy: { day: 'asc' },
-      select: { day: true, mrrCents: true, active: true, subs: true },
+      select: {
+        day: true,
+        mrrCents: true,
+        active: true,
+        pastDueMrrCents: true,
+        subs: true,
+      },
     });
     const earliest = await this.prisma.mrrSnapshot.findFirst({
       orderBy: { day: 'asc' },
@@ -134,6 +150,7 @@ export class MrrService {
           month,
           mrrCents: null,
           active: null,
+          atRiskCents: null,
           newCents: 0,
           expansionCents: 0,
           contractionCents: 0,
@@ -149,6 +166,7 @@ export class MrrService {
         month,
         mrrCents: snap.mrrCents,
         active: snap.active,
+        atRiskCents: snap.pastDueMrrCents ?? 0,
         newCents: bridge.newCents,
         expansionCents: bridge.expansionCents,
         contractionCents: bridge.contractionCents,

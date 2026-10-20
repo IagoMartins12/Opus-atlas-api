@@ -10,6 +10,14 @@ import { BillingPeriod, PlanType } from '@prisma/client';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import Stripe = require('stripe');
 
+/** O que se lê no Stripe sobre uma cobrança: a taxa, a moeda dela e de onde veio. */
+export interface StripeFee {
+  feeCents: number;
+  /** A moeda em que o Stripe liquidou a taxa (a da conta dele). */
+  currency: string;
+  paymentIntentId: string;
+}
+
 /**
  * Cliente Stripe compartilhado. Diferente do legado (`stripeClient.ts`), que
  * criava um `Product`/`Price` novo no Stripe a cada checkout — poluindo o
@@ -221,38 +229,41 @@ export class StripeService {
   }
 
   /**
-   * A taxa que o Stripe cobrou numa fatura, em centavos, lida da transação de
-   * saldo da cobrança. `null` quando não houve cobrança (fatura zerada, teste
-   * grátis) ou o Stripe ainda não a registrou. Nunca lança: a taxa é um
-   * dado de contabilidade, e não pode derrubar o pagamento que já aconteceu.
+   * A taxa que o Stripe cobrou numa fatura, lida da transação de saldo da
+   * cobrança, com a moeda dela e o PaymentIntent (que é por onde um reembolso
+   * ou uma contestação volta ao pagamento). `null` quando não houve cobrança
+   * (fatura zerada, teste grátis) ou o Stripe ainda não a registrou. Nunca
+   * lança: é dado de contabilidade, e não pode derrubar o pagamento que já
+   * aconteceu.
    */
-  async feeCentsForInvoice(invoiceId: string): Promise<number | null> {
+  async feeForInvoice(invoiceId: string): Promise<StripeFee | null> {
     try {
-      const client = this.getClient();
-      const payments = await client.invoicePayments.list({
+      const payments = await this.getClient().invoicePayments.list({
         invoice: invoiceId,
         limit: 5,
       });
 
       let total = 0;
-      let found = false;
+      let found: StripeFee | null = null;
       for (const item of payments.data) {
         const intent = item.payment.payment_intent;
         const id = typeof intent === 'string' ? intent : intent?.id;
         if (!id) continue;
         const fee = await this.feeOfPaymentIntent(id);
-        if (fee === null) continue;
-        total += fee;
-        found = true;
+        if (!fee) continue;
+        total += fee.feeCents;
+        // Uma fatura paga em duas cobranças é rara; o PaymentIntent que fica
+        // é o primeiro, e a taxa é a soma.
+        found ??= fee;
       }
-      return found ? total : null;
+      return found ? { ...found, feeCents: total } : null;
     } catch {
       return null;
     }
   }
 
   /** A taxa de uma sessão de checkout: pela fatura (assinatura) ou pelo PaymentIntent. */
-  async feeCentsForSession(sessionId: string): Promise<number | null> {
+  async feeForSession(sessionId: string): Promise<StripeFee | null> {
     try {
       const session =
         await this.getClient().checkout.sessions.retrieve(sessionId);
@@ -260,7 +271,7 @@ export class StripeService {
         typeof session.invoice === 'string'
           ? session.invoice
           : session.invoice?.id;
-      if (invoice) return await this.feeCentsForInvoice(invoice);
+      if (invoice) return await this.feeForInvoice(invoice);
 
       const intent =
         typeof session.payment_intent === 'string'
@@ -272,7 +283,27 @@ export class StripeService {
     }
   }
 
-  private async feeOfPaymentIntent(id: string): Promise<number | null> {
+  /**
+   * A fatura de um PaymentIntent: para um reembolso ou contestação achar o
+   * pagamento de renovação (que só guarda a fatura) quando o `Payment` é
+   * anterior à gravação do PaymentIntent. `null` se não houver.
+   */
+  async invoiceIdForPaymentIntent(
+    paymentIntentId: string,
+  ): Promise<string | null> {
+    try {
+      const found = await this.getClient().invoicePayments.list({
+        payment: { type: 'payment_intent', payment_intent: paymentIntentId },
+        limit: 1,
+      });
+      const invoice = found.data[0]?.invoice;
+      return typeof invoice === 'string' ? invoice : (invoice?.id ?? null);
+    } catch {
+      return null;
+    }
+  }
+
+  private async feeOfPaymentIntent(id: string): Promise<StripeFee | null> {
     const intent = await this.getClient().paymentIntents.retrieve(id, {
       expand: ['latest_charge.balance_transaction'],
     });
@@ -282,7 +313,13 @@ export class StripeService {
       charge && typeof charge.balance_transaction === 'object'
         ? charge.balance_transaction
         : null;
-    return balance ? balance.fee : null;
+    return balance
+      ? {
+          feeCents: balance.fee,
+          currency: balance.currency.toUpperCase(),
+          paymentIntentId: id,
+        }
+      : null;
   }
 
   async createBillingPortalSession(

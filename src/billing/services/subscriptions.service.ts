@@ -1042,14 +1042,21 @@ export class SubscriptionsService {
     ref: { invoiceId?: string; sessionId?: string },
   ): Promise<void> {
     const fee = ref.invoiceId
-      ? await this.stripeService.feeCentsForInvoice(ref.invoiceId)
+      ? await this.stripeService.feeForInvoice(ref.invoiceId)
       : ref.sessionId
-        ? await this.stripeService.feeCentsForSession(ref.sessionId)
+        ? await this.stripeService.feeForSession(ref.sessionId)
         : null;
-    if (fee === null) return;
+    if (!fee) return;
 
     await this.prisma.payment
-      .update({ where: { id: paymentId }, data: { stripeFeeCents: fee } })
+      .update({
+        where: { id: paymentId },
+        data: {
+          stripeFeeCents: fee.feeCents,
+          stripeFeeCurrency: fee.currency,
+          stripePaymentIntentId: fee.paymentIntentId,
+        },
+      })
       .catch((error: unknown) => {
         this.logger.warn(
           `Taxa do Stripe do pagamento ${paymentId} não gravada: ${errorMessage(error)}`,

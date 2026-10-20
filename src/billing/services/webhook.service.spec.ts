@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaymentAdjustmentsService } from './payment-adjustments.service';
 import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 import { WebhookService } from './webhook.service';
@@ -39,6 +40,11 @@ describe('WebhookService', () => {
     updateUserPlanCache: jest.Mock;
   };
   let catalog: { handleEvent: jest.Mock };
+  let adjustments: {
+    registerRefund: jest.Mock;
+    registerDisputeOpened: jest.Mock;
+    registerDisputeWon: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -62,6 +68,11 @@ describe('WebhookService', () => {
     };
 
     catalog = { handleEvent: jest.fn().mockResolvedValue(false) };
+    adjustments = {
+      registerRefund: jest.fn().mockResolvedValue(undefined),
+      registerDisputeOpened: jest.fn().mockResolvedValue(undefined),
+      registerDisputeWon: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -69,10 +80,112 @@ describe('WebhookService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: SubscriptionsService, useValue: subscriptions },
         { provide: StripeCatalogService, useValue: catalog },
+        { provide: PaymentAdjustmentsService, useValue: adjustments },
       ],
     }).compile();
 
     service = module.get(WebhookService);
+  });
+
+  // O dinheiro que sai depois do pagamento chega por estes eventos.
+  describe('reembolso e contestação', () => {
+    const refund = (over: Record<string, unknown> = {}) => ({
+      id: 're_1',
+      status: 'succeeded',
+      payment_intent: 'pi_1',
+      amount: 3_990,
+      currency: 'brl',
+      created: 1_790_000_000,
+      ...over,
+    });
+    const dispute = (over: Record<string, unknown> = {}) => ({
+      id: 'dp_1',
+      status: 'needs_response',
+      payment_intent: 'pi_1',
+      amount: 3_990,
+      currency: 'brl',
+      balance_transactions: [{ fee: 1_500 }, { fee: 0 }],
+      ...over,
+    });
+    const at = (type: string, data: unknown) =>
+      ({
+        id: 'evt_x',
+        type,
+        created: 1_790_000_500,
+        data: { object: data },
+      }) as unknown as Stripe.Event;
+
+    it('reembolso concluído vai para os ajustes, com o instante do reembolso', async () => {
+      await service.handleEvent(at('refund.created', refund()));
+
+      expect(adjustments.registerRefund).toHaveBeenCalledWith({
+        id: 're_1',
+        paymentIntentId: 'pi_1',
+        amountCents: 3_990,
+        currency: 'brl',
+        at: new Date(1_790_000_000 * 1000),
+      });
+    });
+
+    it('reembolso ainda pendente ou falho não conta', async () => {
+      await service.handleEvent(
+        at('refund.created', refund({ status: 'pending' })),
+      );
+      await service.handleEvent(
+        at('refund.updated', refund({ status: 'failed' })),
+      );
+
+      expect(adjustments.registerRefund).not.toHaveBeenCalled();
+    });
+
+    it('contestação com o dinheiro retirado: o valor e a tarifa', async () => {
+      await service.handleEvent(at('charge.dispute.created', dispute()));
+
+      expect(adjustments.registerDisputeOpened).toHaveBeenCalledWith({
+        id: 'dp_1',
+        paymentIntentId: 'pi_1',
+        amountCents: 3_990,
+        currency: 'brl',
+        at: new Date(1_790_000_500 * 1000),
+        feeCents: 1_500,
+      });
+    });
+
+    it('aviso do banco (`warning_*`) ainda não retirou dinheiro: não conta', async () => {
+      await service.handleEvent(
+        at(
+          'charge.dispute.created',
+          dispute({ status: 'warning_needs_response' }),
+        ),
+      );
+
+      expect(adjustments.registerDisputeOpened).not.toHaveBeenCalled();
+    });
+
+    it('o aviso que vira contestação conta quando o dinheiro é retirado', async () => {
+      await service.handleEvent(
+        at(
+          'charge.dispute.funds_withdrawn',
+          dispute({ status: 'needs_response' }),
+        ),
+      );
+
+      expect(adjustments.registerDisputeOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('contestação ganha devolve o valor', async () => {
+      await service.handleEvent(
+        at('charge.dispute.funds_reinstated', dispute({ status: 'won' })),
+      );
+
+      expect(adjustments.registerDisputeWon).toHaveBeenCalledWith({
+        id: 'dp_1',
+        paymentIntentId: 'pi_1',
+        amountCents: 3_990,
+        currency: 'brl',
+        at: new Date(1_790_000_500 * 1000),
+      });
+    });
   });
 
   describe('idempotência', () => {

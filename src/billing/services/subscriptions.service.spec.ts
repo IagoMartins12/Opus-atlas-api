@@ -62,8 +62,8 @@ describe('SubscriptionsService', () => {
     cancelSubscriptionNow: jest.Mock;
     changePriceAtRenewal: jest.Mock;
     changePriceNow: jest.Mock;
-    feeCentsForInvoice: jest.Mock;
-    feeCentsForSession: jest.Mock;
+    feeForInvoice: jest.Mock;
+    feeForSession: jest.Mock;
   };
   let catalog: { priceIdFor: jest.Mock; checkoutCouponId: jest.Mock };
   let invoices: { createFromPayment: jest.Mock };
@@ -141,8 +141,16 @@ describe('SubscriptionsService', () => {
       cancelSubscriptionNow: jest.fn().mockResolvedValue(undefined),
       changePriceAtRenewal: jest.fn().mockResolvedValue(undefined),
       // A taxa que o Stripe cobrou: 3,99% + R$ 0,39 sobre R$ 39,90 = R$ 1,98.
-      feeCentsForInvoice: jest.fn().mockResolvedValue(198),
-      feeCentsForSession: jest.fn().mockResolvedValue(198),
+      feeForInvoice: jest.fn().mockResolvedValue({
+        feeCents: 198,
+        currency: 'BRL',
+        paymentIntentId: 'pi_1',
+      }),
+      feeForSession: jest.fn().mockResolvedValue({
+        feeCents: 198,
+        currency: 'BRL',
+        paymentIntentId: 'pi_1',
+      }),
       changePriceNow: jest.fn().mockResolvedValue({
         invoiceId: 'in_up',
         amountPaid: 21.5,
@@ -1001,15 +1009,19 @@ describe('SubscriptionsService', () => {
     it('grava no pagamento a taxa que o Stripe cobrou', async () => {
       await service.registerRenewal(fatura());
 
-      expect(stripe.feeCentsForInvoice).toHaveBeenCalledWith('in_1');
+      expect(stripe.feeForInvoice).toHaveBeenCalledWith('in_1');
       expect(prisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
-        data: { stripeFeeCents: 198 },
+        data: {
+          stripeFeeCents: 198,
+          stripeFeeCurrency: 'BRL',
+          stripePaymentIntentId: 'pi_1',
+        },
       });
     });
 
     it('sem a taxa lida (Stripe ainda não registrou), o pagamento vale igual', async () => {
-      stripe.feeCentsForInvoice.mockResolvedValue(null);
+      stripe.feeForInvoice.mockResolvedValue(null);
 
       await service.registerRenewal(fatura());
 

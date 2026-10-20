@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaymentAdjustmentsService } from './payment-adjustments.service';
 import { StripeCatalogService } from './stripe-catalog.service';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -9,6 +10,22 @@ type StripeInvoiceWithSubscription = Stripe.Invoice & {
   /** Só nas versões da API até 2025; ver `subscriptionIdOf`. */
   subscription?: string | Stripe.Subscription | null;
 };
+
+/** O id de um campo que o Stripe devolve como texto ou como objeto expandido. */
+function idOf(value: string | { id: string } | null | undefined) {
+  return typeof value === 'string' ? value : (value?.id ?? null);
+}
+
+/** O valor de uma contestação como `MoneyEvent`, no instante do evento. */
+function disputeMoney(dispute: Stripe.Dispute, eventCreated: number) {
+  return {
+    id: dispute.id,
+    paymentIntentId: idOf(dispute.payment_intent),
+    amountCents: dispute.amount,
+    currency: dispute.currency,
+    at: new Date(eventCreated * 1000),
+  };
+}
 
 /**
  * O id da assinatura na fatura — **nos dois lugares onde o Stripe já o pôs**.
@@ -58,6 +75,7 @@ export class WebhookService {
     private readonly prisma: PrismaService,
     private readonly subscriptionsService: SubscriptionsService,
     private readonly stripeCatalog: StripeCatalogService,
+    private readonly adjustments: PaymentAdjustmentsService,
   ) {}
 
   /**
@@ -145,6 +163,44 @@ export class WebhookService {
       case 'invoice.payment_failed': {
         await this.handlePaymentFailed(
           event.data.object as StripeInvoiceWithSubscription,
+        );
+        break;
+      }
+
+      // O dinheiro que sai depois do pagamento: reembolso e contestação.
+      case 'refund.created':
+      case 'refund.updated': {
+        const refund = event.data.object as Stripe.Refund;
+        if (refund.status !== 'succeeded') break;
+        await this.adjustments.registerRefund({
+          id: refund.id,
+          paymentIntentId: idOf(refund.payment_intent),
+          amountCents: refund.amount,
+          currency: refund.currency,
+          at: new Date(refund.created * 1000),
+        });
+        break;
+      }
+
+      case 'charge.dispute.created':
+      case 'charge.dispute.funds_withdrawn': {
+        const dispute = event.data.object as Stripe.Dispute;
+        // `warning_*` é um aviso do banco: o dinheiro ainda não saiu.
+        if (dispute.status.startsWith('warning')) break;
+        await this.adjustments.registerDisputeOpened({
+          ...disputeMoney(dispute, event.created),
+          feeCents: (dispute.balance_transactions ?? []).reduce(
+            (total, bt) => total + Math.max(0, bt.fee),
+            0,
+          ),
+        });
+        break;
+      }
+
+      case 'charge.dispute.funds_reinstated': {
+        const dispute = event.data.object as Stripe.Dispute;
+        await this.adjustments.registerDisputeWon(
+          disputeMoney(dispute, event.created),
         );
         break;
       }

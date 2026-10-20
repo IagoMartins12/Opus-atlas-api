@@ -3309,22 +3309,27 @@ model Payment {
   id String @id @default(auto()) @map("_id") @db.ObjectId
 
   // Relacionamento
-  subscriptionId  String       @db.ObjectId
-  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  stripeSessionId String?
+  subscriptionId        String       @db.ObjectId
+  subscription          Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  stripeSessionId       String?
   /// Fatura do Stripe que originou este pagamento — as renovações não têm
   /// sessão de checkout, só fatura. Serve para não gravar o mesmo pagamento
   /// duas vezes quando o mesmo ciclo chega por mais de um evento.
-  stripeInvoiceId String?
+  stripeInvoiceId       String?
   // Valores
-  amount          Float
-  currency        String       @default("BRL")
-  discountAmount  Float?       @default(0) // Desconto aplicado
-  finalAmount     Float // Valor final pago
+  amount                Float
+  currency              String       @default("BRL")
+  discountAmount        Float?       @default(0) // Desconto aplicado
+  finalAmount           Float // Valor final pago
   /// A taxa que o Stripe cobrou por este pagamento, em centavos da moeda do
   /// pagamento (lida da transação de saldo). Nulo: ainda não lida, ou não houve
   /// cobrança (teste grátis, pagamento zerado).
-  stripeFeeCents  Int?
+  stripeFeeCents        Int?
+  /// Moeda em que o Stripe liquidou a taxa (a da conta dele; BRL hoje).
+  stripeFeeCurrency     String?
+  /// O PaymentIntent do Stripe: é por ele que um reembolso ou uma contestação
+  /// acha o pagamento de que veio.
+  stripePaymentIntentId String?
 
   // Status e método
   status        PaymentStatus
@@ -3356,6 +3361,7 @@ model Payment {
   // Não é `@unique`: no MongoDB um único comum trata campo ausente como valor
   // e só deixaria UM pagamento sem fatura (todos os de checkout).
   @@index([stripeInvoiceId])
+  @@index([stripePaymentIntentId])
   @@map("payments")
 }
 
@@ -4270,19 +4276,52 @@ model FinanceGoal {
 /// per month. The month's new / expansion / contraction / churn come from
 /// comparing two photographs.
 model MrrSnapshot {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   /// `AAAA-MM-DD`, in UTC. One per day.
-  day       String   @unique
-  mrrCents  Int
-  active    Int
-  trial     Int
-  pastDue   Int
-  teachers  Int
+  day             String   @unique
+  mrrCents        Int
+  active          Int
+  trial           Int
+  pastDue         Int
+  /// O que as assinaturas atrasadas valem por mês: fora do MRR, mas em risco.
+  pastDueMrrCents Int      @default(0)
+  teachers        Int
   /// `{ "PLUS": 2, "MENTOR": 1 }`.
-  byPlan    Json
+  byPlan          Json
   /// `{ subscriptionId: cents per month }`: what makes the movements exact.
-  subs      Json
-  createdAt DateTime @default(now())
+  subs            Json
+  createdAt       DateTime @default(now())
 
   @@map("mrr_snapshots")
+}
+
+enum PaymentAdjustmentKind {
+  REFUND
+  DISPUTE
+  DISPUTE_WON
+  DISPUTE_FEE
+}
+
+/// Money that left (or came back) after a payment was approved: a refund, a
+/// dispute opened (the amount is withdrawn), won (it is reinstated) and the
+/// dispute fee. One row per Stripe event reference, so a repeated webhook
+/// counts once. REFUND, DISPUTE and DISPUTE_FEE reduce revenue; DISPUTE_WON
+/// gives back what DISPUTE took. Kept even when the payment is not found, or
+/// the money would vanish from the books.
+model PaymentAdjustment {
+  id          String                @id @default(auto()) @map("_id") @db.ObjectId
+  paymentId   String?               @db.ObjectId
+  kind        PaymentAdjustmentKind
+  /// Cents of `currency`, always positive; the kind gives the sign.
+  amountCents Int
+  currency    String                @default("BRL")
+  /// `re_…`, `dp_…`, `dp_…:fee`, `dp_…:won`: unique, so the event counts once.
+  stripeRef   String                @unique
+  /// When the money moved (the Stripe event), not when we heard of it.
+  at          DateTime
+  createdAt   DateTime              @default(now())
+
+  @@index([at])
+  @@index([paymentId])
+  @@map("payment_adjustments")
 }

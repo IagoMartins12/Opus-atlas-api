@@ -1,8 +1,13 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { MrrService } from './mrr.service';
 
-const snap = (day: string, subs: Record<string, number>) => ({
+const snap = (
+  day: string,
+  subs: Record<string, number>,
+  pastDueMrrCents = 0,
+) => ({
   day,
+  pastDueMrrCents,
   mrrCents: Object.values(subs).reduce((t, c) => t + c, 0),
   active: Object.keys(subs).length,
   subs,
@@ -52,6 +57,20 @@ describe('MrrService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
+    // Ativas e atrasadas saem da mesma consulta, filtrada pelo estado.
+    const active = [
+      { id: 's1', price: 39.9, billingPeriod: 'MONTHLY', planType: 'MENTOR' },
+      { id: 's2', price: 399.9, billingPeriod: 'YEARLY', planType: 'MENTOR' },
+      { id: 's3', price: 19.9, billingPeriod: 'MONTHLY', planType: 'PLUS' },
+    ];
+    prisma.subscription.findMany.mockImplementation(
+      ({ where }: { where: { status: string } }) =>
+        Promise.resolve(
+          where.status === 'PAST_DUE'
+            ? [{ price: 19.9, billingPeriod: 'MONTHLY' }]
+            : active,
+        ),
+    );
     service = new MrrService(prisma as unknown as PrismaService);
   });
 
@@ -69,6 +88,8 @@ describe('MrrService', () => {
           active: 3,
           trial: 1,
           pastDue: 1,
+          // O atrasado fica fora do MRR, mas aparece em risco.
+          pastDueMrrCents: 1_990,
           teachers: 2,
           byPlan: { MENTOR: 2, PLUS: 1 },
           subs: { s1: 3_990, s2: 3_333, s3: 1_990 },
@@ -100,7 +121,7 @@ describe('MrrService', () => {
         snap('2026-10-20', { a: 3_990 }),
         snap('2026-10-31', { a: 3_990, b: 3_990 }),
         snap('2026-11-30', { a: 7_990, c: 1_990 }), // a subiu, b saiu, c entrou
-        snap('2026-12-15', { a: 7_990, c: 1_990 }),
+        snap('2026-12-15', { a: 7_990, c: 1_990 }, 3_990),
       ]);
       prisma.mrrSnapshot.findFirst.mockResolvedValue({ day: '2026-10-20' });
 
@@ -128,7 +149,12 @@ describe('MrrService', () => {
         netNewCents: 1_990 + 4_000 - 3_990,
       });
       expect(nov.churnRate).toBeCloseTo(3_990 / 7_980);
-      expect(dec).toMatchObject({ mrrCents: 9_980, netNewCents: 0 });
+      expect(dec).toMatchObject({
+        mrrCents: 9_980,
+        netNewCents: 0,
+        atRiskCents: 3_990,
+      });
+      expect(nov.atRiskCents).toBe(0);
     });
 
     it('a ponte fecha: a diferença entre os fins de mês é o líquido', async () => {
