@@ -308,6 +308,7 @@ enum NotificationType {
   PROGRESS_REPORT_SHARED // Professor compartilhou um relatório
   STUDENT_ADDED_BY_TEACHER // Professor vinculou o aluno sem convite (conta existente)
   WORK_SUGGESTED // Professor sugeriu uma obra para o "quero aprender"
+  ACHIEVEMENT_UNLOCKED // Conquista desbloqueada (20/10/2026)
   // NOTIFICAÇÕES ANTIGAS (manter para compatibilidade)
   LESSON_NO_SHOW
   ASSIGNMENT_FEEDBACK_NEEDED // 🗑️ SERÁ REMOVIDA do check/route.ts
@@ -776,6 +777,10 @@ model WorkScore {
   lastAccessed DateTime @default(now())
   accessCount  Int      @default(0)
 
+  // Downloads feitos pelo botão do site (o `downloadCount` é o do IMSLP)
+  siteDownloads    Int       @default(0)
+  lastDownloadedAt DateTime?
+
   // Campos para sistema incremental
   imslpTotalCounts String? // JSON com totais reais do IMSLP por tipo
 
@@ -791,6 +796,7 @@ model WorkScore {
 
   // Índices otimizados para performance
   @@unique([workId, sourceId, source], name: "workId_sourceId_source")
+  @@index([siteDownloads])
   @@index([workId, isActive])
   @@index([workId, type, groupIndex])
   @@index([source, processingStatus])

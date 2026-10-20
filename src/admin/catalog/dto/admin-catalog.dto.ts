@@ -382,6 +382,22 @@ export class ListScoresQueryDto extends PaginationQuery {
   @IsBoolean()
   hasFile?: boolean;
 
+  @ApiPropertyOptional({
+    description: 'Já foi baixada pelo botão do site (`siteDownloads` > 0).',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  downloaded?: boolean;
+
+  @ApiPropertyOptional({
+    enum: ['createdAt', 'siteDownloads'],
+    description: 'Ordenação; `siteDownloads` é o ranking das mais baixadas.',
+  })
+  @IsOptional()
+  @IsIn(['createdAt', 'siteDownloads'])
+  sortBy?: 'createdAt' | 'siteDownloads';
+
   @ApiPropertyOptional({ description: 'Entrou a partir de (ISO).' })
   @IsOptional()
   @IsISO8601()

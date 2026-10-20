@@ -80,6 +80,8 @@ const SCORE_SELECT = {
   isActive: true,
   downloadUrl: true,
   createdAt: true,
+  siteDownloads: true,
+  lastDownloadedAt: true,
   work: {
     select: {
       id: true,
@@ -1191,6 +1193,7 @@ export class AdminCatalogService {
               ],
             }
         : {}),
+      ...(query.downloaded ? { siteDownloads: { gt: 0 } } : {}),
       ...(query.createdFrom || query.createdTo
         ? {
             createdAt: {
@@ -1210,7 +1213,10 @@ export class AdminCatalogService {
       this.prisma.workScore.findMany({
         where,
         select: SCORE_SELECT,
-        orderBy: [{ createdAt: query.sortOrder ?? 'desc' }, { id: 'asc' }],
+        orderBy:
+          query.sortBy === 'siteDownloads'
+            ? [{ siteDownloads: 'desc' }, { id: 'asc' }]
+            : [{ createdAt: query.sortOrder ?? 'desc' }, { id: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),

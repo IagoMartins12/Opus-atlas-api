@@ -115,6 +115,7 @@ describe('WorksService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
     workGenre: { findMany: jest.Mock; findUnique: jest.Mock };
     instrument: { findMany: jest.Mock; findUnique: jest.Mock };
@@ -150,6 +151,7 @@ describe('WorksService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn().mockResolvedValue({}),
       },
       workGenre: {
@@ -193,6 +195,26 @@ describe('WorksService', () => {
         deleteAsset: jest.fn().mockResolvedValue(undefined),
       } as unknown as StorageService,
     );
+  });
+
+  describe('download de partitura', () => {
+    it('soma um download e marca o instante, só em partitura no ar', async () => {
+      await service.registerScoreDownload('68d6ef3758b5d09465856c02');
+
+      expect(prisma.workScore.updateMany).toHaveBeenCalledWith({
+        where: { id: '68d6ef3758b5d09465856c02', isActive: true },
+        data: {
+          siteDownloads: { increment: 1 },
+          lastDownloadedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('ignora id que não é de partitura', async () => {
+      await service.registerScoreDownload('nao-e-id');
+
+      expect(prisma.workScore.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('busca', () => {

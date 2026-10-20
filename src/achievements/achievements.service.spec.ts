@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
+import { NotificationsService } from '../portal/notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AchievementStats } from './achievement-catalog';
 import { AchievementStatsService } from './achievement-stats.service';
@@ -45,6 +46,7 @@ describe('AchievementsService', () => {
     $transaction: jest.Mock;
   };
   let statsService: { collect: jest.Mock };
+  let notifications: { notify: jest.Mock };
   let tx: {
     userAchievement: { create: jest.Mock };
     user: { update: jest.Mock };
@@ -69,12 +71,14 @@ describe('AchievementsService', () => {
     };
 
     statsService = { collect: jest.fn().mockResolvedValue(emptyStats()) };
+    notifications = { notify: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AchievementsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AchievementStatsService, useValue: statsService },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -98,6 +102,26 @@ describe('AchievementsService', () => {
       const granted = await service.evaluate('user-1');
 
       expect(granted.map((badge) => badge.badgeId)).toContain('first-favorite');
+    });
+
+    it('avisa no sino quando concede uma conquista, e não quando não há nada', async () => {
+      await service.evaluate('user-1');
+      expect(notifications.notify).not.toHaveBeenCalled();
+
+      statsService.collect.mockResolvedValue({
+        ...emptyStats(),
+        totalFavorites: 1,
+      });
+      await service.evaluate('user-1');
+
+      expect(notifications.notify).toHaveBeenCalledTimes(1);
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+          type: 'ACHIEVEMENT_UNLOCKED',
+          actionUrl: '/achievements',
+        }),
+      );
     });
 
     // No legado, apenas a categoria LEARNING creditava XP; badges de favoritos

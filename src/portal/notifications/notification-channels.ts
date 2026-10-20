@@ -89,6 +89,13 @@ export const TOPICS: Topic[] = [
     defaults: { email: false, sms: false },
   },
   {
+    key: 'achievement',
+    label: 'Conquistas desbloqueadas',
+    audience: 'both',
+    types: [NotificationType.ACHIEVEMENT_UNLOCKED],
+    defaults: { email: false, sms: false },
+  },
+  {
     key: 'announcement',
     label: 'Recados do professor',
     audience: 'student',

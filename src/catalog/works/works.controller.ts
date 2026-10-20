@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -24,6 +25,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/api-key.decorator';
 import { PublicCache } from '../../common/decorators/public-cache.decorator';
 import { Audited } from '../../common/audit/audit.decorator';
@@ -212,6 +214,25 @@ export class WorksController {
       id,
       limit ? Math.min(Math.max(parseInt(limit, 10) || 6, 1), 20) : 6,
     );
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('scores/:scoreId/download')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Conta um download de partitura pelo botão do site',
+    description:
+      'Chamada pelo site ao clicar em "Baixar PDF". Robô não conta. Não ' +
+      'devolve corpo: o arquivo abre de qualquer jeito. O ranking está em ' +
+      '`GET /admin/scores?sortBy=siteDownloads`.',
+  })
+  async registerScoreDownload(
+    @Param('scoreId') scoreId: string,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<void> {
+    if (isRobotUserAgent(userAgent)) return;
+    await this.worksService.registerScoreDownload(scoreId);
   }
 
   @Public()

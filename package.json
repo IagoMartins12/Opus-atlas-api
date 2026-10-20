@@ -54,6 +54,8 @@
     "catalog:fix-difficulty:apply": "node dist/scripts/fix-work-difficulty.js --apply",
     "catalog:fix-nationalities": "node dist/scripts/fix-composer-nationalities.js",
     "catalog:fix-nationalities:apply": "node dist/scripts/fix-composer-nationalities.js --apply",
+    "catalog:fix-editions": "node dist/scripts/fix-imslp-editions.js",
+    "catalog:fix-editions:apply": "node dist/scripts/fix-imslp-editions.js --apply",
     "catalog:fix-instruments:apply": "node dist/scripts/fix-work-instruments.js --apply",
     "catalog:clean-portraits": "node dist/scripts/clean-placeholder-portraits.js",
     "catalog:clean-portraits:apply": "node dist/scripts/clean-placeholder-portraits.js --apply",
