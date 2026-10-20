@@ -9,6 +9,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
+import { fieldIs, numberIs } from '../../common/database/optional-fields';
+import { correctedEpoch } from '../../catalog/quality/composer-epoch';
 import {
   ListComposersQueryDto,
   ListScoresQueryDto,
@@ -158,7 +160,37 @@ export class AdminCatalogService {
     if (query.hasBio !== undefined) and.push(texto('bio', query.hasBio));
     if (query.hasBioEn !== undefined) and.push(texto('bioEn', query.hasBioEn));
     if (query.hasPortrait !== undefined) {
-      and.push({ hasValidImage: query.hasPortrait });
+      // O endereço do retrato, como o quadro de qualidade conta (o "sem foto" do
+      // IMSLP já foi limpo para vazio).
+      and.push(
+        fieldIs<Prisma.ComposerWhereInput>('portraitUrl', query.hasPortrait),
+      );
+    }
+    if (query.hasNationality !== undefined) {
+      and.push(
+        fieldIs<Prisma.ComposerWhereInput>('nationality', query.hasNationality),
+      );
+    }
+    if (query.hasBirthYear !== undefined) {
+      and.push(
+        numberIs<Prisma.ComposerWhereInput>('birthYear', query.hasBirthYear),
+      );
+    }
+    if (query.epochMismatch) {
+      and.push({ id: { in: await this.epochMismatchIds() } });
+    }
+    if (query.suspect) {
+      // Papel diferente de Compositor E nenhuma obra: libretista, editor,
+      // regente… que entrou na lista porque o IMSLP o cataloga como pessoa.
+      const compositor = await this.prisma.role.findFirst({
+        where: { name: 'Compositor' },
+        select: { id: true },
+      });
+      const semObras = await this.composerIdsByWorkCount(undefined, 0);
+      and.push({
+        ...(compositor ? { primaryRoleId: { not: compositor.id } } : {}),
+        ...(semObras ? { id: semObras } : {}),
+      });
     }
     if (query.hasDates !== undefined) {
       and.push(
@@ -199,6 +231,17 @@ export class AdminCatalogService {
       ...(query.isCustom !== undefined ? { isCustom: query.isCustom } : {}),
       ...(and.length ? { AND: and } : {}),
     };
+  }
+
+  /** Os compositores cuja época cai fora do que as datas pedem (ver `correctedEpoch`). */
+  private async epochMismatchIds(): Promise<string[]> {
+    const rows = await this.prisma.composer.findMany({
+      where: { birthYear: { not: null } },
+      select: { id: true, epochName: true, birthYear: true },
+    });
+    return rows
+      .filter((row) => correctedEpoch(row.epochName, row.birthYear) !== null)
+      .map((row) => row.id);
   }
 
   /**
@@ -874,6 +917,35 @@ export class AdminCatalogService {
     }
 
     const and: Prisma.WorkWhereInput[] = [];
+    if (query.hasTone !== undefined) {
+      and.push(fieldIs<Prisma.WorkWhereInput>('tone', query.hasTone));
+    }
+    if (query.hasYear !== undefined) {
+      and.push(
+        fieldIs<Prisma.WorkWhereInput>('compositionYear', query.hasYear),
+      );
+    }
+    if (query.hasInstrumentation !== undefined) {
+      and.push(
+        fieldIs<Prisma.WorkWhereInput>(
+          'instrumentation',
+          query.hasInstrumentation,
+        ),
+      );
+    }
+    if (query.hasMedia !== undefined) {
+      // Gravação ou vídeo: YouTube, Spotify ou áudio enviado.
+      const media = ['youtubeVideoId', 'spotifyTrackId', 'customAudioUrl'];
+      and.push(
+        query.hasMedia
+          ? {
+              OR: media.map((f) => fieldIs<Prisma.WorkWhereInput>(f, true)),
+            }
+          : {
+              AND: media.map((f) => fieldIs<Prisma.WorkWhereInput>(f, false)),
+            },
+      );
+    }
     if (query.hasScore !== undefined) {
       and.push({
         cachedScores: query.hasScore ? { some: {} } : { none: {} },

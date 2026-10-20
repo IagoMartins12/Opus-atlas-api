@@ -11,6 +11,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ComposerBioService } from './composer-bio.service';
 
 const ID = '68600fb6df23f271f94bb803';
+
+/** O dia do teto (fuso de São Paulo), como o serviço o calcula. */
+const hoje = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(
+    new Date(),
+  );
 const PT =
   'Frédéric Chopin foi um compositor e pianista polonês do período romântico.';
 const EN =
@@ -182,15 +188,86 @@ describe('ComposerBioService', () => {
   });
 
   describe('custo', () => {
-    it('teto diário atingido é 429, sem chamar a IA', async () => {
+    // No teto, o compositor fica sem biografia: nada gravado, nada marcado
+    // como "já perguntado", e a página recebe um estado calmo — não um erro.
+    it('teto de hoje acabou: a página recebe "cota", sem IA, sem gravar e sem marcar', async () => {
       cache.get.mockImplementation((key: string) =>
-        Promise.resolve(key.startsWith('ai-bio:budget:') ? 3 : undefined),
+        Promise.resolve(key === `ai-bio:budget:${hoje()}` ? 3 : undefined),
       );
 
-      const error = await service.biography(ID, 'pt').catch((e) => e);
-      expect(error).toBeInstanceOf(HttpException);
-      expect((error as HttpException).getStatus()).toBe(429);
+      await expect(service.biography(ID, 'pt')).resolves.toEqual({
+        biography: null,
+        language: 'pt',
+        status: 'quota',
+      });
+
       expect(ai.complete).not.toHaveBeenCalled();
+      expect(prisma.composer.update).not.toHaveBeenCalled();
+      // Nem a marca de "a IA não conhece este compositor" (30 dias fora): amanhã tenta.
+      expect(cache.set).not.toHaveBeenCalledWith(
+        expect.stringContaining('ai-bio:unknown:'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('quem chama o rascunho ou a tradução direto continua recebendo 429', async () => {
+      cache.get.mockImplementation((key: string) =>
+        Promise.resolve(key.startsWith('ai-bio:budget') ? 1_000 : undefined),
+      );
+
+      const draft = await service
+        .draft({ name: 'Bach' } as never, 'pt')
+        .catch((e) => e);
+      expect((draft as HttpException).getStatus()).toBe(429);
+
+      const translation = await service.translateText(PT).catch((e) => e);
+      expect((translation as HttpException).getStatus()).toBe(429);
+      expect(ai.complete).not.toHaveBeenCalled();
+    });
+
+    // A unidade do teto é o compositor; a tradução (a versão em inglês de cada
+    // um) tem teto próprio, o dobro.
+    it('gerar e traduzir gastam tetos diferentes', async () => {
+      ai.complete
+        .mockResolvedValueOnce({ text: PT, generatedBy: 'anthropic/x' })
+        .mockResolvedValueOnce({ text: EN, generatedBy: 'anthropic/x' });
+
+      await service.biography(ID, 'en');
+
+      expect(store.get(`ai-bio:budget:${hoje()}`)).toBe(1);
+      expect(store.get(`ai-bio:budget-translation:${hoje()}`)).toBe(1);
+    });
+
+    it('teto de geração cheio não impede traduzir um texto que já existe', async () => {
+      prisma.composer.findUnique.mockResolvedValue(composerRow({ bio: PT }));
+      ai.complete.mockResolvedValue({ text: EN, generatedBy: 'openai/gpt' });
+      store.set(`ai-bio:budget:${hoje()}`, 3);
+
+      await expect(service.biography(ID, 'en')).resolves.toMatchObject({
+        biography: EN,
+        source: 'translated',
+      });
+    });
+
+    it('geração feita e tradução sem teto: o português fica gravado, o inglês fica para amanhã', async () => {
+      ai.complete.mockResolvedValueOnce({
+        text: PT,
+        generatedBy: 'anthropic/x',
+      });
+      store.set(`ai-bio:budget-translation:${hoje()}`, 6);
+
+      await expect(service.biography(ID, 'en')).resolves.toEqual({
+        biography: null,
+        language: 'en',
+        status: 'quota',
+      });
+
+      expect(prisma.composer.update).toHaveBeenCalledTimes(1);
+      expect(prisma.composer.update).toHaveBeenCalledWith({
+        where: { id: ID },
+        data: expect.objectContaining({ bio: PT }),
+      });
     });
 
     it('cada chamada conta no teto do dia, mesmo a que falha', async () => {

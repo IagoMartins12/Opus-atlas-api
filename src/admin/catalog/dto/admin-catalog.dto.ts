@@ -122,6 +122,36 @@ export class ListComposersQueryDto extends PaginationQuery {
   @IsBoolean()
   hasDates?: boolean;
 
+  @ApiPropertyOptional({ description: 'Tem nacionalidade preenchida.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasNationality?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem o ano de nascimento.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasBirthYear?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Época fora das datas (`true`): com ano de nascimento e a época cai fora do que as datas pedem. É o que o quadro de qualidade conta.',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  epochMismatch?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Suspeito de não ser compositor (`true`): o papel principal no IMSLP não é "Compositor" (libretista, editor, regente…) e não há obra nenhuma. Para revisão, nunca para apagar sozinho.',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  suspect?: boolean;
+
   @ApiPropertyOptional({
     description: 'Cadastrado pela comunidade (true) ou importado (false).',
   })
@@ -154,6 +184,33 @@ export class ListComposersQueryDto extends PaginationQuery {
 export const WORK_SORT_FIELDS = ['title', 'createdAt'] as const;
 
 export class ListWorksQueryDto extends PaginationQuery {
+  @ApiPropertyOptional({ description: 'Tem tonalidade preenchida.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasTone?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem ano de composição preenchido.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasYear?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tem instrumentação preenchida.' })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasInstrumentation?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Tem gravação ou vídeo: YouTube, Spotify ou áudio enviado. É o que o quadro de qualidade conta.',
+  })
+  @IsOptional()
+  @Transform(toBoolean)
+  @IsBoolean()
+  hasMedia?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

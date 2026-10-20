@@ -82,6 +82,16 @@ export class TranslateBiographyDto {
   @MinLength(20)
   @MaxLength(20_000)
   text!: string;
+
+  @ApiPropertyOptional({
+    enum: ['pt', 'en'],
+    default: 'en',
+    description:
+      'Para qual idioma traduzir: `en` (o texto é português, o padrão) ou `pt` (o texto é inglês).',
+  })
+  @IsOptional()
+  @IsIn(['pt', 'en'])
+  to?: 'pt' | 'en';
 }
 
 export class TranslatedBiographyDto {

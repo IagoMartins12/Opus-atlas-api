@@ -38,8 +38,12 @@ export type BiographyResult =
   | {
       biography: null;
       language: BioLanguage;
-      /** `unavailable`: a IA não conhece o compositor — não adianta insistir. */
-      status: 'unavailable' | 'generating';
+      /**
+       * `unavailable`: a IA não conhece o compositor — não adianta insistir.
+       * `quota`: o teto de hoje acabou — nada foi gravado nem marcado, o
+       * compositor segue sem biografia e amanhã é escrito.
+       */
+      status: 'unavailable' | 'generating' | 'quota';
       retryAfter?: number;
     };
 
@@ -62,7 +66,28 @@ const BUDGET_TIME_ZONE = 'America/Sao_Paulo';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const unknownKey = (composerId: string) => `ai-bio:unknown:${composerId}`;
-const budgetKey = (day: string) => `ai-bio:budget:${day}`;
+const budgetKey = (kind: BudgetKind, day: string) =>
+  kind === 'generation'
+    ? `ai-bio:budget:${day}`
+    : `ai-bio:budget-translation:${day}`;
+
+/**
+ * O que gasta do teto do dia. **Gerar** uma biografia nova é a unidade do teto
+ * (`AI_BIO_DAILY_LIMIT` compositores por dia); **traduzir** um texto que já
+ * existe tem teto próprio, o dobro, porque cada compositor pode pedir a sua
+ * versão em inglês.
+ */
+type BudgetKind = 'generation' | 'translation';
+
+/** O teto de hoje acabou: 429 para quem chama direto, "cota" para a página. */
+class QuotaReachedError extends HttpException {
+  constructor() {
+    super(
+      'Limite diário de biografias geradas atingido. Tente amanhã.',
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+}
 
 const BIO_SUBJECT_SELECT = {
   id: true,
@@ -130,7 +155,7 @@ export class ComposerBioService {
     private readonly cache: AppCacheService,
     config: ConfigService,
   ) {
-    this.dailyLimit = config.get<number>('ai.bioDailyLimit') ?? 200;
+    this.dailyLimit = config.get<number>('ai.bioDailyLimit') ?? 100;
   }
 
   async biography(
@@ -173,9 +198,18 @@ export class ComposerBioService {
     let job = this.inFlight.get(key);
 
     if (!job) {
-      job = this.produce(composer, language).finally(() => {
-        this.inFlight.delete(key);
-      });
+      job = this.produce(composer, language)
+        // Sem teto hoje, o compositor fica como está: sem biografia, sem
+        // marca de "já perguntado", para amanhã tentar de novo.
+        .catch((error: unknown): BiographyResult => {
+          if (error instanceof QuotaReachedError) {
+            return { biography: null, language, status: 'quota' };
+          }
+          throw error;
+        })
+        .finally(() => {
+          this.inFlight.delete(key);
+        });
       this.inFlight.set(key, job);
     }
 
@@ -208,11 +242,14 @@ export class ComposerBioService {
     subject: BioSubject,
     language: BioLanguage,
   ): Promise<BiographyResult> {
-    const completion = await this.call({
-      system: BIO_SYSTEM,
-      prompt: bioPrompt(subject),
-      maxTokens: BIO_MAX_TOKENS,
-    });
+    const completion = await this.call(
+      {
+        system: BIO_SYSTEM,
+        prompt: bioPrompt(subject),
+        maxTokens: BIO_MAX_TOKENS,
+      },
+      'generation',
+    );
     const portuguese = cleanBio(completion.text);
 
     if (!portuguese) {
@@ -234,11 +271,14 @@ export class ComposerBioService {
    * em inglês).
    */
   async translateText(text: string, to: BioLanguage = 'en'): Promise<string> {
-    const completion = await this.call({
-      system: to === 'en' ? TRANSLATION_SYSTEM : TRANSLATION_TO_PT_SYSTEM,
-      prompt: translationPrompt(text),
-      maxTokens: TRANSLATION_MAX_TOKENS,
-    });
+    const completion = await this.call(
+      {
+        system: to === 'en' ? TRANSLATION_SYSTEM : TRANSLATION_TO_PT_SYSTEM,
+        prompt: translationPrompt(text),
+        maxTokens: TRANSLATION_MAX_TOKENS,
+      },
+      'translation',
+    );
 
     return completion.text.trim();
   }
@@ -287,21 +327,24 @@ export class ComposerBioService {
   private async generatePortuguese(
     composer: BioComposer,
   ): Promise<{ text: string; generatedBy: string } | null> {
-    const completion = await this.call({
-      system: BIO_SYSTEM,
-      prompt: bioPrompt({
-        name: composer.name,
-        fullName: composer.fullName,
-        alternativeNames: composer.alternativeNames,
-        birthDate: composer.birthDate,
-        deathDate: composer.deathDate,
-        epochName: composer.epoch?.name ?? composer.epochName,
-        roleName: composer.primaryRole?.name,
-        nationality: composer.nationality,
-        instruments: composer.instruments,
-      }),
-      maxTokens: BIO_MAX_TOKENS,
-    });
+    const completion = await this.call(
+      {
+        system: BIO_SYSTEM,
+        prompt: bioPrompt({
+          name: composer.name,
+          fullName: composer.fullName,
+          alternativeNames: composer.alternativeNames,
+          birthDate: composer.birthDate,
+          deathDate: composer.deathDate,
+          epochName: composer.epoch?.name ?? composer.epochName,
+          roleName: composer.primaryRole?.name,
+          nationality: composer.nationality,
+          instruments: composer.instruments,
+        }),
+        maxTokens: BIO_MAX_TOKENS,
+      },
+      'generation',
+    );
 
     const text = cleanBio(completion.text);
 
@@ -330,11 +373,14 @@ export class ComposerBioService {
   }
 
   private async translate(composerId: string, portuguese: string) {
-    const completion = await this.call({
-      system: TRANSLATION_SYSTEM,
-      prompt: translationPrompt(portuguese),
-      maxTokens: TRANSLATION_MAX_TOKENS,
-    });
+    const completion = await this.call(
+      {
+        system: TRANSLATION_SYSTEM,
+        prompt: translationPrompt(portuguese),
+        maxTokens: TRANSLATION_MAX_TOKENS,
+      },
+      'translation',
+    );
     const english = completion.text.trim();
 
     await this.prisma.composer.update({
@@ -346,12 +392,15 @@ export class ComposerBioService {
     return english;
   }
 
-  /** Uma chamada à IA, dentro do teto diário e do limite de simultâneas. */
-  private async call(request: {
-    system: string;
-    prompt: string;
-    maxTokens: number;
-  }) {
+  /** Uma chamada à IA, dentro do teto diário (do seu tipo) e do limite de simultâneas. */
+  private async call(
+    request: {
+      system: string;
+      prompt: string;
+      maxTokens: number;
+    },
+    kind: BudgetKind,
+  ) {
     if (!this.ai.enabled) {
       throw new ServiceUnavailableException(
         'Biografia por IA indisponível: nenhum provedor configurado',
@@ -365,17 +414,16 @@ export class ComposerBioService {
     }
 
     const day = localDate(new Date(), BUDGET_TIME_ZONE);
-    const used = (await this.cache.get<number>(budgetKey(day))) ?? 0;
+    const key = budgetKey(kind, day);
+    const used = (await this.cache.get<number>(key)) ?? 0;
+    const limit = kind === 'generation' ? this.dailyLimit : this.dailyLimit * 2;
 
-    if (used >= this.dailyLimit) {
-      throw new HttpException(
-        'Limite diário de biografias geradas atingido. Tente amanhã.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    if (used >= limit) {
+      throw new QuotaReachedError();
     }
 
     // Conta antes de chamar: a chamada custa mesmo quando falha.
-    await this.cache.set(budgetKey(day), used + 1, 2 * DAY_MS);
+    await this.cache.set(key, used + 1, 2 * DAY_MS);
     this.running++;
 
     try {
