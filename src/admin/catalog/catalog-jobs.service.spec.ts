@@ -204,7 +204,7 @@ describe('CatalogJobsService', () => {
 
       expect(list.find((j) => j.id === 'fix-epochs')?.active?.id).toBe('a');
       expect(list.find((j) => j.id === 'fix-difficulty')?.last?.id).toBe('b');
-      expect(list.length).toBe(10);
+      expect(list.length).toBe(13);
     });
   });
 

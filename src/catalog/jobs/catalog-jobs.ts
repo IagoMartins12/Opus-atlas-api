@@ -7,6 +7,9 @@ import { work as fixInstruments } from './fix-work-instruments.job';
 import { work as fixNationalities } from './fix-composer-nationalities.job';
 import { work as fixThumbnails } from './fix-imslp-thumbnails.job';
 import { work as mergeDuplicates } from './merge-duplicate-composers.job';
+import { work as featureEvents } from './feature-blog-events.job';
+import { work as seedBlogArticles } from './seed-blog-articles.job';
+import { work as seedBlogCategories } from './seed-blog-categories.job';
 import { work as seedCollections } from './seed-collections.job';
 import { work as syncAnnotations } from './sync-annotation-counts.job';
 
@@ -28,6 +31,9 @@ export const CATALOG_JOB_IDS = [
   'sync-annotation-counts',
   'merge-duplicate-composers',
   'seed-collections',
+  'seed-blog-categories',
+  'seed-blog-articles',
+  'feature-blog-events',
 ] as const;
 
 export type CatalogJobId = (typeof CATALOG_JOB_IDS)[number];
@@ -44,7 +50,7 @@ export interface CatalogJobDef {
   id: CatalogJobId;
   name: string;
   description: string;
-  group: 'compositores' | 'obras' | 'partituras' | 'colecoes';
+  group: 'compositores' | 'obras' | 'partituras' | 'colecoes' | 'blog';
   /** Junta registros ou apaga dado: gravar pede confirmação. */
   destructive: boolean;
   /** Leva de minutos a horas; a tela avisa e oferece parar. */
@@ -188,6 +194,42 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     external: false,
     params: [],
     work: seedCollections,
+  },
+  {
+    id: 'seed-blog-categories',
+    name: 'Semear categorias e tags do blog',
+    description:
+      'Cria ou atualiza pelo slug as categorias do blog (nome em português e inglês, descrição, ordem, menu "Categorias" e seção no início) e as tags. As categorias que já existem são mantidas. Não cria artigos nem autores.',
+    group: 'blog',
+    destructive: false,
+    slow: false,
+    external: false,
+    params: [],
+    work: seedBlogCategories,
+  },
+  {
+    id: 'seed-blog-articles',
+    name: 'Semear artigos de exemplo do blog',
+    description:
+      'Cria os 16 artigos de demonstração, com três autores fictícios, capa (o retrato do compositor, do IMSLP), compositores e obras do catálogo, visitas, curtidas e comentários. Recria os da rodada anterior e passa o destaque da home a eles. É conteúdo de demonstração: serve à homologação, não à produção.',
+    group: 'blog',
+    destructive: true,
+    slow: false,
+    external: false,
+    params: [],
+    work: seedBlogArticles,
+  },
+  {
+    id: 'feature-blog-events',
+    name: 'Destacar eventos da agenda',
+    description:
+      'Destaca os três primeiros eventos publicados de cada um dos próximos três meses (o primeiro em tamanho grande) e tira o destaque dos que estavam marcados.',
+    group: 'blog',
+    destructive: false,
+    slow: false,
+    external: false,
+    params: [],
+    work: featureEvents,
   },
 ];
 
