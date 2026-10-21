@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { runAggregate, toObjectId } from '../metrics/raw-aggregate';
+import { ReportSuiteService } from './report-suite.service';
 import { ReportData, ReportType } from './report-types';
 
 const USER_TYPE_LABELS: Record<string, string> = {
@@ -47,7 +48,10 @@ const fullName = (user: {
  */
 @Injectable()
 export class ReportDataService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly suite: ReportSuiteService,
+  ) {}
 
   build(type: ReportType, start: Date, end: Date): Promise<ReportData> {
     switch (type) {
@@ -57,6 +61,18 @@ export class ReportDataService {
         return this.content(start, end);
       case 'engagement-metrics':
         return this.engagement(start, end);
+      case 'revenue-subscriptions':
+        return this.suite.revenue(start, end);
+      case 'catalog-usage':
+        return this.suite.catalog(start, end);
+      case 'teaching-portal':
+        return this.suite.teaching(start, end);
+      case 'learning-community':
+        return this.suite.learning(start, end);
+      case 'newsletter-email':
+        return this.suite.newsletter(start, end);
+      case 'acquisition-retention':
+        return this.suite.acquisition(start, end);
     }
   }
 

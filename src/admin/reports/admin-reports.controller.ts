@@ -7,7 +7,9 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   Res,
+  StreamableFile,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -19,6 +21,7 @@ import {
   ApiOperation,
   ApiParam,
   ApiProduces,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { Response } from 'express';
@@ -75,28 +78,37 @@ export class AdminReportsController {
   @Get(':id/download')
   @Audited({ action: 'report.download', entityType: 'generatedReport' })
   @ApiOperation({
-    summary: 'Baixa o relatório em CSV',
+    summary: 'Baixa o relatório em CSV ou planilha (xlsx)',
     description:
-      'UTF-8 com BOM, para o Excel reconhecer os acentos. Relatório gerado ' +
-      'pelo sistema antigo não tem retrato neste formato: responde 404.',
+      'CSV em UTF-8 com BOM, para o Excel reconhecer os acentos; `format=xlsx` ' +
+      'traz uma aba de resumo e uma por tabela. Relatório gerado pelo sistema ' +
+      'antigo não tem retrato neste formato: responde 404.',
   })
   @ApiParam({ name: 'id' })
-  @ApiProduces('text/csv')
+  @ApiQuery({ name: 'format', required: false, enum: ['csv', 'xlsx'] })
   @ApiNotFoundResponse({ type: ErrorResponseDto })
   async download(
     @CurrentUser() user: AccessTokenPayload,
     @Param('id') id: string,
+    @Query('format') format: string | undefined,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<string> {
-    const { filename, csv } = await this.service.download(user.sub, id);
+  ): Promise<string | StreamableFile> {
+    const kind = format === 'xlsx' ? 'xlsx' : 'csv';
+    const file = await this.service.download(user.sub, id, kind);
+    const name = file.filename.replace(/[^\w.-]/g, '_');
+
+    response.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+
+    if (file.xlsx) {
+      response.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      return new StreamableFile(file.xlsx);
+    }
 
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    response.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename.replace(/[^\w.-]/g, '_')}"`,
-    );
-
-    return `﻿${csv}`;
+    return `\uFEFF${file.csv}`;
   }
 
   @Delete(':id')

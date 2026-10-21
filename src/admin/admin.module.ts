@@ -18,6 +18,7 @@ import { MonetizationInsightsService } from './metrics/monetization-insights.ser
 import { PlatformOverviewService } from './metrics/platform-overview.service';
 import { AdminReportsController } from './reports/admin-reports.controller';
 import { AdminReportsService } from './reports/admin-reports.service';
+import { ReportSuiteService } from './reports/report-suite.service';
 import { ReportDataService } from './reports/report-data.service';
 import { TeachingInsightsService } from './metrics/teaching-insights.service';
 import { AdminNewsletterController } from './newsletter/admin-newsletter.controller';
@@ -138,6 +139,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     TeachingInsightsService,
     MonetizationInsightsService,
     AdminReportsService,
+    ReportSuiteService,
     ReportDataService,
     AdminAuditService,
     AdminMaintenanceService,

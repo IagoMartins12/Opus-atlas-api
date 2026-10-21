@@ -2,6 +2,12 @@ export const REPORT_TYPES = {
   'users-overview': 'Resumo de Usuários',
   'content-analysis': 'Análise de Conteúdo',
   'engagement-metrics': 'Métricas de Engajamento',
+  'revenue-subscriptions': 'Receita e Assinaturas',
+  'catalog-usage': 'Qualidade e Uso do Acervo',
+  'teaching-portal': 'Professores, Alunos e Aulas',
+  'learning-community': 'Aprendizado e Comunidade',
+  'newsletter-email': 'Newsletter e E-mail',
+  'acquisition-retention': 'Aquisição e Retenção',
 } as const;
 
 export type ReportType = keyof typeof REPORT_TYPES;
@@ -10,7 +16,9 @@ export const REPORT_PERIODS = {
   '7d': 7,
   '30d': 30,
   '90d': 90,
+  '180d': 180,
   '1y': 365,
+  all: 3650,
 } as const;
 
 export type ReportPeriod = keyof typeof REPORT_PERIODS;

@@ -5,6 +5,7 @@ import { AppCacheService } from '../../common/cache/cache.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { reportToCsv } from './report-csv';
+import { reportToXlsx } from './report-xlsx';
 import { ReportDataService } from './report-data.service';
 import {
   periodRange,
@@ -131,7 +132,11 @@ export class AdminReportsService {
     return this.toResult(created);
   }
 
-  async download(userId: string, reportId: string) {
+  async download(
+    userId: string,
+    reportId: string,
+    format: 'csv' | 'xlsx' = 'csv',
+  ) {
     const report = await this.findOwn(userId, reportId);
 
     const data = report.reportData as unknown as Partial<ReportData> | null;
@@ -158,18 +163,25 @@ export class AdminReportsService {
       data: { downloadCount: { increment: 1 } },
     });
 
+    const meta = {
+      name: report.name,
+      period: report.period,
+      start,
+      end,
+      generatedAt: end,
+    };
+    const base = report.filename.replace(/\.(csv|xlsx|excel|pdf|html)$/i, '');
+
+    if (format === 'xlsx') {
+      return {
+        filename: `${base}.xlsx`,
+        xlsx: await reportToXlsx(meta, data as ReportData),
+      };
+    }
+
     return {
-      filename: report.filename.replace(/\.(xlsx|excel|pdf|html)$/i, '.csv'),
-      csv: reportToCsv(
-        {
-          name: report.name,
-          period: report.period,
-          start,
-          end,
-          generatedAt: end,
-        },
-        data as ReportData,
-      ),
+      filename: `${base}.csv`,
+      csv: reportToCsv(meta, data as ReportData),
     };
   }
 
