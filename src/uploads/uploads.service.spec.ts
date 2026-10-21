@@ -2,6 +2,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { StorageAssetKind, StorageAssetStatus } from '@prisma/client';
 import { SubscriptionsService } from '../billing/services/subscriptions.service';
+import { ContributionLimitService } from './shared/contribution-limit.service';
 import { StorageService } from '../common/storage/storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadsService } from './uploads.service';
@@ -20,6 +21,7 @@ describe('UploadsService', () => {
     countActiveByOwner: jest.Mock;
   };
   let subscriptions: { checkFeatureAccess: jest.Mock };
+  let contributionLimit: { assertWithinLimit: jest.Mock };
 
   const asset = {
     id: 'asset-1',
@@ -72,6 +74,9 @@ describe('UploadsService', () => {
         .fn()
         .mockResolvedValue({ plan: 'FREE', hasAccess: true, limit: 3 }),
     };
+    contributionLimit = {
+      assertWithinLimit: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -79,6 +84,7 @@ describe('UploadsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StorageService, useValue: storage },
         { provide: SubscriptionsService, useValue: subscriptions },
+        { provide: ContributionLimitService, useValue: contributionLimit },
       ],
     }).compile();
 
@@ -95,6 +101,10 @@ describe('UploadsService', () => {
           scopeId: 'work1',
         }),
       ).rejects.toThrow('Confirme seu e-mail para contribuir com o acervo.');
+      // A partitura passa pelo teto de envios, que também exige o e-mail.
+      contributionLimit.assertWithinLimit.mockRejectedValue(
+        new ForbiddenException('Confirme seu e-mail para contribuir.'),
+      );
       await expect(
         service.uploadFile(
           'user-1',
@@ -173,17 +183,17 @@ describe('UploadsService', () => {
       );
     });
 
-    it('usa uploadLimit para envio de partitura', async () => {
+    it('envio de partitura passa pelo teto de envios ao acervo (compositores + obras + partituras)', async () => {
       await service.uploadFile('user-1', StorageAssetKind.SCORE_FILE, 'work1', {
         buffer: Buffer.alloc(4),
         originalName: 'p.pdf',
         size: 4,
       });
 
-      expect(subscriptions.checkFeatureAccess).toHaveBeenCalledWith(
+      expect(contributionLimit.assertWithinLimit).toHaveBeenCalledWith(
         'user-1',
-        'uploadLimit',
       );
+      expect(subscriptions.checkFeatureAccess).not.toHaveBeenCalled();
     });
 
     it('não consulta plano para tipo sem limite, como avatar', async () => {
