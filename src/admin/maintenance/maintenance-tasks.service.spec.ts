@@ -32,6 +32,7 @@ describe('MaintenanceTasksService', () => {
     prisma = {
       storedAsset: model(),
       userToken: model(),
+      newsletterEmailEvent: model(),
       notification: model(),
       adminAuditLog: model(),
       user: model(),
@@ -174,6 +175,34 @@ describe('MaintenanceTasksService', () => {
 
       expect(result.summary.semDonoDeclarado).toBe(4);
       expect(result.warnings?.[0]).toContain('4 arquivos');
+    });
+  });
+
+  describe('mail.events.prune', () => {
+    it('na simulação, conta e não apaga', async () => {
+      prisma.newsletterEmailEvent.count.mockResolvedValue(900);
+
+      const result = await service.run('mail.events.prune', { dryRun: true });
+
+      expect(result.summary.aRemover).toBe(900);
+      expect(prisma.newsletterEmailEvent.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('só expurga entrega, abertura e clique; devolução e descadastro ficam', async () => {
+      prisma.newsletterEmailEvent.deleteMany.mockResolvedValue({ count: 3 });
+
+      const result = await service.run('mail.events.prune', { dryRun: false });
+
+      const where =
+        prisma.newsletterEmailEvent.deleteMany.mock.calls[0][0].where;
+      expect(result.summary.removidos).toBe(3);
+      expect(where.eventType.in).toEqual(
+        expect.arrayContaining(['SENT', 'DELIVERED', 'OPENED', 'CLICKED']),
+      );
+      expect(where.eventType.in).not.toContain('BOUNCED');
+      expect(where.eventType.in).not.toContain('COMPLAINED');
+      expect(where.eventType.in).not.toContain('UNSUBSCRIBED');
+      expect(result.summary.retencaoEmDias).toBe(365);
     });
   });
 

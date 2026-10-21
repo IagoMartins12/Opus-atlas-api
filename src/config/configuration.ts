@@ -173,7 +173,7 @@ export const appConfiguration = () => ({
    * variável; provedor sem chave é pulado.
    */
   ai: {
-    providerOrder: (process.env.AI_PROVIDER_ORDER ?? 'anthropic,openai,groq')
+    providerOrder: (process.env.AI_PROVIDER_ORDER ?? 'anthropic,groq')
       .split(',')
       .map((name) => name.trim().toLowerCase())
       .filter(Boolean),

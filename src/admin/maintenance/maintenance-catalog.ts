@@ -25,6 +25,7 @@ export const MAINTENANCE_TASK_IDS = [
   'tokens.prune',
   'notifications.prune',
   'audit.prune',
+  'mail.events.prune',
   'search.reindex',
   'database.backup',
 ] as const;
@@ -138,6 +139,19 @@ export const MAINTENANCE_CATALOG: readonly MaintenanceTask[] = [
     // cada rodada; deixar sem agendamento era o que fazia a retenção não valer.
     suggestedCron: '30 3 * * 0',
     retentionDays: 90,
+  },
+  {
+    id: 'mail.events.prune',
+    name: 'Expurgar o log de e-mail da newsletter',
+    description:
+      'Remove os eventos de entrega, abertura e clique com mais de 12 meses. ' +
+      '**Devolução (bounce), reclamação de spam e descadastro nunca saem**: ' +
+      'são a prova de por que um endereço não recebe mais e-mail (RN-6).',
+    category: 'database',
+    impact: 'low',
+    destructive: true,
+    suggestedCron: '15 4 * * 0',
+    retentionDays: 365,
   },
   {
     id: 'search.reindex',
