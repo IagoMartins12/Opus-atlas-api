@@ -17,6 +17,7 @@ import {
 import { CreateSignedUploadDto } from './dto/create-signed-upload.dto';
 import { SignedUploadResponseDto } from './dto/signed-upload-response.dto';
 import { StoredAssetDto } from './dto/stored-asset.dto';
+import { ContributionLimitService } from './shared/contribution-limit.service';
 import { assertEmailVerified } from './shared/verified-email';
 
 /**
@@ -31,6 +32,8 @@ const PLAN_LIMITED_KINDS: Partial<
   Record<StorageAssetKind, 'uploadLimit' | 'maxPerformanceVideos'>
 > = {
   PERFORMANCE_VIDEO: 'maxPerformanceVideos',
+  // O arquivo da partitura conta no limite de envios ao acervo, que soma
+  // compositores, obras e partituras (`ContributionLimitService`).
   SCORE_FILE: 'uploadLimit',
 };
 
@@ -40,6 +43,7 @@ export class UploadsService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly subscriptions: SubscriptionsService,
+    private readonly contributionLimit: ContributionLimitService,
   ) {}
 
   async createSignedUpload(
@@ -154,7 +158,15 @@ export class UploadsService {
       return;
     }
 
-    // Score files and performance videos are contributions to the library.
+    // Partitura entra no mesmo teto dos demais envios ao acervo — antes este
+    // passo contava só arquivos de partitura e o registro (que soma tudo)
+    // recusava depois: o arquivo subia e a partitura não era criada.
+    if (kind === StorageAssetKind.SCORE_FILE) {
+      await this.contributionLimit.assertWithinLimit(userId);
+      return;
+    }
+
+    // Performance videos are contributions to the library.
     await assertEmailVerified(this.prisma, userId);
 
     const access = await this.subscriptions.checkFeatureAccess(userId, feature);

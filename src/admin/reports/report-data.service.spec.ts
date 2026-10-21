@@ -73,6 +73,7 @@ describe('ReportDataService', () => {
 
       const data = await new ReportDataService(
         prisma as unknown as PrismaService,
+        {} as never,
       ).build('users-overview', start, end);
 
       expect(section(data, 'Usuários por perfil').rows).toEqual([
@@ -107,6 +108,7 @@ describe('ReportDataService', () => {
 
       const data = await new ReportDataService(
         prisma as unknown as PrismaService,
+        {} as never,
       ).build('users-overview', start, end);
 
       expect(section(data, 'Novos usuários').title).toBe(
@@ -158,6 +160,7 @@ describe('ReportDataService', () => {
 
     const data = await new ReportDataService(
       prisma as unknown as PrismaService,
+      {} as never,
     ).build('content-analysis', start, end);
 
     // A obra favoritada que não existe mais some da lista.
@@ -187,6 +190,7 @@ describe('ReportDataService', () => {
 
     const data = await new ReportDataService(
       prisma as unknown as PrismaService,
+      {} as never,
     ).build('engagement-metrics', start, end);
 
     expect(section(data, 'Anotações por categoria').rows).toEqual([

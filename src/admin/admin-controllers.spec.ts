@@ -574,7 +574,9 @@ describe('auditoria, métricas e relatórios', () => {
       type: 'users-overview',
       period: '30d',
     } as never);
-    await expect(controller.download(admin, 'r1', res)).resolves.toBe('﻿a,b');
+    await expect(
+      controller.download(admin, 'r1', undefined, res),
+    ).resolves.toBe('﻿a,b');
     await controller.remove(admin, 'r1');
 
     expect(service.generate).toHaveBeenCalledWith(

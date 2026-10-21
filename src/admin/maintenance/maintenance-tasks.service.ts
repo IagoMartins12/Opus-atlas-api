@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { NotificationStatus, StorageAssetStatus } from '@prisma/client';
+import {
+  EmailEventType,
+  NotificationStatus,
+  StorageAssetStatus,
+} from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -119,6 +123,8 @@ export class MaintenanceTasksService {
         return this.pruneNotifications(dryRun, retentionDays);
       case 'audit.prune':
         return this.pruneAudit(dryRun, retentionDays);
+      case 'mail.events.prune':
+        return this.pruneMailEvents(dryRun, retentionDays);
       case 'search.reindex':
         return this.reindex();
       case 'database.backup':
@@ -467,6 +473,48 @@ export class MaintenanceTasksService {
         retencaoLeituraEmDias: Math.max(RETENTION_DAYS.read, retentionDays),
         retencaoEscritaEmDias: Math.max(RETENTION_DAYS.write, retentionDays),
         retencaoGravesEmDias: Math.max(RETENTION_DAYS.grave, retentionDays),
+      },
+    };
+  }
+
+  /**
+   * Log de e-mail da newsletter (**RN-6**): entrega, abertura e clique vencem
+   * em `retentionDays` (12 meses). Devolução, reclamação e descadastro ficam
+   * para sempre — é a prova de que o endereço não pode mais receber, e sem ela
+   * uma reimportação da lista voltaria a escrever para quem pediu para sair.
+   */
+  private async pruneMailEvents(
+    dryRun: boolean,
+    retentionDays: number,
+  ): Promise<MaintenanceTaskOutcome> {
+    const cutoff = new Date(Date.now() - retentionDays * DAY_MS);
+    const where = {
+      timestamp: { lt: cutoff },
+      eventType: {
+        in: [
+          EmailEventType.SENT,
+          EmailEventType.DELIVERED,
+          EmailEventType.OPENED,
+          EmailEventType.CLICKED,
+        ],
+      },
+    };
+
+    if (dryRun) {
+      return {
+        summary: {
+          aRemover: await this.prisma.newsletterEmailEvent.count({ where }),
+          retencaoEmDias: retentionDays,
+        },
+      };
+    }
+
+    return {
+      summary: {
+        removidos: (
+          await this.prisma.newsletterEmailEvent.deleteMany({ where })
+        ).count,
+        retencaoEmDias: retentionDays,
       },
     };
   }

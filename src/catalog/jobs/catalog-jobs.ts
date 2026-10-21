@@ -1,4 +1,5 @@
 import type { CatalogJobWork } from './job-types';
+import { work as auditLimits } from './audit-limits.job';
 import { work as cleanPortraits } from './clean-placeholder-portraits.job';
 import { work as fixDifficulty } from './fix-work-difficulty.job';
 import { work as fixEditions } from './fix-imslp-editions.job';
@@ -11,6 +12,7 @@ import { work as featureEvents } from './feature-blog-events.job';
 import { work as seedBlogArticles } from './seed-blog-articles.job';
 import { work as seedBlogCategories } from './seed-blog-categories.job';
 import { work as seedCollections } from './seed-collections.job';
+import { work as syncTeacherCounters } from './sync-teacher-counters.job';
 import { work as syncAnnotations } from './sync-annotation-counts.job';
 
 /**
@@ -34,6 +36,8 @@ export const CATALOG_JOB_IDS = [
   'seed-blog-categories',
   'seed-blog-articles',
   'feature-blog-events',
+  'audit-limits',
+  'sync-teacher-counters',
 ] as const;
 
 export type CatalogJobId = (typeof CATALOG_JOB_IDS)[number];
@@ -50,7 +54,13 @@ export interface CatalogJobDef {
   id: CatalogJobId;
   name: string;
   description: string;
-  group: 'compositores' | 'obras' | 'partituras' | 'colecoes' | 'blog';
+  group:
+    | 'compositores'
+    | 'obras'
+    | 'partituras'
+    | 'colecoes'
+    | 'blog'
+    | 'auditoria';
   /** Junta registros ou apaga dado: gravar pede confirmação. */
   destructive: boolean;
   /** Leva de minutos a horas; a tela avisa e oferece parar. */
@@ -230,6 +240,30 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     external: false,
     params: [],
     work: featureEvents,
+  },
+  {
+    id: 'audit-limits',
+    name: 'Auditar limites e contagens',
+    description:
+      'Só leitura. Confere se "quero aprender" e "já aprendi" (duplicados, nas duas listas, obra apagada), os vídeos de performance, os envios ao acervo, os alunos do professor e o plano de cada usuário batem com os limites do plano e entre si. Cada divergência vira um aviso com um exemplo.',
+    group: 'auditoria',
+    destructive: false,
+    slow: false,
+    external: false,
+    params: [],
+    work: auditLimits,
+  },
+  {
+    id: 'sync-teacher-counters',
+    name: 'Alinhar contador de alunos dos professores',
+    description:
+      'Recalcula o total de alunos de cada professor pelos vínculos aceitos e ativos. O limite do plano já conta os vínculos; isto corrige o número mostrado no painel de usuários.',
+    group: 'auditoria',
+    destructive: false,
+    slow: false,
+    external: false,
+    params: [],
+    work: syncTeacherCounters,
   },
 ];
 
