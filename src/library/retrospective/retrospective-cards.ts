@@ -280,7 +280,8 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
         : `${s.learned} ${s.learned === 1 ? 'work' : 'works'} learned ${when}`,
       value: n(s.learned, lang),
       detail:
-        s.masteryAvg !== null
+        // Maestria baixa não é elogio: só aparece de 10% para cima.
+        s.masteryAvg !== null && s.masteryAvg >= 10
           ? pt
             ? `maestria média de ${Math.round(s.masteryAvg)}%`
             : `average mastery of ${Math.round(s.masteryAvg)}%`
@@ -288,7 +289,7 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
     });
   }
 
-  if (s.bestWork) {
+  if (s.bestWork && s.bestWork.mastery >= 30) {
     cards.push({
       kind: 'best',
       eyebrow: pt ? 'A que você mais domina' : 'The one you master most',
@@ -368,8 +369,8 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
         : 'You helped the next person studying',
       value: n(helped, lang),
       detail: pt
-        ? `${s.community.annotations} anotações e ${s.community.contributions} contribuições ao acervo`
-        : `${s.community.annotations} notes and ${s.community.contributions} contributions to the catalog`,
+        ? `${s.community.annotations} ${s.community.annotations === 1 ? 'anotação' : 'anotações'} e ${s.community.contributions} ${s.community.contributions === 1 ? 'contribuição' : 'contribuições'} ao acervo`
+        : `${s.community.annotations} ${s.community.annotations === 1 ? 'note' : 'notes'} and ${s.community.contributions} ${s.community.contributions === 1 ? 'contribution' : 'contributions'} to the catalog`,
     });
   }
 

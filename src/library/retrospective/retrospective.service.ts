@@ -28,6 +28,14 @@ export type RetroPeriod = 'year' | 'all';
 const TZ = 'America/Sao_Paulo';
 const GENERIC_GENRES = new Set(['não definido', 'pieces', 'peças', 'obras']);
 const RARITY = ['LEGENDARY', 'EPIC', 'RARE', 'COMMON'];
+const POLISHED = new Set([
+  'intro',
+  'discovery',
+  'achievements',
+  'community',
+  'next',
+  'month',
+]);
 
 const yearNow = () =>
   Number(new Date().toLocaleDateString('en-CA', { timeZone: TZ }).slice(0, 4));
@@ -446,10 +454,13 @@ export class RetrospectiveService {
       return tokens.every((t) => next.includes(t)) ? next : orig;
     };
     return {
-      cards: cards.map((c, i) => ({
-        ...c,
-        title: keep(c.title, (titles[i] as string).trim()),
-      })),
+      // Só os cartões neutros ganham título da IA; os que afirmam algo
+      // (ranking, época, maestria, o mais dominado) ficam com a frase das regras.
+      cards: cards.map((c, i) =>
+        POLISHED.has(c.kind)
+          ? { ...c, title: keep(c.title, (titles[i] as string).trim()) }
+          : c,
+      ),
       generatedBy: result.generatedBy,
     };
   }
