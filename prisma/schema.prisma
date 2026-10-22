@@ -4397,3 +4397,25 @@ model SupportTicket {
   @@index([email])
   @@map("support_tickets")
 }
+
+/// A retrospectiva de estudo (Plus), gerada quando a pessoa pede (21/10/2026).
+/// Uma por pessoa, período e idioma; `shareId` abre a versão pública para
+/// compartilhar (cartões e primeiro nome, nada além).
+model Retrospective {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  /// "year:2026" ou "all"
+  period      String
+  language    String   @default("pt")
+  shareId     String   @unique
+  firstName   String
+  cards       Json
+  /// Quantas obras havia nas listas ao gerar: mudou, oferece "gerar de novo".
+  itemCount   Int
+  generatedBy String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, period, language])
+  @@map("retrospectives")
+}
