@@ -64,6 +64,11 @@ export class ProfileAccountDto {
   })
   language: string | null;
   @ApiProperty({ enum: PlanType }) currentPlan: PlanType;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Professor Maestro que dá o Plus (aluno sem assinatura).',
+  })
+  planViaTeacher?: string | null;
   @ApiPropertyOptional({ nullable: true }) planExpiresAt: Date | null;
   @ApiProperty() isTrialActive: boolean;
   @ApiProperty() totalXP: number;

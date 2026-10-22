@@ -649,6 +649,9 @@ model User {
   currentPlan   PlanType  @default(FREE)
   planExpiresAt DateTime? // Data de expiração do plano
   isTrialActive Boolean   @default(false)
+  /// Nome do professor Maestro que dá o Plus a este aluno sem assinatura
+  /// ("Plus · pelo seu professor"). Nulo: o plano vem da própria assinatura.
+  planViaTeacher String?
 
   blogArticles     BlogArticle[]     @relation("BlogAuthor")
   blogComments     BlogComment[]     @relation("BlogComments")
