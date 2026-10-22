@@ -1,5 +1,6 @@
 import { localeFromHeader } from '../common/i18n/locale';
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Public } from '../common/decorators/api-key.decorator';
@@ -24,6 +25,8 @@ export class ContactController {
   @Public()
   // Formulário público que dispara e-mail — limite baixo contra spam.
   @Throttle({ default: { limit: 3, ttl: 60000 } })
+  // Logado ou não: com sessão, o chamado sabe de quem é (e se é prioritário).
+  @UseGuards(OptionalJwtAuthGuard)
   @Post()
   @ApiOperation({
     summary: 'Envia uma mensagem de contato',
@@ -39,6 +42,7 @@ export class ContactController {
     return this.contactService.submit(dto, {
       ipAddress: extractIp(req),
       userAgent: req.headers['user-agent'] ?? 'unknown',
+      userId: (req as Request & { user?: { sub?: string } }).user?.sub,
       // O idioma do site, e sem ele o do navegador de quem escreveu.
       language:
         dto.language ?? localeFromHeader(req.headers['accept-language']),

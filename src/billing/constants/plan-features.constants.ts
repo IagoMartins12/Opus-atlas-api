@@ -109,7 +109,7 @@ export const PLAN_FEATURES: Record<PlanType, PlanFeatureSet> = {
     verifiedBadge: false,
     directoryFeatured: false,
     marketplacePriority: false,
-    prioritySupport: false,
+    prioritySupport: true,
   },
   MENTOR: {
     catalogAccess: true,
@@ -138,7 +138,7 @@ export const PLAN_FEATURES: Record<PlanType, PlanFeatureSet> = {
     verifiedBadge: false,
     directoryFeatured: false,
     marketplacePriority: false,
-    prioritySupport: false,
+    prioritySupport: true,
   },
   MAESTRO: {
     catalogAccess: true,

@@ -19,6 +19,11 @@ describe('ContactService', () => {
     sendContactConfirmationEmail: jest.Mock;
   };
   let newsletter: { subscribe: jest.Mock };
+  let prisma: {
+    user: { findFirst: jest.Mock };
+    supportTicket: { create: jest.Mock };
+  };
+  let subscriptions: { effectivePlan: jest.Mock };
   let service: ContactService;
 
   beforeEach(() => {
@@ -27,9 +32,18 @@ describe('ContactService', () => {
       sendContactConfirmationEmail: jest.fn().mockResolvedValue(undefined),
     };
     newsletter = { subscribe: jest.fn().mockResolvedValue({ success: true }) };
+    prisma = {
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
+      supportTicket: { create: jest.fn().mockResolvedValue({}) },
+    };
+    subscriptions = {
+      effectivePlan: jest.fn().mockResolvedValue({ plan: 'FREE' }),
+    };
     service = new ContactService(
       mail as unknown as MailService,
       newsletter as unknown as NewsletterService,
+      prisma as never,
+      subscriptions as never,
     );
   });
 
@@ -111,6 +125,74 @@ describe('ContactService', () => {
       ),
     ).resolves.toMatchObject({ success: true });
     expect(mail.sendContactSupportNotification).toHaveBeenCalled();
+  });
+  describe('suporte prioritário', () => {
+    it('guarda o chamado no painel; sem conta, é Free e sem prioridade', async () => {
+      await service.submit(dto, {
+        ipAddress: '1',
+        userAgent: 'x',
+        language: 'pt',
+      });
+
+      expect(prisma.supportTicket.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          plan: 'FREE',
+          prioritySupport: false,
+          userId: null,
+        }),
+      });
+      expect(mail.sendContactSupportNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ prioritySupport: false }),
+      );
+    });
+
+    it('quem tem Plus (pela sessão) entra como prioritário', async () => {
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'PLUS' });
+
+      await service.submit(dto, {
+        ipAddress: '1',
+        userAgent: 'x',
+        language: 'pt',
+        userId: 'u1',
+      });
+
+      expect(subscriptions.effectivePlan).toHaveBeenCalledWith('u1');
+      expect(prisma.supportTicket.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ prioritySupport: true, plan: 'PLUS' }),
+      });
+      expect(mail.sendContactSupportNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ prioritySupport: true }),
+      );
+    });
+
+    it('sem sessão, o e-mail do formulário encontra a conta', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'u2' });
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'MAESTRO' });
+
+      await service.submit(dto, {
+        ipAddress: '1',
+        userAgent: 'x',
+        language: 'pt',
+      });
+
+      expect(subscriptions.effectivePlan).toHaveBeenCalledWith('u2');
+      expect(prisma.supportTicket.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ prioritySupport: true, userId: 'u2' }),
+      });
+    });
+
+    it('falha ao guardar o chamado não impede o e-mail', async () => {
+      prisma.supportTicket.create.mockRejectedValue(new Error('banco fora'));
+
+      const r = await service.submit(dto, {
+        ipAddress: '1',
+        userAgent: 'x',
+        language: 'pt',
+      });
+
+      expect(r.success).toBe(true);
+      expect(mail.sendContactSupportNotification).toHaveBeenCalled();
+    });
   });
 });
 

@@ -4367,3 +4367,33 @@ model CatalogJobRun {
   @@index([status])
   @@map("catalog_job_runs")
 }
+
+/// Mensagem do formulário de contato (21/10/2026). Antes só ia por e-mail;
+/// agora fica também no painel (Atendimento), com a prioridade de quem tem plano
+/// pago (suporte prioritário, do Plus em diante) e o andamento do atendimento.
+model SupportTicket {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId        String    @unique
+  userId          String?   @db.ObjectId
+  name            String
+  email           String
+  subject         String
+  message         String
+  category        String
+  /// A urgência que a pessoa escolheu no formulário.
+  priority        String
+  /// Suporte prioritário do plano (Plus, Mentor, Maestro, ou Plus pelo professor).
+  prioritySupport Boolean   @default(false)
+  plan            String    @default("FREE")
+  language        String    @default("pt")
+  /// open | answered | closed
+  status          String    @default("open")
+  note            String?
+  answeredAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, prioritySupport, createdAt])
+  @@index([email])
+  @@map("support_tickets")
+}
