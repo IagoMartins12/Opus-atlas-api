@@ -282,33 +282,42 @@ export class FinanceService {
     const sum = (list: { brlCents: number }[]) =>
       list.reduce((total, o) => total + o.brlCents, 0);
 
-    const [payments, subscriptions, trials, lateSubs, teachers, adjustments] =
-      await Promise.all([
-        this.prisma.payment.findMany({
-          where: { status: 'APPROVED', paidAt: { gte: from, lt: to } },
-          select: {
-            finalAmount: true,
-            currency: true,
-            paidAt: true,
-            stripeFeeCents: true,
-            stripeFeeCurrency: true,
-          },
-        }),
-        this.prisma.subscription.findMany({
-          where: { status: 'ACTIVE', planType: { not: 'FREE' } },
-          select: { price: true, billingPeriod: true, planType: true },
-        }),
-        this.prisma.subscription.count({ where: { status: 'TRIAL' } }),
-        this.prisma.subscription.findMany({
-          where: { status: 'PAST_DUE', planType: { not: 'FREE' } },
-          select: { price: true, billingPeriod: true },
-        }),
-        this.prisma.teacher.count({ where: { status: 'ACTIVE' } }),
-        this.prisma.paymentAdjustment.findMany({
-          where: { at: { gte: from, lt: to } },
-          select: { kind: true, amountCents: true, currency: true, at: true },
-        }),
-      ]);
+    const [
+      payments,
+      subscriptions,
+      trials,
+      lateSubs,
+      teachers,
+      adjustments,
+      plusViaTeacher,
+    ] = await Promise.all([
+      this.prisma.payment.findMany({
+        where: { status: 'APPROVED', paidAt: { gte: from, lt: to } },
+        select: {
+          finalAmount: true,
+          currency: true,
+          paidAt: true,
+          stripeFeeCents: true,
+          stripeFeeCurrency: true,
+        },
+      }),
+      this.prisma.subscription.findMany({
+        where: { status: 'ACTIVE', planType: { not: 'FREE' } },
+        select: { price: true, billingPeriod: true, planType: true },
+      }),
+      this.prisma.subscription.count({ where: { status: 'TRIAL' } }),
+      this.prisma.subscription.findMany({
+        where: { status: 'PAST_DUE', planType: { not: 'FREE' } },
+        select: { price: true, billingPeriod: true },
+      }),
+      this.prisma.teacher.count({ where: { status: 'ACTIVE' } }),
+      this.prisma.paymentAdjustment.findMany({
+        where: { at: { gte: from, lt: to } },
+        select: { kind: true, amountCents: true, currency: true, at: true },
+      }),
+      // Alunos do Maestro sem assinatura própria: têm o Plus, não pagam.
+      this.prisma.user.count({ where: { planViaTeacher: { not: null } } }),
+    ]);
 
     // Pagamento, taxa e ajuste em outra moeda viram reais pela PTAX do dia em
     // que o dinheiro se mexeu. Sem cotação, o valor fica de fora da soma e é
@@ -458,6 +467,8 @@ export class FinanceService {
         /** O que as atrasadas valem por mês: fora do MRR, em risco. */
         pastDueMrrCents: lateMrr,
         teachers,
+        /** Alunos com o Plus pelo professor do Maestro: fora do MRR e de `active`. */
+        plusViaTeacher,
       },
       breakEven: breakEven(fixedMonthly, mrr, subscriptions.length),
       fixedMonthlyCostCents: fixedMonthly,
