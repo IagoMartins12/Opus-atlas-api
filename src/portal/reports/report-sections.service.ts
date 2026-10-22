@@ -5,6 +5,14 @@ import {
   LessonStatus,
 } from '@prisma/client';
 import { ResolvedPeriod } from './report-period';
+import {
+  ASSIGNMENT_SKILL,
+  cleanRatings,
+  Skill,
+  SKILL_LABEL,
+  SKILLS,
+  skillOf,
+} from './skills';
 
 /**
  * Dados carregados uma vez e reaproveitados por todas as seções.
@@ -17,6 +25,8 @@ export interface ReportInput {
   assignments: AssignmentFact[];
   learned: LearnedFact[];
   wantToLearn: WantToLearnFact[];
+  /** Prática registrada pelo aluno no período (só a seção de habilidades usa). */
+  practice?: PracticeFact[];
   period: ResolvedPeriod;
 }
 
@@ -33,7 +43,16 @@ export interface LessonFact {
   challenges: string[];
   improvements: string[];
   skillsWorked: string[];
+  /** `{ technique: 4 }` — notas 1–5 do fechamento da aula. */
+  skillRatings?: unknown;
   studentPresent: boolean | null;
+}
+
+export interface PracticeFact {
+  practicedAt: Date;
+  minutes: number;
+  topic: string | null;
+  note: string | null;
 }
 
 export interface AssignmentFact {
@@ -270,6 +289,109 @@ export class ReportSectionsService {
         completedAssignments: bucket.assignments,
         avgEngagement: average(bucket.engagement),
       }));
+  }
+
+  /**
+   * Evolução por habilidade (Maestro, 21/10/2026), mês a mês.
+   *
+   * A nota é a média das notas do fechamento das aulas daquele mês; sem nota,
+   * o mês fica `null` — nunca um valor estimado. Tarefas (pelo tipo) e prática
+   * (pelo tema) entram como volume, não como nota. `change` compara a média do
+   * primeiro mês com nota à do último, e só existe com dois meses medidos.
+   */
+  skills(input: ReportInput) {
+    type Bucket = {
+      ratings: number[];
+      lessons: number;
+      assignments: number;
+      practiceMinutes: number;
+    };
+    const table = new Map<Skill, Map<string, Bucket>>();
+    const bucket = (skill: Skill, month: string): Bucket => {
+      const months = table.get(skill) ?? new Map<string, Bucket>();
+      table.set(skill, months);
+      const found = months.get(month);
+      if (found) return found;
+      const created: Bucket = {
+        ratings: [],
+        lessons: 0,
+        assignments: 0,
+        practiceMinutes: 0,
+      };
+      months.set(month, created);
+      return created;
+    };
+
+    for (const lesson of input.lessons) {
+      if (lesson.status !== LessonStatus.COMPLETED) continue;
+      const month = MONTH_KEY(lesson.scheduledAt);
+      const ratings = cleanRatings(lesson.skillRatings);
+      const touched = new Set<Skill>(Object.keys(ratings) as Skill[]);
+      for (const text of [
+        ...lesson.skillsWorked,
+        ...lesson.techniques,
+        ...lesson.topics,
+      ]) {
+        const skill = skillOf(text);
+        if (skill) touched.add(skill);
+      }
+      for (const skill of touched) {
+        const b = bucket(skill, month);
+        b.lessons += 1;
+        const rating = ratings[skill];
+        if (rating !== undefined) b.ratings.push(rating);
+      }
+    }
+
+    for (const assignment of input.assignments) {
+      const skill =
+        ASSIGNMENT_SKILL[assignment.type as keyof typeof ASSIGNMENT_SKILL];
+      if (!skill || !assignment.isCompleted) continue;
+      bucket(
+        skill,
+        MONTH_KEY(assignment.completedAt ?? assignment.createdAt),
+      ).assignments += 1;
+    }
+
+    for (const log of input.practice ?? []) {
+      const skill = skillOf(log.topic) ?? skillOf(log.note);
+      if (!skill) continue;
+      bucket(skill, MONTH_KEY(log.practicedAt)).practiceMinutes += log.minutes;
+    }
+
+    const skills = SKILLS.filter((skill) => table.has(skill)).map((skill) => {
+      const months = [...(table.get(skill) ?? new Map<string, Bucket>())]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, b]) => ({
+          month,
+          rating: average(b.ratings),
+          ratings: b.ratings.length,
+          lessons: b.lessons,
+          assignments: b.assignments,
+          practiceMinutes: b.practiceMinutes,
+        }));
+      const rated = months.filter((m) => m.rating !== null);
+      const first = rated[0]?.rating ?? null;
+      const last = rated[rated.length - 1]?.rating ?? null;
+      return {
+        skill,
+        label: SKILL_LABEL[skill],
+        months,
+        current: last,
+        change:
+          rated.length >= 2 && first !== null && last !== null
+            ? round(last - first)
+            : null,
+        lessons: months.reduce((sum, m) => sum + m.lessons, 0),
+        assignments: months.reduce((sum, m) => sum + m.assignments, 0),
+        practiceMinutes: months.reduce((sum, m) => sum + m.practiceMinutes, 0),
+      };
+    });
+
+    return {
+      skills,
+      rated: skills.some((s) => s.current !== null),
+    };
   }
 
   /**

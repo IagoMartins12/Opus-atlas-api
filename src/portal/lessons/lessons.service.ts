@@ -56,6 +56,7 @@ const LESSON_SELECT = {
   lessonSummary: true,
   nextLessonPrep: true,
   skillsWorked: true,
+  skillRatings: true,
   punctuality: true,
   studentFeedback: true,
   studentPresent: true,
@@ -842,6 +843,10 @@ export class LessonsService {
           lessonSummary: dto.lessonSummary,
           punctuality: present ? dto.punctuality : null,
           skillsWorked: dto.skillsWorked,
+          skillRatings:
+            present && dto.skillRatings && Object.keys(dto.skillRatings).length
+              ? dto.skillRatings
+              : undefined,
           nextLessonPrep: dto.nextLessonPrep,
           engagement: dto.engagement,
           preparation: dto.preparation,

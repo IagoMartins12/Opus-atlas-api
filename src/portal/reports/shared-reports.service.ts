@@ -21,6 +21,8 @@ import {
   ShareReportDto,
   UpdateSharedReportDto,
 } from './dto/share-report.dto';
+import { PedagogicalService } from './pedagogical.service';
+import { buildReportPdf } from './report-pdf';
 import { ProgressReportService } from './progress-report.service';
 
 const MAX_COMMENTS_PAGE = 50;
@@ -41,6 +43,8 @@ const SHARED_LIST_SELECT = {
   lastViewedAt: true,
   expiresAt: true,
   createdAt: true,
+  nextPieces: true,
+  tips: true,
   teacher: {
     select: {
       id: true,
@@ -64,6 +68,7 @@ export class SharedReportsService {
     private readonly reports: ProgressReportService,
     private readonly notifications: NotificationsService,
     private readonly activities: SchoolActivitiesService,
+    private readonly pedagogical: PedagogicalService,
   ) {}
 
   /**
@@ -91,6 +96,8 @@ export class SharedReportsService {
       },
     );
 
+    const pedagogical = await this.pedagogicalOf(teacherUserId, dto);
+
     const expiresAt = dto.expiresInDays
       ? new Date(Date.now() + dto.expiresInDays * 24 * 60 * 60 * 1000)
       : null;
@@ -111,6 +118,7 @@ export class SharedReportsService {
           generated.report as Record<string, unknown>,
         ) as Prisma.InputJsonValue,
         allowComments: dto.allowComments ?? false,
+        ...pedagogical,
         // Nunca público: o relatório traz presença, engajamento e observações
         // sobre uma pessoa, muitas vezes menor de idade.
         isPublic: false,
@@ -325,12 +333,63 @@ export class SharedReportsService {
     };
   }
 
+  /**
+   * O relatório em PDF (Maestro). Mesmo acesso de `findOne` — o aluno só o que
+   * foi compartilhado e está valendo —, sem contar visualização.
+   */
+  async pdf(userId: string, reportId: string) {
+    const report = await this.prisma.sharedProgressReport.findUnique({
+      where: { id: reportId },
+      select: { ...SHARED_LIST_SELECT, reportData: true, teacherMessage: true },
+    });
+    const isStudent = report?.student.userId === userId;
+    const isTeacher = report?.teacher.userId === userId;
+    if (!report || (!isStudent && !isTeacher)) {
+      throw new NotFoundException('Relatório não encontrado');
+    }
+    if (isStudent) {
+      if (report.visibility !== ReportVisibility.SHARED) {
+        throw new NotFoundException('Relatório não encontrado');
+      }
+      this.assertAvailable(report);
+    }
+    await this.pedagogical.requireMaestro(report.teacher.userId);
+
+    const name = (u: { firstName: string | null; lastName: string | null }) =>
+      [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
+    const pieces = Array.isArray(report.nextPieces)
+      ? (report.nextPieces as Array<{
+          title: string;
+          composer: string;
+          note: string | null;
+        }>)
+      : [];
+    const buffer = await buildReportPdf({
+      title: report.title,
+      studentName: name(report.student.user),
+      teacherName: name(report.teacher.user),
+      periodLabel: report.periodLabel,
+      teacherMessage: report.teacherMessage,
+      reportData: report.reportData,
+      nextPieces: pieces,
+      tips: report.tips,
+    });
+    const slug = report.title
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .toLowerCase();
+    return { buffer, filename: `${slug || 'relatorio'}.pdf` };
+  }
+
   async update(
     teacherUserId: string,
     reportId: string,
     dto: UpdateSharedReportDto,
   ) {
     const report = await this.requireAuthor(teacherUserId, reportId);
+    const pedagogical = await this.pedagogicalOf(teacherUserId, dto);
 
     return this.prisma.sharedProgressReport.update({
       where: { id: report.id },
@@ -340,6 +399,7 @@ export class SharedReportsService {
         teacherMessage: dto.teacherMessage,
         allowComments: dto.allowComments,
         isActive: dto.isActive,
+        ...pedagogical,
       },
       select: SHARED_LIST_SELECT,
     });
@@ -484,6 +544,31 @@ export class SharedReportsService {
   }
 
   // -------------------------------------------------------------------
+
+  /**
+   * Peças e dicas aprovadas, só quando vieram no corpo — e só do Maestro.
+   * Ausente não mexe; lista vazia limpa.
+   */
+  private async pedagogicalOf(
+    teacherUserId: string,
+    dto: ShareReportDto | UpdateSharedReportDto,
+  ): Promise<{ nextPieces?: Prisma.InputJsonValue; tips?: string[] }> {
+    if (dto.nextPieces === undefined && dto.tips === undefined) return {};
+    const empty = !dto.nextPieces?.length && !dto.tips?.length;
+    if (!empty) await this.pedagogical.requireMaestro(teacherUserId);
+    return {
+      ...(dto.nextPieces !== undefined
+        ? {
+            nextPieces: (await this.pedagogical.approvedPieces(
+              dto.nextPieces,
+            )) as unknown as Prisma.InputJsonValue,
+          }
+        : {}),
+      ...(dto.tips !== undefined
+        ? { tips: this.pedagogical.cleanTips(dto.tips) }
+        : {}),
+    };
+  }
 
   /** Ativo e dentro da validade. */
   private assertAvailable(report: {

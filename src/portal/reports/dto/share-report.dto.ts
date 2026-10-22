@@ -17,9 +17,50 @@ import {
   Min,
   MinLength,
   IsEnum,
+  ValidateNested,
 } from 'class-validator';
 import { REPORT_PERIODS, ReportPeriod } from '../report-period';
 import { REPORT_SECTIONS, ReportSection } from './report-query.dto';
+
+/** Uma próxima peça aprovada pelo professor (Maestro). */
+export class ApprovedPieceDto {
+  @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
+  @IsMongoId()
+  workId: string;
+
+  @ApiPropertyOptional({
+    description: 'Por que esta peça, nas palavras do professor.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
+}
+
+/** O que o professor do Maestro aprovou: peças e dicas. */
+class PedagogicalFields {
+  @ApiPropertyOptional({
+    type: [ApprovedPieceDto],
+    description: 'Próximas peças aprovadas (Maestro). O aluno vê só estas.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(8)
+  @ValidateNested({ each: true })
+  @Type(() => ApprovedPieceDto)
+  nextPieces?: ApprovedPieceDto[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Dicas revisadas pelo professor (Maestro).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(6)
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  tips?: string[];
+}
 
 /**
  * Compartilhamento de um relatório com o aluno.
@@ -31,7 +72,7 @@ import { REPORT_SECTIONS, ReportSection } from './report-query.dto';
  * relatar** (aluno, período, seções) e o servidor gera o conteúdo a partir dos
  * dados.
  */
-export class ShareReportDto {
+export class ShareReportDto extends PedagogicalFields {
   @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
   @IsMongoId()
   studentId: string;
@@ -109,7 +150,7 @@ export class ShareReportDto {
   expiresInDays?: number;
 }
 
-export class UpdateSharedReportDto {
+export class UpdateSharedReportDto extends PedagogicalFields {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

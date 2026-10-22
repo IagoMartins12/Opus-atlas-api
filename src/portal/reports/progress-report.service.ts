@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { StudentInviteStatus } from '@prisma/client';
+import { hasFeature } from '../../billing/constants/plan-features.constants';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProgressReportQueryDto, ReportSection } from './dto/report-query.dto';
 import { PeerComparisonService } from './peer-comparison.service';
@@ -29,6 +31,7 @@ const LESSON_FACT_SELECT = {
   challenges: true,
   improvements: true,
   skillsWorked: true,
+  skillRatings: true,
   studentPresent: true,
 } as const;
 
@@ -57,6 +60,7 @@ const ASSIGNMENT_FACT_SELECT = {
 const MAX_LESSONS = 500;
 const MAX_ASSIGNMENTS = 300;
 const MAX_WORKS = 200;
+const MAX_PRACTICE = 1000;
 
 const ALL_SECTIONS: ReportSection[] = [
   'overview',
@@ -68,6 +72,7 @@ const ALL_SECTIONS: ReportSection[] = [
   'insights',
   'comparison',
   'recommendations',
+  'skills',
 ];
 
 @Injectable()
@@ -76,7 +81,14 @@ export class ProgressReportService {
     private readonly prisma: PrismaService,
     private readonly sections: ReportSectionsService,
     private readonly peers: PeerComparisonService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
+
+  /** Relatório pedagógico (habilidades, próximas peças, dicas): só o Maestro. */
+  async hasAdvancedReports(teacherUserId: string): Promise<boolean> {
+    const { plan } = await this.subscriptions.effectivePlan(teacherUserId);
+    return hasFeature(plan, 'advancedReports');
+  }
 
   /**
    * Gera o relatório de progresso de um aluno.
@@ -104,7 +116,20 @@ export class ProgressReportService {
 
     const wanted = new Set<ReportSection>(query.sections ?? ALL_SECTIONS);
 
-    const input = await this.load(teacher.id, student.id, period);
+    // Fora do Maestro a seção some em silêncio: o relatório sai com o resto.
+    if (
+      wanted.has('skills') &&
+      !(await this.hasAdvancedReports(teacherUserId))
+    ) {
+      wanted.delete('skills');
+    }
+
+    const input = await this.load(
+      teacher.id,
+      student.id,
+      period,
+      wanted.has('skills'),
+    );
 
     const overview = this.sections.overview(input);
 
@@ -154,6 +179,10 @@ export class ProgressReportService {
           end: period.end,
         }),
       };
+    }
+
+    if (wanted.has('skills')) {
+      report.skills = this.sections.skills(input);
     }
 
     if (wanted.has('recommendations')) {
@@ -251,6 +280,7 @@ export class ProgressReportService {
     teacherId: string,
     studentId: string,
     period: ResolvedPeriod,
+    withPractice = false,
   ): Promise<ReportInput> {
     // `Learned` e `WantToLearn` são do usuário, não do vínculo, então o
     // `userId` precisa ser resolvido antes das consultas de repertório.
@@ -261,7 +291,7 @@ export class ProgressReportService {
 
     const userId = student?.userId;
 
-    const [lessons, assignments, learnedRows, wantToLearnRows] =
+    const [lessons, assignments, learnedRows, wantToLearnRows, practice] =
       await Promise.all([
         this.prisma.lesson.findMany({
           where: {
@@ -324,12 +354,28 @@ export class ProgressReportService {
               take: MAX_WORKS,
             })
           : [],
+        withPractice
+          ? this.prisma.practiceLog.findMany({
+              where: {
+                studentId,
+                practicedAt: { gte: period.start, lte: period.end },
+              },
+              select: {
+                practicedAt: true,
+                minutes: true,
+                topic: true,
+                note: true,
+              },
+              take: MAX_PRACTICE,
+            })
+          : [],
       ]);
 
     return {
       period,
       lessons,
       assignments,
+      practice,
       learned: learnedRows.map(
         (row): LearnedFact => ({
           learnedAt: row.learnedAt,
@@ -365,7 +411,7 @@ export class ProgressReportService {
    * recusado, ou cujo vínculo já havia sido encerrado, continuava puxando o
    * relatório completo do aluno: presença, engajamento, anotações e repertório.
    */
-  private async requireAccess(teacherUserId: string, studentId: string) {
+  async requireAccess(teacherUserId: string, studentId: string) {
     const teacher = await this.prisma.teacher.findUnique({
       where: { userId: teacherUserId },
       select: {

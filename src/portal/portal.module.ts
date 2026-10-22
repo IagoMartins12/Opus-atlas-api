@@ -1,3 +1,5 @@
+import { AiModule } from '../ai/ai.module';
+import { RecommendationsModule } from '../catalog/recommendations/recommendations.module';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
@@ -12,6 +14,7 @@ import { DashboardController } from './dashboard/dashboard.controller';
 import { DashboardService } from './dashboard/dashboard.service';
 import { PortalProfileService } from './profile/profile.service';
 import { PeerComparisonService } from './reports/peer-comparison.service';
+import { PedagogicalService } from './reports/pedagogical.service';
 import { ProgressReportService } from './reports/progress-report.service';
 import { ReportSectionsService } from './reports/report-sections.service';
 import { ReportsController } from './reports/reports.controller';
@@ -46,7 +49,13 @@ import { RelationshipsService } from './relationships/relationships.service';
 @Module({
   // `BillingModule` entra pelo limite de alunos do plano (RN-1) — a mesma
   // razão pela qual o módulo de uploads o importa.
-  imports: [AuthModule, MailModule, BillingModule],
+  imports: [
+    AuthModule,
+    MailModule,
+    BillingModule,
+    AiModule,
+    RecommendationsModule,
+  ],
   controllers: [
     NotificationsController,
     RelationshipsController,
@@ -77,6 +86,7 @@ import { RelationshipsService } from './relationships/relationships.service';
     ReportSectionsService,
     PeerComparisonService,
     ProgressReportService,
+    PedagogicalService,
     SharedReportsService,
     SchoolActivitiesService,
     LessonRequestsService,

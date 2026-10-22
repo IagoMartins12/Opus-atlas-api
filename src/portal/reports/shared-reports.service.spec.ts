@@ -7,6 +7,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SchoolActivitiesService } from '../school-activities/school-activities.service';
+import { PedagogicalService } from './pedagogical.service';
 import { ProgressReportService } from './progress-report.service';
 import { SharedReportsService } from './shared-reports.service';
 
@@ -34,6 +35,11 @@ describe('SharedReportsService', () => {
   };
   let reports: { generate: jest.Mock };
   let notifications: { notify: jest.Mock };
+  let pedagogical: {
+    requireMaestro: jest.Mock;
+    approvedPieces: jest.Mock;
+    cleanTips: jest.Mock;
+  };
 
   const shared = (over: Record<string, unknown> = {}) => ({
     id: 'report-1',
@@ -93,6 +99,11 @@ describe('SharedReportsService', () => {
     };
 
     notifications = { notify: jest.fn().mockResolvedValue(undefined) };
+    pedagogical = {
+      requireMaestro: jest.fn().mockResolvedValue(undefined),
+      approvedPieces: jest.fn().mockResolvedValue([]),
+      cleanTips: jest.fn((tips: string[]) => tips),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -104,6 +115,7 @@ describe('SharedReportsService', () => {
           provide: SchoolActivitiesService,
           useValue: { record: jest.fn().mockResolvedValue(undefined) },
         },
+        { provide: PedagogicalService, useValue: pedagogical },
       ],
     }).compile();
 

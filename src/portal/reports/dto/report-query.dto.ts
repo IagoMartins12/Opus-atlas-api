@@ -13,6 +13,8 @@ export const REPORT_SECTIONS = [
   'insights',
   'comparison',
   'recommendations',
+  // Maestro: evolução por habilidade (21/10/2026).
+  'skills',
 ] as const;
 
 export type ReportSection = (typeof REPORT_SECTIONS)[number];

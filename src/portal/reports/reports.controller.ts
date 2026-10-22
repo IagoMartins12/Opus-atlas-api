@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  StreamableFile,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -34,6 +35,7 @@ import {
   ShareReportDto,
   UpdateSharedReportDto,
 } from './dto/share-report.dto';
+import { PedagogicalService } from './pedagogical.service';
 import { ProgressReportService } from './progress-report.service';
 import { SharedReportsService } from './shared-reports.service';
 
@@ -55,6 +57,7 @@ export class ReportsController {
   constructor(
     private readonly reports: ProgressReportService,
     private readonly shared: SharedReportsService,
+    private readonly pedagogical: PedagogicalService,
   ) {}
 
   @Get('progress/:studentId')
@@ -85,6 +88,65 @@ export class ReportsController {
     @Query() query: ProgressReportQueryDto,
   ) {
     return this.reports.generate(user.sub, studentId, query);
+  }
+
+  @Get('progress/:studentId/next-pieces')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Sugestões de próximas peças para o aluno (Maestro)',
+    description:
+      'Do motor de recomendações, a partir do que o aluno estudou e quer ' +
+      'estudar. Voltam para o professor escolher; o aluno só vê as aprovadas.',
+  })
+  @ApiParam({ name: 'studentId', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'Sugestões com os motivos' })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
+  async nextPieces(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('studentId') studentId: string,
+  ) {
+    return this.pedagogical.nextPieces(user.sub, studentId);
+  }
+
+  @Post('progress/:studentId/tips-draft')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Rascunho de dicas para o aluno (Maestro)',
+    description:
+      'A IA lê os números do período e escreve; sem IA, as regras escrevem. ' +
+      'Nada é gravado: o professor revisa e manda no compartilhamento.',
+  })
+  @ApiParam({ name: 'studentId', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: '{ tips, generatedBy }' })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
+  async tipsDraft(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('studentId') studentId: string,
+    @Body() query: ProgressReportQueryDto,
+  ) {
+    return this.pedagogical.draftTips(user.sub, studentId, query);
+  }
+
+  @Get('shared/:id/pdf')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Baixa o relatório compartilhado em PDF (Maestro)',
+    description: 'O retrato gravado, não uma geração nova.',
+  })
+  @ApiParam({ name: 'id', example: '685d591c1e3db0c5aaa893e4' })
+  @ApiOkResponse({ description: 'application/pdf' })
+  @ApiNotFoundResponse({ type: ErrorResponseDto })
+  async pdf(
+    @CurrentUser() user: AccessTokenPayload,
+    @Param('id') id: string,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.shared.pdf(user.sub, id);
+    return new StreamableFile(buffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${filename}"`,
+      length: buffer.length,
+    });
   }
 
   @Post('shared')

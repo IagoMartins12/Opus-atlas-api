@@ -126,7 +126,23 @@ export class RecommendationsService {
 
   async forUser(userId: string, limit = 12): Promise<RecommendationsResponse> {
     const open = await this.unlocked(userId);
-    const ranked = await this.cache.remember(
+    const ranked = await this.rankedForUser(userId);
+    const chosen = ranked.slice(0, open ? limit : 3);
+    return { locked: !open, items: await this.hydrate(chosen, !open) };
+  }
+
+  /**
+   * As sugestões para o aluno, pedidas pelo professor do Maestro (relatório
+   * pedagógico). Sem trava: quem libera é o plano do professor, conferido por
+   * quem chama. O professor escolhe; o aluno só vê o que ele aprovar.
+   */
+  async forStudent(userId: string, limit = 12): Promise<RecommendedWork[]> {
+    const ranked = await this.rankedForUser(userId);
+    return this.hydrate(ranked.slice(0, limit), false);
+  }
+
+  private rankedForUser(userId: string) {
+    return this.cache.remember(
       `recommendations:user:${userId}`,
       { ttlMs: USER_TTL },
       async () => {
@@ -135,8 +151,6 @@ export class RecommendationsService {
         return this.rankFor(seeds, 40, await this.listedBy(userId));
       },
     );
-    const chosen = ranked.slice(0, open ? limit : 3);
-    return { locked: !open, items: await this.hydrate(chosen, !open) };
   }
 
   /**

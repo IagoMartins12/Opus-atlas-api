@@ -147,7 +147,11 @@ describe('ReportsController', () => {
     'listComments',
     'addComment',
   );
-  const controller = new ReportsController(as(reports), as(shared));
+  const controller = new ReportsController(
+    as(reports),
+    as(shared),
+    as(echoMock('nextPieces', 'draftTips')),
+  );
 
   it('gera, compartilha e comenta; página inválida vira 1', async () => {
     await controller.generate(user, 's1', {} as never);
