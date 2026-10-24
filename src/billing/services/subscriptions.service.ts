@@ -1330,7 +1330,7 @@ export class SubscriptionsService {
 
       return {
         success: true,
-        message: `Downgrade agendado. Você continuará no plano ${current.planType} até o fim do ciclo atual.`,
+        message: `Mudança agendada. Você continua no ${PLAN_LABEL[current.planType]} até o fim do ciclo atual.`,
         subscription: current,
       };
     }
@@ -1488,10 +1488,22 @@ export class SubscriptionsService {
   ): Promise<SubscriptionActionResponseDto> {
     const billingPeriod =
       dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY';
-    const charge = await this.stripeService.changePriceNow(
-      current.stripeSubscriptionId!,
-      await this.stripeCatalog.priceIdFor(dto.newPlanType, billingPeriod),
-    );
+    let charge: Awaited<ReturnType<StripeService['changePriceNow']>>;
+    try {
+      charge = await this.stripeService.changePriceNow(
+        current.stripeSubscriptionId!,
+        await this.stripeCatalog.priceIdFor(dto.newPlanType, billingPeriod),
+      );
+    } catch (error) {
+      // Cartão recusou a diferença: nada mudou, e a pessoa precisa saber o
+      // caminho — antes saía um 500 com o texto do Stripe em inglês (S-32).
+      if ((error as { type?: string }).type === 'StripeCardError') {
+        throw new BadRequestException(
+          `O cartão recusou a cobrança da diferença. Nada mudou: você continua no ${PLAN_LABEL[current.planType]}. Atualize o cartão em Meu perfil → Assinatura → Pagamento e faturas e tente de novo.`,
+        );
+      }
+      throw error;
+    }
 
     const metadata = { ...metadataOf(current) };
     delete metadata.pendingDowngrade;
@@ -1557,8 +1569,8 @@ export class SubscriptionsService {
       success: true,
       message:
         charge.amountPaid > 0
-          ? `Plano ${dto.newPlanType} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.`
-          : `Plano ${dto.newPlanType} ativado. O valor novo vale a partir da primeira cobrança.`,
+          ? `Plano ${PLAN_LABEL[dto.newPlanType]} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.`
+          : `Plano ${PLAN_LABEL[dto.newPlanType]} ativado. O valor novo vale a partir da primeira cobrança.`,
       subscription: updated,
     };
   }

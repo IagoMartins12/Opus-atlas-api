@@ -924,7 +924,7 @@ describe('SubscriptionsService', () => {
         }),
       });
       expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
-      expect(result.message).toContain('Downgrade agendado');
+      expect(result.message).toContain('Mudança agendada');
     });
 
     // Antes a descida ficava só anotada: o Stripe renovava no plano caro.
@@ -997,6 +997,19 @@ describe('SubscriptionsService', () => {
           }),
         });
         expect(result.message).toContain('diferença');
+      });
+
+      it('cartão recusado: mensagem com o caminho, em vez do erro do Stripe', async () => {
+        stripe.changePriceNow.mockRejectedValue(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+          }),
+        );
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('você continua no Plus');
+        expect(prisma.subscription.update).not.toHaveBeenCalled();
       });
 
       it('cartão recusado: o Stripe falha e nada muda aqui', async () => {
