@@ -108,6 +108,18 @@ export class UploadHistoryStatsDto {
  * O que a pessoa tem publicado **hoje** — diferente do histórico: apagar uma
  * obra tira do total, mas a linha do envio continua registrada.
  */
+export class PerformanceVideosUsageDto {
+  @ApiProperty({ example: 2 }) used: number;
+
+  @ApiProperty({
+    nullable: true,
+    type: Number,
+    example: 4,
+    description: 'Teto do plano; nulo é ilimitado.',
+  })
+  limit: number | null;
+}
+
 export class ContributionTotalsDto {
   @ApiProperty() composers: number;
   @ApiProperty() works: number;
@@ -130,9 +142,8 @@ export class ContributionTotalsDto {
   limit: number | null;
 
   @ApiProperty({
-    description:
-      'Vídeos de performance ativos e o teto do plano (nulo é ilimitado).',
-    example: { used: 2, limit: 4 },
+    type: () => PerformanceVideosUsageDto,
+    description: 'Vídeos de performance ativos e o teto do plano.',
   })
-  performanceVideos: { used: number; limit: number | null };
+  performanceVideos: PerformanceVideosUsageDto;
 }
