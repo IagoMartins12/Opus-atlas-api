@@ -1,7 +1,14 @@
+import { PLAN_FEATURES } from '../../billing/constants/plan-features.constants';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { toCsv } from '../../common/utils/csv.util';
 import { escapeRegex } from '../../common/utils/regex.util';
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { Prisma, ScoreSource } from '@prisma/client';
+import {
+  Prisma,
+  ScoreSource,
+  StorageAssetKind,
+  StorageAssetStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListHistoryQueryDto } from './dto/list-history-query.dto';
 import { ListMyUploadsQueryDto } from './dto/list-my-uploads-query.dto';
@@ -76,7 +83,10 @@ const MY_SCORE_SELECT = {
 
 @Injectable()
 export class UploadHistoryQueryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly subscriptions: SubscriptionsService,
+  ) {}
 
   /**
    * Histórico de contribuições.
@@ -298,14 +308,29 @@ export class UploadHistoryQueryService {
    * atual, mas a linha de histórico do envio permanece.
    */
   async contributionTotals(userId: string) {
-    const [composers, works, scores, pendingReports] = await Promise.all([
-      this.prisma.composer.count({ where: { createdBy: userId } }),
-      this.prisma.work.count({ where: { createdBy: userId } }),
-      this.prisma.workScore.count({ where: { uploadedBy: userId } }),
-      this.prisma.uploadModeration.count({
-        where: { reportedBy: userId, status: 'pending' },
-      }),
-    ]);
+    const [composers, works, scores, pendingReports, videos, effective] =
+      await Promise.all([
+        this.prisma.composer.count({ where: { createdBy: userId } }),
+        this.prisma.work.count({ where: { createdBy: userId } }),
+        this.prisma.workScore.count({ where: { uploadedBy: userId } }),
+        this.prisma.uploadModeration.count({
+          where: { reportedBy: userId, status: 'pending' },
+        }),
+        this.prisma.storedAsset.count({
+          where: {
+            ownerId: userId,
+            kind: StorageAssetKind.PERFORMANCE_VIDEO,
+            status: StorageAssetStatus.ACTIVE,
+          },
+        }),
+        this.subscriptions.effectivePlan(userId),
+      ]);
+
+    // O teto do plano que vale (`-1` é ilimitado → `null`): a tela mostra
+    // "x de 20" e avisa antes, em vez de deixar a pessoa preencher o
+    // formulário e só então receber o 403.
+    const ceiling = (n: number) => (n < 0 ? null : n);
+    const features = PLAN_FEATURES[effective.plan];
 
     return {
       composers,
@@ -313,6 +338,12 @@ export class UploadHistoryQueryService {
       scores,
       total: composers + works + scores,
       pendingReports,
+      plan: effective.plan,
+      limit: ceiling(features.uploadLimit),
+      performanceVideos: {
+        used: videos,
+        limit: ceiling(features.maxPerformanceVideos),
+      },
     };
   }
 

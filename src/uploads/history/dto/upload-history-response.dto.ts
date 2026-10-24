@@ -118,4 +118,21 @@ export class ContributionTotalsDto {
     description: 'Denúncias que a pessoa abriu e seguem abertas.',
   })
   pendingReports: number;
+
+  @ApiProperty({ enum: ['FREE', 'PLUS', 'MENTOR', 'MAESTRO'] })
+  plan: string;
+
+  @ApiProperty({
+    nullable: true,
+    type: Number,
+    description: 'Teto de envios do plano; nulo é ilimitado.',
+  })
+  limit: number | null;
+
+  @ApiProperty({
+    description:
+      'Vídeos de performance ativos e o teto do plano (nulo é ilimitado).',
+    example: { used: 2, limit: 4 },
+  })
+  performanceVideos: { used: number; limit: number | null };
 }

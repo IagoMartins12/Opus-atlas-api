@@ -216,3 +216,11 @@ export function getPlanChangeType(
   if (fromIndex > toIndex) return 'DOWNGRADE';
   return 'SAME';
 }
+
+/** O nome do plano como a pessoa o vê (mensagens de limite, notas). */
+export const PLAN_LABEL: Record<PlanType, string> = {
+  FREE: 'Free',
+  PLUS: 'Plus',
+  MENTOR: 'Mentor',
+  MAESTRO: 'Maestro',
+};
