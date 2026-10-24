@@ -25,7 +25,11 @@ describe('NotificationSweepService', () => {
     assignment: { findMany: jest.Mock };
     teacherStudent: { findMany: jest.Mock };
   };
-  let notifications: { notifyMany: jest.Mock; flushEmails: jest.Mock };
+  let notifications: {
+    notifyMany: jest.Mock;
+    flushEmails: jest.Mock;
+    flushWhatsApp: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = {
@@ -37,6 +41,7 @@ describe('NotificationSweepService', () => {
     notifications = {
       notifyMany: jest.fn().mockResolvedValue(undefined),
       flushEmails: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+      flushWhatsApp: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
     };
 
     const module: TestingModule = await Test.createTestingModule({

@@ -1,5 +1,6 @@
 import { NotificationType } from '@prisma/client';
 import { offsetMinutes } from '../../common/utils/time-zone';
+import { WHATSAPP_TEMPLATES } from './whatsapp.service';
 
 /**
  * Por onde cada aviso do portal sai, além do próprio portal (04/10/2026).
@@ -7,10 +8,11 @@ import { offsetMinutes } from '../../common/utils/time-zone';
  * A pessoa não escolhe tipo a tipo (são 30 tipos técnicos): escolhe por
  * **tema**, em palavras dela — "aula começando", "mudança de aula". Cada tema
  * tem um padrão; o que a pessoa marcar fica em `User.notificationChannels`.
- * O portal recebe sempre. SMS é guardado como escolha, mas ainda não sai.
+ * O portal recebe sempre. WhatsApp (24/10/2026, Maestro) só nos temas que têm
+ * modelo aprovado na Meta (`WHATSAPP_TEMPLATES`); era "SMS", que nunca saiu.
  */
 
-export type Channel = 'email' | 'sms';
+export type Channel = 'email' | 'whatsapp';
 export type Audience = 'teacher' | 'student' | 'both';
 
 export interface Topic {
@@ -30,7 +32,7 @@ export const TOPICS: Topic[] = [
       NotificationType.LESSON_STARTING_SOON,
       NotificationType.LESSON_TOMORROW,
     ],
-    defaults: { email: true, sms: false },
+    defaults: { email: true, whatsapp: false },
   },
   {
     key: 'lesson-change',
@@ -42,7 +44,7 @@ export const TOPICS: Topic[] = [
       NotificationType.LESSON_CANCELLED_BY_TEACHER,
       NotificationType.LESSON_MARKED_NO_SHOW,
     ],
-    defaults: { email: true, sms: false },
+    defaults: { email: true, whatsapp: false },
   },
   {
     key: 'lesson-request',
@@ -54,14 +56,14 @@ export const TOPICS: Topic[] = [
       NotificationType.LESSON_REQUEST_DECLINED,
       NotificationType.STUDENT_REQUESTED_RESCHEDULE,
     ],
-    defaults: { email: true, sms: false },
+    defaults: { email: true, whatsapp: false },
   },
   {
     key: 'absence',
     label: 'Aluno avisou falta',
     audience: 'teacher',
     types: [NotificationType.STUDENT_INFORMED_ABSENCE],
-    defaults: { email: true, sms: false },
+    defaults: { email: true, whatsapp: false },
   },
   {
     key: 'assignment',
@@ -76,7 +78,7 @@ export const TOPICS: Topic[] = [
       NotificationType.STUDENT_SUBMITTED_ASSIGNMENT,
       NotificationType.STUDENT_COMPLETED_ASSIGNMENT,
     ],
-    defaults: { email: false, sms: false },
+    defaults: { email: false, whatsapp: false },
   },
   {
     key: 'report',
@@ -86,14 +88,14 @@ export const TOPICS: Topic[] = [
       NotificationType.PROGRESS_REPORT_SHARED,
       NotificationType.WEEKLY_REPORT_AVAILABLE,
     ],
-    defaults: { email: false, sms: false },
+    defaults: { email: false, whatsapp: false },
   },
   {
     key: 'achievement',
     label: 'Conquistas desbloqueadas',
     audience: 'both',
     types: [NotificationType.ACHIEVEMENT_UNLOCKED],
-    defaults: { email: false, sms: false },
+    defaults: { email: false, whatsapp: false },
   },
   {
     key: 'announcement',
@@ -104,7 +106,7 @@ export const TOPICS: Topic[] = [
       NotificationType.WORK_SUGGESTED,
       NotificationType.STUDENT_ADDED_BY_TEACHER,
     ],
-    defaults: { email: true, sms: false },
+    defaults: { email: true, whatsapp: false },
   },
 ];
 
@@ -132,7 +134,13 @@ export function resolvePreferences(
       t.key,
       {
         email: saved[t.key]?.email ?? t.defaults.email,
-        sms: saved[t.key]?.sms ?? t.defaults.sms,
+        // Tema sem modelo na Meta não sai por WhatsApp. A escolha guardada
+        // como "sms" (antes de 24/10) vale como WhatsApp.
+        whatsapp:
+          t.key in WHATSAPP_TEMPLATES &&
+          (saved[t.key]?.whatsapp ??
+            (saved[t.key] as { sms?: boolean } | undefined)?.sms ??
+            t.defaults.whatsapp),
       },
     ]),
   );

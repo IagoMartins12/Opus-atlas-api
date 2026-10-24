@@ -20,18 +20,37 @@ const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export class ChannelChoiceDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() email?: boolean;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() sms?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() whatsapp?: boolean;
 }
 
 export class UpdatePreferencesDto {
   @ApiPropertyOptional({
     description:
-      'Por tema: `{ "lesson-reminder": { "email": true, "sms": false } }`. Temas desconhecidos são ignorados.',
-    example: { 'lesson-reminder': { email: true, sms: false } },
+      'Por tema: `{ "lesson-reminder": { "email": true, "whatsapp": false } }`. Temas desconhecidos são ignorados.',
+    example: { 'lesson-reminder': { email: true, whatsapp: false } },
   })
   @IsOptional()
   @IsObject()
   channels?: Record<string, ChannelChoiceDto>;
+
+  @ApiPropertyOptional({
+    example: '(11) 91234-5678',
+    nullable: true,
+    description:
+      'Telefone para o WhatsApp (DDD e número; sem DDI vale o Brasil). `null` apaga. Trocar o telefone pede o aceite de novo.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  phone?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Aceite explícito para receber avisos por WhatsApp (a Meta exige). Precisa de telefone.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  whatsappOptIn?: boolean;
 
   @ApiPropertyOptional({
     example: '22:00',

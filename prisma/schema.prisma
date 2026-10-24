@@ -601,6 +601,9 @@ model User {
   phone            String? // Telefone completo em formato E.164 (+5511999999999)
   phoneCountryCode String? // Código do país (BR, US, etc.)
   phoneNumber      String? // Apenas o número sem código do país
+  // Aceite explícito para receber avisos por WhatsApp (a Meta exige). Nulo =
+  // não aceitou; apagar o telefone ou desmarcar volta a nulo.
+  whatsappOptInAt  DateTime?
 
   favoriteComposerId String? @db.ObjectId
   favoriteEpochId    String? @db.ObjectId
@@ -2612,10 +2615,14 @@ model Notification {
   // Controle de entrega
   // E-mail do aviso (04/10/2026): "pending" espera o fim do horário de
   // silêncio (ou o envio agendado); "sent", "skipped" (a pessoa não quer por
-  // e-mail) ou "failed". SMS ainda não sai: `smsStatus` fica "unsupported".
-  emailStatus String?
-  emailAfter  DateTime?
-  smsStatus   String?
+  // e-mail) ou "failed".
+  emailStatus    String?
+  emailAfter     DateTime?
+  // WhatsApp (24/10/2026, Maestro): o mesmo ciclo do e-mail. "unavailable"
+  // quando o canal está desligado no servidor. Substitui o `smsStatus`, que
+  // nunca saiu do "unsupported".
+  whatsappStatus String?
+  whatsappAfter  DateTime?
 
   toastShown   Boolean @default(false) // Toast já foi mostrado
   browserShown Boolean @default(false) // Notificação browser já foi mostrada
@@ -2644,6 +2651,7 @@ model Notification {
   @@index([userId, type, relatedEntityId, status]) // Principal para verificar duplicatas
   @@index([uniqueHash]) // Para verificação rápida por hash
   @@index([emailStatus, emailAfter]) // Varredura dos e-mails adiados
+  @@index([whatsappStatus, whatsappAfter]) // Varredura do WhatsApp
   @@index([userId, type, relatedEntityId, expiresAt]) // Para verificação com expiração
   @@map("notifications")
 }

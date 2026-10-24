@@ -174,6 +174,16 @@ export class SubscriptionsService {
   }
 
   /** O nome do professor Maestro de quem a pessoa é aluna ativa; `null` se não há. */
+  /**
+   * Avisos por WhatsApp (24/10/2026) são do Maestro: o professor que assina e
+   * os alunos dele — inclusive o aluno que paga o próprio Plus.
+   */
+  async whatsappEligible(userId: string): Promise<boolean> {
+    const { plan } = await this.effectivePlan(userId);
+    if (plan === 'MAESTRO') return true;
+    return (await this.maestroTeacherOf(userId)) !== null;
+  }
+
   private async maestroTeacherOf(userId: string): Promise<string | null> {
     const student = await this.prisma.student.findUnique({
       where: { userId },
