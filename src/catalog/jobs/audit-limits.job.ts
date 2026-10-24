@@ -127,7 +127,7 @@ export const work: CatalogJobWork = async ({ prisma, logger, progress }) => {
       videoItems.set(l.userId, (videoItems.get(l.userId) ?? 0) + 1);
 
   const users = await prisma.user.findMany({
-    select: { id: true, email: true, currentPlan: true },
+    select: { id: true, email: true, currentPlan: true, planViaTeacher: true },
   });
   const planOf = new Map(users.map((u) => [u.id, u.currentPlan ?? 'FREE']));
   const emailOf = new Map(users.map((u) => [u.id, u.email]));
@@ -312,7 +312,8 @@ export const work: CatalogJobWork = async ({ prisma, logger, progress }) => {
   let drift = 0;
   let driftExample: string | undefined;
   for (const u of users) {
-    const expected = shouldBe.get(u.id) ?? 'FREE';
+    // Aluno de Maestro sem assinatura: o Plus vem do professor, sem linha de assinatura.
+    const expected = shouldBe.get(u.id) ?? (u.planViaTeacher ? 'PLUS' : 'FREE');
     if ((u.currentPlan ?? 'FREE') !== expected) {
       drift++;
       driftExample ??= `${u.email}: usuário diz ${u.currentPlan ?? 'FREE'}, assinatura vale ${expected}`;

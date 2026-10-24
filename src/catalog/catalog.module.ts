@@ -3,6 +3,7 @@ import { ComposersModule } from './composers/composers.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { EpochsModule } from './epochs/epochs.module';
 import { InstrumentsModule } from './instruments/instruments.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 import { WorksModule } from './works/works.module';
 
 /**
@@ -18,7 +19,14 @@ import { WorksModule } from './works/works.module';
     EpochsModule,
     InstrumentsModule,
     DiscoveryModule,
+    RecommendationsModule,
   ],
-  exports: [WorksModule, ComposersModule, EpochsModule, InstrumentsModule],
+  exports: [
+    WorksModule,
+    ComposersModule,
+    EpochsModule,
+    InstrumentsModule,
+    RecommendationsModule,
+  ],
 })
 export class CatalogModule {}

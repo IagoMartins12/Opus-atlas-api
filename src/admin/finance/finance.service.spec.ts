@@ -51,6 +51,7 @@ describe('FinanceService', () => {
     };
     subscription: { findMany: jest.Mock; count: jest.Mock };
     teacher: { count: jest.Mock };
+    user: { count: jest.Mock };
     paymentAdjustment: { findMany: jest.Mock };
   };
   let fx: { rateFor: jest.Mock };
@@ -109,6 +110,7 @@ describe('FinanceService', () => {
         count: jest.fn().mockResolvedValue(1),
       },
       teacher: { count: jest.fn().mockResolvedValue(2) },
+      user: { count: jest.fn().mockResolvedValue(3) },
       paymentAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
     };
     // Ativas e atrasadas saem da mesma consulta, filtrada pelo estado.
@@ -270,7 +272,12 @@ describe('FinanceService', () => {
         accrual: { mrrCents: number };
         breakEven: { mrrNeededCents: number };
         projection: unknown[];
-        subscribers: { active: number; trial: number; teachers: number };
+        subscribers: {
+          active: number;
+          trial: number;
+          teachers: number;
+          plusViaTeacher: number;
+        };
       };
 
       expect(result.costs.totalCents).toBe(10_000);
@@ -283,6 +290,8 @@ describe('FinanceService', () => {
         active: 2,
         trial: 1,
         teachers: 2,
+        // Plus pelo professor: contado à parte, fora de `active` e do MRR.
+        plusViaTeacher: 3,
       });
     });
 

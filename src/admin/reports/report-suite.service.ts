@@ -87,6 +87,7 @@ export class ReportSuiteService {
       coupons,
       failures,
       latestMrr,
+      plusViaTeacher,
     ] = await Promise.all([
       this.prisma.subscription.findMany({
         select: {
@@ -152,6 +153,7 @@ export class ReportSuiteService {
         orderBy: { day: 'desc' },
         select: { mrrCents: true, day: true },
       }),
+      this.prisma.user.count({ where: { planViaTeacher: { not: null } } }),
     ]);
 
     const approved = payments.filter((p) => p.status === 'APPROVED');
@@ -234,6 +236,11 @@ export class ReportSuiteService {
           approved.length ? money(gross / approved.length) : 0,
         ],
         ['Assinaturas com acesso hoje', live.length],
+        // Não é assinatura: o Plus vem do professor do Maestro (fora do MRR).
+        [
+          'Alunos com o Plus pelo professor (sem pagar, fora do MRR)',
+          plusViaTeacher,
+        ],
       ],
       sections: [
         {

@@ -49,7 +49,9 @@ describe('SubscriptionsService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
-    teacher: { create: jest.Mock; update: jest.Mock };
+    teacher: { create: jest.Mock; update: jest.Mock; findUnique: jest.Mock };
+    student: { findUnique: jest.Mock };
+    teacherStudent: { findMany: jest.Mock };
     $transaction: jest.Mock;
     coupon: { findFirst: jest.Mock; update: jest.Mock };
     couponUsage: { findUnique: jest.Mock; create: jest.Mock };
@@ -114,7 +116,11 @@ describe('SubscriptionsService', () => {
       teacher: {
         create: jest.fn().mockResolvedValue({}),
         update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
       },
+      // Sem vínculo de aluno: o plano efetivo é o da assinatura.
+      student: { findUnique: jest.fn().mockResolvedValue(null) },
+      teacherStudent: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
       coupon: {
         findFirst: jest.fn().mockResolvedValue(null),

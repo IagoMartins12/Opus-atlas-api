@@ -359,6 +359,8 @@ export class MailService {
     message: string;
     category: string;
     priority: string;
+    prioritySupport?: boolean;
+    plan?: string;
   }): Promise<void> {
     await this.send(
       await this.compose(

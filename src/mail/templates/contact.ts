@@ -14,11 +14,14 @@ export function contactSupportNotification(
     message: string;
     category: string;
     priority: string;
+    /** Suporte prioritário do plano: o assunto já diz, para a fila do e-mail. */
+    prioritySupport?: boolean;
+    plan?: string;
   },
   _ctx: TemplateContext,
 ): EmailSpec {
   return {
-    subject: `[${data.ticketId}] ${data.subject}`,
+    subject: `${data.prioritySupport ? '[Prioritário] ' : ''}[${data.ticketId}] ${data.subject}`,
     preheader: `${data.name}: ${data.message.slice(0, 90)}`,
     title: `Mensagem de ${data.name}`,
     paragraphs: [data.message],
@@ -29,6 +32,14 @@ export function contactSupportNotification(
       { label: 'Assunto', value: data.subject },
       { label: 'Categoria', value: data.category },
       { label: 'Prioridade', value: data.priority },
+      ...(data.plan
+        ? [
+            {
+              label: 'Plano',
+              value: `${data.plan}${data.prioritySupport ? ' (suporte prioritário)' : ''}`,
+            },
+          ]
+        : []),
     ],
     footer: 'conta',
     footerText: 'Responda este e-mail para falar direto com quem escreveu.',

@@ -106,6 +106,7 @@ const ACCOUNT_SELECT = {
   language: true,
   studyHorizon: true,
   currentPlan: true,
+  planViaTeacher: true,
   planExpiresAt: true,
   isTrialActive: true,
   totalXP: true,

@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { SubscriptionsService } from '../billing/services/subscriptions.service';
+import { hasFeature } from '../billing/constants/plan-features.constants';
 import { MailService } from '../mail/mail.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { NewsletterService } from '../newsletter/newsletter.service';
 import { ContactResponseDto } from './dto/contact-response.dto';
 import { SubmitContactDto } from './dto/submit-contact.dto';
@@ -19,13 +22,69 @@ export class ContactService {
   constructor(
     private readonly mailService: MailService,
     private readonly newsletterService: NewsletterService,
+    private readonly prisma: PrismaService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
+
+  /**
+   * Quem escreveu e se tem suporte prioritário (do Plus em diante, inclusive o
+   * Plus dado pelo professor). A sessão vale primeiro; sem ela, o e-mail do
+   * formulário encontra a conta.
+   */
+  private async whoIs(userId: string | undefined, email: string) {
+    const user = userId
+      ? { id: userId }
+      : await this.prisma.user.findFirst({
+          where: { email: email.trim().toLowerCase() },
+          select: { id: true },
+        });
+    if (!user) return { userId: null, plan: 'FREE', prioritySupport: false };
+    const { plan } = await this.subscriptions.effectivePlan(user.id);
+    return {
+      userId: user.id,
+      plan,
+      prioritySupport: hasFeature(plan, 'prioritySupport'),
+    };
+  }
 
   async submit(
     dto: SubmitContactDto,
-    context: { ipAddress: string; userAgent: string; language: 'pt' | 'en' },
+    context: {
+      ipAddress: string;
+      userAgent: string;
+      language: 'pt' | 'en';
+      userId?: string;
+    },
   ): Promise<ContactResponseDto> {
     const ticketId = this.generateTicketId();
+    const who = await this.whoIs(context.userId, dto.email).catch(() => ({
+      userId: null,
+      plan: 'FREE',
+      prioritySupport: false,
+    }));
+
+    // Fica no painel (Atendimento), na frente da fila se for prioritário.
+    await this.prisma.supportTicket
+      .create({
+        data: {
+          ticketId,
+          userId: who.userId,
+          name: dto.name,
+          email: dto.email,
+          subject: dto.subject,
+          message: dto.message,
+          category: dto.category,
+          priority: dto.priority,
+          prioritySupport: who.prioritySupport,
+          plan: who.plan,
+          language: context.language,
+        },
+      })
+      .catch((error: unknown) =>
+        this.logger.error(
+          `Chamado ${ticketId} não foi guardado: ${(error as Error).message}`,
+        ),
+      );
 
     if (dto.subscribeNewsletter) {
       try {
@@ -52,6 +111,8 @@ export class ContactService {
       message: dto.message,
       category: dto.category,
       priority: dto.priority,
+      prioritySupport: who.prioritySupport,
+      plan: who.plan,
     });
 
     await this.mailService.sendContactConfirmationEmail(

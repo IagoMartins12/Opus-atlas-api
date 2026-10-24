@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsObject,
   IsIn,
   IsInt,
   IsOptional,
@@ -14,6 +15,7 @@ import {
   IsArray,
   ArrayMaxSize,
 } from 'class-validator';
+import { cleanRatings, SKILLS } from '../../reports/skills';
 
 export class RescheduleLessonDto {
   @ApiProperty({ example: '2026-09-22T19:00:00.000Z' })
@@ -88,6 +90,15 @@ export class CompleteLessonDto {
   @IsString({ each: true })
   @ArrayMaxSize(30)
   skillsWorked?: string[];
+
+  @ApiPropertyOptional({
+    example: { technique: 4, reading: 3 },
+    description: `Nota de 1 a 5 por habilidade (${SKILLS.join(', ')}). O que não for da lista é descartado.`,
+  })
+  @IsOptional()
+  @IsObject()
+  @Transform(({ value }: { value: unknown }) => cleanRatings(value))
+  skillRatings?: Record<string, number>;
 
   @ApiPropertyOptional({
     description: 'O que o aluno deve trazer na próxima aula.',

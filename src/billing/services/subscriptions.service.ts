@@ -116,8 +116,7 @@ export class SubscriptionsService {
    * dizia "sem limite de alunos".
    */
   async checkFeatureAccess(userId: string, feature: keyof PlanFeatureSet) {
-    const subscription = await this.getCurrentSubscription(userId);
-    const plan = subscription?.planType ?? 'FREE';
+    const { plan } = await this.effectivePlan(userId);
     const numeric = typeof PLAN_FEATURES[plan][feature] === 'number';
 
     return {
@@ -127,8 +126,79 @@ export class SubscriptionsService {
     };
   }
 
-  async getCurrent(userId: string): Promise<CurrentSubscriptionResponseDto> {
+  /**
+   * O plano que vale para a pessoa: o da assinatura paga e, sem ela, o **Plus
+   * dado pelo professor Maestro** a quem é aluno dele (decisão do dono,
+   * 21/10). Não existe assinatura para isso — o sistema age como se existisse:
+   * limites, recursos e o plano mostrado. Quem já paga continua no que paga;
+   * acabou o vínculo, ou o professor deixou de ser Maestro, volta ao Free.
+   */
+  async effectivePlan(userId: string): Promise<{
+    plan: PlanType;
+    via: 'subscription' | 'teacher' | 'free';
+    teacherName: string | null;
+    subscription: Awaited<
+      ReturnType<SubscriptionsService['getCurrentSubscription']>
+    >;
+  }> {
     const subscription = await this.getCurrentSubscription(userId);
+    if (subscription && subscription.planType !== 'FREE') {
+      return {
+        plan: subscription.planType,
+        via: 'subscription',
+        teacherName: null,
+        subscription,
+      };
+    }
+    const teacherName = await this.maestroTeacherOf(userId);
+    if (teacherName !== null) {
+      return { plan: 'PLUS', via: 'teacher', teacherName, subscription };
+    }
+    return {
+      plan: subscription?.planType ?? 'FREE',
+      via: 'free',
+      teacherName: null,
+      subscription,
+    };
+  }
+
+  /** O nome do professor Maestro de quem a pessoa é aluna ativa; `null` se não há. */
+  private async maestroTeacherOf(userId: string): Promise<string | null> {
+    const student = await this.prisma.student.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!student) return null;
+    const links = await this.prisma.teacherStudent.findMany({
+      where: {
+        studentId: student.id,
+        isActive: true,
+        inviteStatus: 'ACCEPTED',
+      },
+      select: {
+        teacher: {
+          select: {
+            userId: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    for (const link of links) {
+      const own = await this.getCurrentSubscription(link.teacher.userId);
+      if (own?.planType === 'MAESTRO') {
+        const u = link.teacher.user;
+        return (
+          `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'seu professor'
+        );
+      }
+    }
+    return null;
+  }
+
+  async getCurrent(userId: string): Promise<CurrentSubscriptionResponseDto> {
+    const effective = await this.effectivePlan(userId);
+    const subscription = effective.subscription;
 
     const trialDaysRemaining = subscription?.trialEndDate
       ? Math.max(
@@ -146,7 +216,7 @@ export class SubscriptionsService {
         subscription.trialEndDate > new Date(),
     );
 
-    const plan = subscription?.planType ?? 'FREE';
+    const plan = effective.plan;
 
     const [history, recentPayments] = await Promise.all([
       this.prisma.subscriptionHistory.findMany({
@@ -171,7 +241,9 @@ export class SubscriptionsService {
         isValid: true,
         isTrialActive,
         trialDaysRemaining,
-        expiresAt: subscription?.endDate ?? null,
+        expiresAt:
+          effective.via === 'teacher' ? null : (subscription?.endDate ?? null),
+        viaTeacher: effective.teacherName,
         features: PLAN_FEATURES[plan],
       },
       subscription: subscription ?? null,
@@ -1312,20 +1384,42 @@ export class SubscriptionsService {
   }
 
   async updateUserPlanCache(userId: string): Promise<void> {
-    const subscription = await this.getCurrentSubscription(userId);
+    await this.writePlanCache(userId);
 
+    // Professor: o plano dele decide o Plus dos alunos. Subiu para o Maestro,
+    // desceu, cancelou ou expirou — os alunos acompanham na mesma hora.
+    const teacher = await this.prisma.teacher.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!teacher) return;
+    const links = await this.prisma.teacherStudent.findMany({
+      where: { teacherId: teacher.id, inviteStatus: 'ACCEPTED' },
+      select: { student: { select: { userId: true } } },
+    });
+    for (const link of links) await this.writePlanCache(link.student.userId);
+  }
+
+  /** Grava no usuário o plano que vale (ver `effectivePlan`). */
+  private async writePlanCache(userId: string) {
+    const effective = await this.effectivePlan(userId);
+    const subscription = effective.subscription;
     await this.prisma.user.update({
       where: { id: userId },
       data: {
-        currentPlan: subscription?.planType ?? 'FREE',
-        planExpiresAt: subscription?.endDate,
+        currentPlan: effective.plan,
+        planExpiresAt:
+          effective.via === 'teacher' ? null : subscription?.endDate,
+        planViaTeacher: effective.teacherName,
         isTrialActive: Boolean(
-          subscription?.status === 'TRIAL' &&
+          effective.via === 'subscription' &&
+            subscription?.status === 'TRIAL' &&
             subscription.trialEndDate &&
             subscription.trialEndDate > new Date(),
         ),
       },
     });
+    return effective;
   }
 
   /** Registra o uso do cupom — idempotente, porque retorno e webhook confirmam

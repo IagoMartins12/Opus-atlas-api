@@ -66,11 +66,15 @@ describe('RelationshipsService', () => {
     isStudent: false,
   };
 
-  let subscriptions: { checkFeatureAccess: jest.Mock };
+  let subscriptions: {
+    checkFeatureAccess: jest.Mock;
+    updateUserPlanCache: jest.Mock;
+  };
   let lastTx: Record<string, Record<string, jest.Mock>>;
 
   beforeEach(async () => {
     subscriptions = {
+      updateUserPlanCache: jest.fn().mockResolvedValue(undefined),
       checkFeatureAccess: jest
         .fn()
         .mockResolvedValue({ plan: 'MAESTRO', hasAccess: true, limit: -1 }),
@@ -147,7 +151,7 @@ describe('RelationshipsService', () => {
         // Plano sem teto por padrão; o teste do limite ajusta o retorno.
         {
           provide: SubscriptionsService,
-          useValue: { checkFeatureAccess: subscriptions.checkFeatureAccess },
+          useValue: subscriptions,
         },
       ],
     }).compile();

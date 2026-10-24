@@ -50,6 +50,8 @@ import { AdminCatalogController } from './catalog/admin-catalog.controller';
 import { AdminContributionsController } from './contributions/admin-contributions.controller';
 import { AdminContributionsService } from './contributions/admin-contributions.service';
 import { ContributionsModule } from '../library/contributions/contributions.module';
+import { SupportTicketsController } from './support/support-tickets.controller';
+import { SupportTicketsService } from './support/support-tickets.service';
 import { CatalogJobsController } from './catalog/catalog-jobs.controller';
 import { CatalogJobsService } from './catalog/catalog-jobs.service';
 import { CatalogQualityController } from './catalog/catalog-quality.controller';
@@ -95,6 +97,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     FinanceController,
     CatalogQualityController,
     CatalogJobsController,
+    SupportTicketsController,
     AdminContributionsController,
     AdminUploadsController,
     AdminAdsController,
@@ -145,6 +148,7 @@ import { TeacherInvitationsController } from './users/teacher-invitations.contro
     AdminMaintenanceService,
     MaintenanceTasksService,
     CatalogJobsService,
+    SupportTicketsService,
     OrphanFilesService,
     AdminPortalService,
     BackupService,

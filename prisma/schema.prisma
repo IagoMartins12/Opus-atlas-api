@@ -646,9 +646,12 @@ model User {
   couponUsages        CouponUsage[]         @relation("UserCouponUsages")
 
   // 🆕 CACHE DO PLANO ATUAL (para performance)
-  currentPlan   PlanType  @default(FREE)
-  planExpiresAt DateTime? // Data de expiração do plano
-  isTrialActive Boolean   @default(false)
+  currentPlan    PlanType  @default(FREE)
+  planExpiresAt  DateTime? // Data de expiração do plano
+  isTrialActive  Boolean   @default(false)
+  /// Nome do professor Maestro que dá o Plus a este aluno sem assinatura
+  /// ("Plus · pelo seu professor"). Nulo: o plano vem da própria assinatura.
+  planViaTeacher String?
 
   blogArticles     BlogArticle[]     @relation("BlogAuthor")
   blogComments     BlogComment[]     @relation("BlogComments")
@@ -1051,25 +1054,25 @@ model WorkGenre {
 }
 
 model Work {
-  id               String   @id @default(auto()) @map("_id") @db.ObjectId
-  title            String
-  composerId       String   @db.ObjectId
-  instrumentId     String   @db.ObjectId
-  epochId          String   @db.ObjectId
-  videoUrl         String?
-  imslpPermlink    String
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  composerId        String    @db.ObjectId
+  instrumentId      String    @db.ObjectId
+  epochId           String    @db.ObjectId
+  videoUrl          String?
+  imslpPermlink     String
   /// Quando a ficha das edições das partituras foi relida no IMSLP (rotina de edições).
   editionsCheckedAt DateTime?
-  imslpId          String
-  opOrCatalog      String?
-  compositionYear  String?
-  firstPublishDate String?
-  tone             String?
-  mediaDuration    String?
-  workStyle        String?
-  moviment         String?
-  categoryNames    String[] @default([])
-  workGenresArr    String[] @default([])
+  imslpId           String
+  opOrCatalog       String?
+  compositionYear   String?
+  firstPublishDate  String?
+  tone              String?
+  mediaDuration     String?
+  workStyle         String?
+  moviment          String?
+  categoryNames     String[]  @default([])
+  workGenresArr     String[]  @default([])
 
   dedicateTo      String?
   instrumentation String?
@@ -2464,6 +2467,7 @@ model Lesson {
 
   // Avaliação e progresso
   studentProgress Json? // Progresso específico da aula
+  skillRatings    Json? // { technique: 4, reading: 3 } — 1–5 por habilidade da lista fixa (21/10/2026)
   skillsWorked    String[] @default([]) // Habilidades trabalhadas
   improvements    String[] @default([]) // Melhorias observadas
   challenges      String[] @default([]) // Desafios encontrados
@@ -2784,6 +2788,12 @@ model SharedProgressReport {
 
   // Mensagem personalizada do professor
   teacherMessage String?
+
+  // Relatório pedagógico do Maestro (21/10/2026): o que o professor aprovou.
+  // Peças sugeridas pelo motor e escolhidas por ele; dicas rascunhadas pela IA
+  // e revisadas por ele. O aluno só vê o que está aqui.
+  nextPieces Json? // [{ workId, title, composer, note }]
+  tips       String[] @default([])
 
   // Status e controle
   isActive     Boolean   @default(true)
@@ -4363,4 +4373,56 @@ model CatalogJobRun {
   @@index([job, queuedAt])
   @@index([status])
   @@map("catalog_job_runs")
+}
+
+/// Mensagem do formulário de contato (21/10/2026). Antes só ia por e-mail;
+/// agora fica também no painel (Atendimento), com a prioridade de quem tem plano
+/// pago (suporte prioritário, do Plus em diante) e o andamento do atendimento.
+model SupportTicket {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  ticketId        String    @unique
+  userId          String?   @db.ObjectId
+  name            String
+  email           String
+  subject         String
+  message         String
+  category        String
+  /// A urgência que a pessoa escolheu no formulário.
+  priority        String
+  /// Suporte prioritário do plano (Plus, Mentor, Maestro, ou Plus pelo professor).
+  prioritySupport Boolean   @default(false)
+  plan            String    @default("FREE")
+  language        String    @default("pt")
+  /// open | answered | closed
+  status          String    @default("open")
+  note            String?
+  answeredAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, prioritySupport, createdAt])
+  @@index([email])
+  @@map("support_tickets")
+}
+
+/// A retrospectiva de estudo (Plus), gerada quando a pessoa pede (21/10/2026).
+/// Uma por pessoa, período e idioma; `shareId` abre a versão pública para
+/// compartilhar (cartões e primeiro nome, nada além).
+model Retrospective {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  /// "year:2026" ou "all"
+  period      String
+  language    String   @default("pt")
+  shareId     String   @unique
+  firstName   String
+  cards       Json
+  /// Quantas obras havia nas listas ao gerar: mudou, oferece "gerar de novo".
+  itemCount   Int
+  generatedBy String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, period, language])
+  @@map("retrospectives")
 }

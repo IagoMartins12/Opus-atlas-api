@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DifficultyLevel, StudentInviteStatus } from '@prisma/client';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PeerComparisonService } from './peer-comparison.service';
 import { ProgressReportService } from './progress-report.service';
@@ -17,8 +18,10 @@ describe('ProgressReportService', () => {
     learned: { findMany: jest.Mock };
     wantToLearn: { findMany: jest.Mock; groupBy: jest.Mock };
     work: { findMany: jest.Mock };
+    practiceLog: { findMany: jest.Mock };
   };
   let peers: { compare: jest.Mock };
+  let subscriptions: { effectivePlan: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -51,6 +54,11 @@ describe('ProgressReportService', () => {
         groupBy: jest.fn().mockResolvedValue([]),
       },
       work: { findMany: jest.fn().mockResolvedValue([]) },
+      practiceLog: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+
+    subscriptions = {
+      effectivePlan: jest.fn().mockResolvedValue({ plan: 'MENTOR' }),
     };
 
     peers = {
@@ -68,6 +76,7 @@ describe('ProgressReportService', () => {
         ReportSectionsService,
         { provide: PrismaService, useValue: prisma },
         { provide: PeerComparisonService, useValue: peers },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -257,6 +266,75 @@ describe('ProgressReportService', () => {
       const { where } = prisma.wantToLearn.groupBy.mock.calls[0][0];
 
       expect(where.workId.notIn).toContain('work-1');
+    });
+  });
+
+  describe('evolução por habilidade (Maestro)', () => {
+    const lesson = (month: string, ratings: Record<string, number>) => ({
+      id: `l-${month}`,
+      status: 'COMPLETED',
+      scheduledAt: new Date(`${month}-10T15:00:00.000Z`),
+      duration: 60,
+      engagement: 4,
+      preparation: 4,
+      punctuality: 'on_time',
+      topics: [],
+      techniques: [],
+      challenges: [],
+      improvements: [],
+      skillsWorked: ['Escalas em terças'],
+      skillRatings: ratings,
+      studentPresent: true,
+    });
+
+    it('fora do Maestro a seção some em silêncio', async () => {
+      const result = await service.generate('teacher-user', 'student-1', {
+        sections: ['overview', 'skills'],
+      });
+      expect(result.sections).toEqual(['overview']);
+      expect(result.report).not.toHaveProperty('skills');
+      expect(prisma.practiceLog.findMany).not.toHaveBeenCalled();
+    });
+
+    it('no Maestro mede a nota mês a mês e soma a prática pelo tema', async () => {
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'MAESTRO' });
+      prisma.lesson.findMany.mockResolvedValue([
+        lesson('2026-08', { technique: 2, reading: 3 }),
+        lesson('2026-09', { technique: 4 }),
+      ]);
+      prisma.practiceLog.findMany.mockResolvedValue([
+        {
+          practicedAt: new Date('2026-09-12T12:00:00.000Z'),
+          minutes: 30,
+          topic: 'Escalas',
+          note: null,
+        },
+      ]);
+
+      const result = await service.generate('teacher-user', 'student-1', {
+        sections: ['skills'],
+        period: 'all',
+      });
+      const { skills } = result.report.skills as {
+        skills: Array<{
+          skill: string;
+          current: number | null;
+          change: number | null;
+          lessons: number;
+          practiceMinutes: number;
+        }>;
+      };
+      const technique = skills.find((s) => s.skill === 'technique');
+      const reading = skills.find((s) => s.skill === 'reading');
+
+      expect(technique).toMatchObject({
+        current: 4,
+        change: 2,
+        lessons: 2,
+        practiceMinutes: 30,
+      });
+      // Um mês só com nota: sem variação, nunca estimada.
+      expect(reading).toMatchObject({ current: 3, change: null });
     });
   });
 });

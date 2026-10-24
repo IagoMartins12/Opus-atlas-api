@@ -17,6 +17,13 @@ class CurrentPlanDto {
   @ApiPropertyOptional({ nullable: true })
   expiresAt?: Date | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Quando o Plus vem do professor Maestro (aluno sem assinatura): o nome dele.',
+  })
+  viaTeacher?: string | null;
+
   @ApiProperty({
     type: Object,
     description: 'Matriz de features habilitadas/limites do plano atual',

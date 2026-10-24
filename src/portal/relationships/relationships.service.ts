@@ -353,6 +353,7 @@ export class RelationshipsService {
       ...this.cancelFutureOf(relationship.teacher.id, relationship.studentId),
     ]);
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    await this.subscriptions.updateUserPlanCache(studentUserId);
 
     await this.notifications.notify({
       userId: relationship.teacher.userId,
@@ -423,6 +424,8 @@ export class RelationshipsService {
 
     // O total de alunos aparece no diretório público de professores.
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    // Aluno de professor Maestro ganha o Plus enquanto o vínculo durar.
+    await this.subscriptions.updateUserPlanCache(relationship.student.userId);
 
     const studentName = this.displayName(relationship.student.user);
     const teacherName = this.displayName(relationship.teacher.user);
@@ -930,6 +933,13 @@ export class RelationshipsService {
     });
 
     await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+
+    // Sem vínculo, sai o Plus que vinha do professor (quem paga segue pagando).
+    const student = await this.prisma.student.findUnique({
+      where: { id: relationship.studentId },
+      select: { userId: true },
+    });
+    if (student) await this.subscriptions.updateUserPlanCache(student.userId);
   }
 
   // -------------------------------------------------------------------
