@@ -486,10 +486,14 @@ export class SubscriptionsService {
     const trialEnd = stripeSubscription?.trial_end
       ? new Date(stripeSubscription.trial_end * 1000)
       : null;
+    // O teste é dito pela assinatura do Stripe, não pelo `payment_status`: na
+    // versão atual da API, o checkout com teste volta "paid" (total 0), e
+    // antes isso virava uma assinatura ativa com um pagamento de R$ 0, nota e
+    // e-mail de "pagamento aprovado" — sem o teste (achado da bateria, 24/10).
     const trialing =
-      session.payment_status === 'no_payment_required' &&
       stripeSubscription?.status === 'trialing' &&
-      trialEnd !== null;
+      trialEnd !== null &&
+      (session.amount_total ?? 0) === 0;
 
     if (session.payment_status !== 'paid' && !trialing) {
       this.logger.warn(

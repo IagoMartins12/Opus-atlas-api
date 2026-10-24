@@ -620,6 +620,31 @@ describe('SubscriptionsService', () => {
       expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
     });
 
+    // A versão atual da API do Stripe devolve "paid" (total 0) no checkout com
+    // teste: antes isso virava ativa, com pagamento de R$ 0 (achado da bateria).
+    it('teste que o Stripe devolve como "paid" com total 0 ainda é teste', async () => {
+      const trialEnd = Math.floor((Date.now() + 7 * DAY) / 1000);
+      stripe.retrieveCheckoutSession.mockResolvedValue({
+        ...paidSession,
+        payment_status: 'paid',
+        amount_total: 0,
+        subscription: {
+          id: 'sub_stripe',
+          status: 'trialing',
+          trial_end: trialEnd,
+        },
+      });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+        where: { id: SUB, status: 'PENDING' },
+        data: expect.objectContaining({ status: 'TRIAL' }),
+      });
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
+    });
+
     it('sem pagamento e sem teste no Stripe, não ativa', async () => {
       stripe.retrieveCheckoutSession.mockResolvedValue({
         ...paidSession,
