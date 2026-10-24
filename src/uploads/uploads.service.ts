@@ -1,3 +1,4 @@
+import { limitMessage } from './shared/contribution-limit.service';
 import {
   ForbiddenException,
   Injectable,
@@ -182,8 +183,12 @@ export class UploadsService {
 
     if (used >= access.limit) {
       throw new ForbiddenException(
-        `Limite do plano ${access.plan} atingido (${used}/${access.limit}). ` +
-          'Faça upgrade para enviar mais arquivos.',
+        limitMessage(
+          feature === 'maxPerformanceVideos' ? 'videos' : 'envios',
+          access.plan,
+          used,
+          access.limit,
+        ),
       );
     }
   }

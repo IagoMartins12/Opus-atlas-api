@@ -79,7 +79,7 @@ describe('StripeService', () => {
           mode: 'subscription',
           customer_email: 'a@x.com',
           line_items: [{ price: 'price_mentor_y', quantity: 1 }],
-          locale: 'pt',
+          locale: 'pt-BR',
           metadata: {
             userId: 'u1',
             planType: 'MENTOR',
@@ -126,8 +126,11 @@ describe('StripeService', () => {
       expect(args.customer_email).toBeUndefined();
     });
 
-    it('cancelar no fim do período e desfazer', async () => {
-      await service.setCancelAtPeriodEnd('sub_1', true);
+    it('cancelar no fim do período e desfazer, devolvendo a situação no Stripe', async () => {
+      stripe.subscriptions.update.mockResolvedValueOnce({ status: 'trialing' });
+      await expect(service.setCancelAtPeriodEnd('sub_1', true)).resolves.toBe(
+        'trialing',
+      );
       expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
         cancel_at_period_end: true,
       });

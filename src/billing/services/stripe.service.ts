@@ -82,6 +82,8 @@ export class StripeService {
     trialDays?: number;
     /** Cliente do Stripe que a pessoa já tem: cartão e faturas no mesmo lugar. */
     customerId?: string | null;
+    /** O idioma do site da pessoa: o checkout do Stripe fala o mesmo. */
+    language?: string | null;
   }): Promise<Stripe.Checkout.Session> {
     const priceId =
       data.priceId ?? this.getPriceId(data.planType, data.billingPeriod);
@@ -117,7 +119,9 @@ export class StripeService {
         : { subscription_data: { metadata } }),
       success_url: data.successUrl,
       cancel_url: data.cancelUrl,
-      locale: 'pt',
+      // Antes era sempre 'pt': quem usa o site em inglês pagava num checkout
+      // em português (achado da bateria, S-10).
+      locale: data.language === 'en' ? 'en' : 'pt-BR',
       metadata,
     });
   }
@@ -127,13 +131,16 @@ export class StripeService {
    * Sem esta chamada, o cancelamento existia só no nosso banco e o Stripe
    * seguia renovando e cobrando.
    */
+  /** Devolve a situação da assinatura no Stripe depois da mudança. */
   async setCancelAtPeriodEnd(
     stripeSubscriptionId: string,
     cancel: boolean,
-  ): Promise<void> {
-    await this.getClient().subscriptions.update(stripeSubscriptionId, {
-      cancel_at_period_end: cancel,
-    });
+  ): Promise<string> {
+    const updated = await this.getClient().subscriptions.update(
+      stripeSubscriptionId,
+      { cancel_at_period_end: cancel },
+    );
+    return updated.status;
   }
 
   /**
@@ -149,6 +156,20 @@ export class StripeService {
       if (code === 'resource_missing') return;
       const message = (error as Error).message ?? '';
       if (/canceled subscription/i.test(message)) return;
+      throw error;
+    }
+  }
+
+  /**
+   * Apaga o cliente no Stripe (conta apagada, RN-6): o e-mail e o cartão saem
+   * de lá; as faturas já emitidas ficam, como o Stripe guarda. Já apagado não
+   * é erro.
+   */
+  async deleteCustomer(customerId: string): Promise<void> {
+    try {
+      await this.getClient().customers.del(customerId);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'resource_missing') return;
       throw error;
     }
   }
@@ -193,6 +214,8 @@ export class StripeService {
     amountPaid: number;
     currency: string;
     periodEnd: Date | null;
+    /** A situação no Stripe depois da troca (`trialing`, `active`…). */
+    status: string;
   }> {
     const client = this.getClient();
     const subscription =
@@ -225,6 +248,7 @@ export class StripeService {
       amountPaid: charged ? (invoice?.amount_paid ?? 0) / 100 : 0,
       currency: invoice?.currency ?? 'brl',
       periodEnd: end ? new Date(end * 1000) : null,
+      status: updated.status,
     };
   }
 

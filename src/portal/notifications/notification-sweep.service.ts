@@ -66,6 +66,8 @@ export interface SweepResult {
   total: number;
   /** E-mails da caixa de saída enviados nesta passada. */
   emailed: number;
+  /** WhatsApps da caixa de saída enviados nesta passada. */
+  whatsapped: number;
   durationMs: number;
 }
 
@@ -138,11 +140,13 @@ export class NotificationSweepService {
     // A caixa de saída: os e-mails dos avisos (deste e de outros caminhos)
     // cujo horário chegou.
     const { sent } = await this.notifications.flushEmails(now);
+    const whatsapp = await this.notifications.flushWhatsApp(now);
 
     const result: SweepResult = {
       created,
       total,
       emailed: sent,
+      whatsapped: whatsapp.sent,
       durationMs: Date.now() - startedAt,
     };
 

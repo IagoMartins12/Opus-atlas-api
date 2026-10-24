@@ -520,6 +520,23 @@ export class MailService {
     );
   }
 
+  async sendPaymentActionRequiredEmail(
+    to: string,
+    data: {
+      firstName: string;
+      planType: PlanType;
+      amount: number;
+      url: string;
+      afterTrial: boolean;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) =>
+        templates.paymentActionRequired(data, ctx),
+      ),
+    );
+  }
+
   async sendSubscriptionEndedEmail(
     to: string,
     data: { firstName: string; planType: PlanType },

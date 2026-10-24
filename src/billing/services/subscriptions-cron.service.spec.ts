@@ -123,7 +123,7 @@ describe('SubscriptionsCronService', () => {
     });
   });
 
-  it('já avisado nas últimas 24 h não recebe de novo', async () => {
+  it('já avisado neste teste não recebe de novo, seja quando for', async () => {
     rowsFor({
       expiring: [
         { id: 's1', trialEndDate: new Date(), user: { email: 'a@x.com' } },
@@ -134,6 +134,12 @@ describe('SubscriptionsCronService', () => {
     await service.checkSubscriptions();
 
     expect(mail.sendTrialExpiringEmail).not.toHaveBeenCalled();
+    // A busca é por teste, sem janela de tempo (S-16 da bateria).
+    const [{ where }] = prisma.subscriptionHistory.findFirst.mock.calls[0];
+    expect(where).toEqual({
+      subscriptionId: 's1',
+      action: 'TRIAL_EXPIRING_NOTIFICATION',
+    });
   });
 
   it('teste vencido sem notícia do Stripe expira, depois da folga do webhook', async () => {
@@ -158,7 +164,7 @@ describe('SubscriptionsCronService', () => {
     expect(result.trialsExpired).toBe(1);
   });
 
-  it('lembra a renovação uma vez por semana', async () => {
+  it('lembra a renovação uma vez por ciclo', async () => {
     const endDate = new Date(Date.now() + 5 * DAY);
     rowsFor({
       renewals: [

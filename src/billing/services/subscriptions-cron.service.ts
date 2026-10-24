@@ -45,8 +45,12 @@ export class SubscriptionsCronService {
     private readonly mrr: MrrService,
   ) {}
 
-  async checkSubscriptions(): Promise<CronCheckResult> {
-    const now = new Date();
+  /**
+   * `now` só muda na bateria de testes (homologação e local): o Stripe de
+   * teste avança o próprio relógio, e o cron precisa enxergar a mesma data
+   * para expirar o teste ou encerrar o atraso (achado B6).
+   */
+  async checkSubscriptions(now = new Date()): Promise<CronCheckResult> {
     const result: CronCheckResult = {
       trialsExpiring: 0,
       trialsExpired: 0,
@@ -94,15 +98,17 @@ export class SubscriptionsCronService {
       try {
         const alreadyNotified = await this.prisma.subscriptionHistory.findFirst(
           {
+            // Um aviso por teste. A janela de 24 h deixava repetir: o cron do
+            // dia seguinte, rodando segundos depois, já passava dela (achado
+            // da bateria, S-16).
             where: {
               subscriptionId: subscription.id,
               action: 'TRIAL_EXPIRING_NOTIFICATION',
-              createdAt: { gte: new Date(now.getTime() - DAY_MS) },
             },
           },
         );
 
-        if (alreadyNotified || !subscription.user.email) {
+        if (alreadyNotified || !subscription.user?.email) {
           continue;
         }
 
@@ -199,12 +205,25 @@ export class SubscriptionsCronService {
 
     for (const subscription of renewals) {
       try {
+        // Um lembrete por ciclo: depois da última cobrança (ou do começo),
+        // sem depender de quando o cron roda — a janela de 7 dias contada de
+        // "agora" deixava repetir (achado da bateria, S-16/S-26).
+        const cycleStart = await this.prisma.subscriptionHistory.findFirst({
+          where: {
+            subscriptionId: subscription.id,
+            action: { in: ['RENEWED', 'CREATED', 'TRIAL_STARTED'] },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true },
+        });
         const alreadyReminded = await this.prisma.subscriptionHistory.findFirst(
           {
             where: {
               subscriptionId: subscription.id,
               action: 'RENEWAL_REMINDER_SENT',
-              createdAt: { gte: new Date(now.getTime() - 7 * DAY_MS) },
+              ...(cycleStart
+                ? { createdAt: { gte: cycleStart.createdAt } }
+                : {}),
             },
           },
         );
@@ -212,7 +231,7 @@ export class SubscriptionsCronService {
         if (
           alreadyReminded ||
           !subscription.endDate ||
-          !subscription.user.email
+          !subscription.user?.email
         ) {
           continue;
         }

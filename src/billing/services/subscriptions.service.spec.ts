@@ -274,7 +274,30 @@ describe('SubscriptionsService', () => {
           planType: 'PLUS',
           billingPeriod: 'MONTHLY',
         }),
-      ).rejects.toThrow('Você já possui uma assinatura ativa');
+      ).rejects.toThrow('Para mudar de plano');
+    });
+
+    // B2: cancelada ou atrasada tem o seu caminho, e a mensagem diz qual.
+    it('cancelada manda reativar; atrasada manda atualizar o cartão', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ status: 'CANCELLED' }),
+      );
+      await expect(
+        service.create(USER, 'a@x.com', 'Ana', {
+          planType: 'MENTOR',
+          billingPeriod: 'MONTHLY',
+        }),
+      ).rejects.toThrow('reative-a');
+
+      prisma.subscription.findFirst.mockResolvedValue(
+        subscription({ status: 'PAST_DUE' }),
+      );
+      await expect(
+        service.create(USER, 'a@x.com', 'Ana', {
+          planType: 'MENTOR',
+          billingPeriod: 'MONTHLY',
+        }),
+      ).rejects.toThrow('Atualize o cartão');
     });
 
     it('plano pago exige período', async () => {
@@ -597,6 +620,31 @@ describe('SubscriptionsService', () => {
       expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
     });
 
+    // A versão atual da API do Stripe devolve "paid" (total 0) no checkout com
+    // teste: antes isso virava ativa, com pagamento de R$ 0 (achado da bateria).
+    it('teste que o Stripe devolve como "paid" com total 0 ainda é teste', async () => {
+      const trialEnd = Math.floor((Date.now() + 7 * DAY) / 1000);
+      stripe.retrieveCheckoutSession.mockResolvedValue({
+        ...paidSession,
+        payment_status: 'paid',
+        amount_total: 0,
+        subscription: {
+          id: 'sub_stripe',
+          status: 'trialing',
+          trial_end: trialEnd,
+        },
+      });
+
+      await service.confirmCheckoutSession('cs_1');
+
+      expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+        where: { id: SUB, status: 'PENDING' },
+        data: expect.objectContaining({ status: 'TRIAL' }),
+      });
+      expect(prisma.payment.create).not.toHaveBeenCalled();
+      expect(mail.sendPaymentApprovedEmail).not.toHaveBeenCalled();
+    });
+
     it('sem pagamento e sem teste no Stripe, não ativa', async () => {
       stripe.retrieveCheckoutSession.mockResolvedValue({
         ...paidSession,
@@ -876,7 +924,7 @@ describe('SubscriptionsService', () => {
         }),
       });
       expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
-      expect(result.message).toContain('Downgrade agendado');
+      expect(result.message).toContain('Mudança agendada');
     });
 
     // Antes a descida ficava só anotada: o Stripe renovava no plano caro.
@@ -951,6 +999,19 @@ describe('SubscriptionsService', () => {
         expect(result.message).toContain('diferença');
       });
 
+      it('cartão recusado: mensagem com o caminho, em vez do erro do Stripe', async () => {
+        stripe.changePriceNow.mockRejectedValue(
+          Object.assign(new Error('Your card was declined.'), {
+            type: 'StripeCardError',
+          }),
+        );
+
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' }),
+        ).rejects.toThrow('você continua no Plus');
+        expect(prisma.subscription.update).not.toHaveBeenCalled();
+      });
+
       it('cartão recusado: o Stripe falha e nada muda aqui', async () => {
         stripe.changePriceNow.mockRejectedValue(new Error('card_declined'));
 
@@ -976,6 +1037,126 @@ describe('SubscriptionsService', () => {
 
         expect(prisma.payment.create).not.toHaveBeenCalled();
         expect(result.message).toContain('primeira cobrança');
+      });
+
+      // S-47: quem diz se ainda é teste é o Stripe, não a data gravada.
+      it('cancelada que sobe ainda no teste do Stripe volta a teste', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1', status: 'CANCELLED' }),
+        );
+        stripe.changePriceNow.mockResolvedValue({
+          invoiceId: null,
+          amountPaid: 0,
+          currency: 'brl',
+          periodEnd: null,
+          status: 'trialing',
+        });
+
+        await service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' });
+
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data.status).toBe('TRIAL');
+      });
+
+      // B3: subir desfaz o cancelamento no Stripe e o estado volta aqui.
+      it('cancelada que sobe volta a ativa', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1', status: 'CANCELLED' }),
+        );
+
+        await service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' });
+
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data).toMatchObject({ status: 'ACTIVE', cancelledAt: null });
+      });
+
+      it('mensal → anual no mesmo plano sobe agora, no preço anual', async () => {
+        await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'PLUS',
+          billingPeriod: 'YEARLY',
+        });
+
+        expect(catalog.priceIdFor).toHaveBeenCalledWith('PLUS', 'YEARLY');
+        expect(stripe.changePriceNow).toHaveBeenCalled();
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data).toMatchObject({
+          planType: 'PLUS',
+          billingPeriod: 'YEARLY',
+        });
+      });
+
+      it('anual → mensal fica para a renovação', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({
+            stripeSubscriptionId: 'sub_1',
+            billingPeriod: 'YEARLY',
+          }),
+        );
+
+        await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'PLUS',
+          billingPeriod: 'MONTHLY',
+        });
+
+        expect(stripe.changePriceAtRenewal).toHaveBeenCalled();
+        expect(stripe.changePriceNow).not.toHaveBeenCalled();
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data.metadata).toMatchObject({
+          pendingDowngrade: 'PLUS',
+          pendingBillingPeriod: 'MONTHLY',
+        });
+      });
+
+      // S-34: desistir da descida agendada escolhendo o próprio plano.
+      it('escolher o próprio plano com descida agendada desfaz a descida', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({
+            stripeSubscriptionId: 'sub_1',
+            planType: 'MAESTRO',
+            metadata: {
+              pendingDowngrade: 'PLUS',
+              pendingBillingPeriod: 'MONTHLY',
+            },
+          }),
+        );
+
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(catalog.priceIdFor).toHaveBeenCalledWith('MAESTRO', 'MONTHLY');
+        expect(stripe.changePriceAtRenewal).toHaveBeenCalledWith(
+          'sub_1',
+          'price_vigente',
+        );
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data.metadata).toEqual({});
+        expect(result.message).toContain('Maestro');
+      });
+
+      it('cancelada não agenda descida; atrasada não desce', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({
+            stripeSubscriptionId: 'sub_1',
+            planType: 'MAESTRO',
+            status: 'CANCELLED',
+          }),
+        );
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'PLUS' }),
+        ).rejects.toThrow('Reative-a');
+
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({
+            stripeSubscriptionId: 'sub_1',
+            planType: 'MAESTRO',
+            status: 'PAST_DUE',
+          }),
+        );
+        await expect(
+          service.upgrade(USER, 'a@x.com', { newPlanType: 'PLUS' }),
+        ).rejects.toThrow('em atraso');
+        expect(stripe.changePriceAtRenewal).not.toHaveBeenCalled();
       });
 
       it('assinatura atrasada não sobe de plano', async () => {
@@ -1115,12 +1296,232 @@ describe('SubscriptionsService', () => {
       });
     });
 
+    it('a troca de período agendada também vale, e o preço vira o cobrado', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({
+          billingPeriod: 'YEARLY',
+          price: 150,
+          metadata: {
+            pendingDowngrade: 'PLUS',
+            pendingBillingPeriod: 'MONTHLY',
+          },
+        }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerRenewal(fatura({ amountPaid: 19.9 }));
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data).toMatchObject({
+        billingPeriod: 'MONTHLY',
+        price: 19.9,
+        metadata: {},
+      });
+    });
+
+    // O cupom do checkout vale uma vez: o preço gravado com desconto deixava
+    // o MRR abaixo do real para sempre.
+    it('renovação comum grava o preço cheio que o Stripe cobrou', async () => {
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ price: 14.95 }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerRenewal(fatura({ amountPaid: 29.9 }));
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data.price).toBe(29.9);
+    });
+
     it('registra a renovação no histórico e emite a nota', async () => {
       await service.registerRenewal(fatura());
 
       const [{ data }] = prisma.subscriptionHistory.create.mock.calls[0];
       expect(data).toMatchObject({ action: 'RENEWED', subscriptionId: SUB });
       expect(invoices.createFromPayment).toHaveBeenCalledWith(SUB, 'pay-1');
+    });
+  });
+
+  describe('conta apagada (RN-6)', () => {
+    it('encerra no Stripe, anonimiza e solta o vínculo, sem apagar o financeiro', async () => {
+      const extra = prisma as unknown as Record<
+        string,
+        Record<string, jest.Mock>
+      >;
+      extra.subscription.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 's1',
+          status: 'ACTIVE',
+          stripeSubscriptionId: 'sub_1',
+          stripeCustomerId: 'cus_1',
+          metadata: { cancelFeedback: 'caro' },
+        },
+        {
+          id: 's0',
+          status: 'EXPIRED',
+          stripeSubscriptionId: 'sub_0',
+          stripeCustomerId: 'cus_1',
+          metadata: null,
+        },
+      ]);
+      extra.payment.updateMany = jest.fn().mockResolvedValue({ count: 2 });
+      extra.invoice = { updateMany: jest.fn().mockResolvedValue({ count: 2 }) };
+      extra.subscriptionHistory.updateMany = jest
+        .fn()
+        .mockResolvedValue({ count: 3 });
+      (stripe as Record<string, jest.Mock>).deleteCustomer = jest
+        .fn()
+        .mockResolvedValue(undefined);
+
+      await service.detachForAccountDeletion(USER);
+
+      // Só a viva é encerrada no Stripe; o cliente sai uma vez.
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledTimes(1);
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledWith('sub_1');
+      expect(
+        (stripe as Record<string, jest.Mock>).deleteCustomer,
+      ).toHaveBeenCalledTimes(1);
+      const [{ data: viva }] = prisma.subscription.update.mock.calls[0];
+      expect(viva).toMatchObject({ userId: null, status: 'CANCELLED' });
+      expect(viva.metadata.cancelFeedback).toBeNull();
+      const [{ data: antiga }] = prisma.subscription.update.mock.calls[1];
+      expect(antiga.userId).toBeNull();
+      expect(antiga.status).toBeUndefined();
+      expect(extra.payment.updateMany).toHaveBeenCalledWith({
+        where: { subscriptionId: { in: ['s1', 's0'] } },
+        data: { payerEmail: null, payerName: null, payerDocument: null },
+      });
+      expect(extra.invoice.updateMany.mock.calls[0][0].data).toMatchObject({
+        customerName: 'Conta excluída',
+        customerEmail: '',
+      });
+      expect(extra.subscriptionHistory.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER },
+        data: { userId: null },
+      });
+    });
+
+    it('Stripe falhou: nada é anonimizado aqui', async () => {
+      const extra = prisma as unknown as Record<
+        string,
+        Record<string, jest.Mock>
+      >;
+      extra.subscription.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 's1',
+          status: 'ACTIVE',
+          stripeSubscriptionId: 'sub_1',
+          stripeCustomerId: null,
+          metadata: null,
+        },
+      ]);
+      stripe.cancelSubscriptionNow.mockRejectedValue(new Error('stripe fora'));
+
+      await expect(service.detachForAccountDeletion(USER)).rejects.toThrow(
+        'stripe fora',
+      );
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('portal do Stripe (customer.subscription.updated)', () => {
+    const local = (over: Record<string, unknown> = {}) => ({
+      ...subscription({ stripeSubscriptionId: 'sub_1', ...over }),
+      user: { email: 'ana@x.com', firstName: 'Ana' },
+    });
+
+    it('cancelou lá: fica cancelada aqui, com histórico e e-mail', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(local());
+
+      await service.syncCancellationFromStripe({
+        id: 'sub_1',
+        status: 'active',
+        cancelAtPeriodEnd: true,
+      });
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data).toMatchObject({ status: 'CANCELLED', autoRenew: false });
+      expect(mail.sendSubscriptionCancelledEmail).toHaveBeenCalled();
+    });
+
+    it('reativou lá: volta a ativa aqui', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        local({ status: 'CANCELLED' }),
+      );
+
+      await service.syncCancellationFromStripe({
+        id: 'sub_1',
+        status: 'active',
+        cancelAtPeriodEnd: false,
+      });
+
+      const [{ data }] = prisma.subscription.update.mock.calls[0];
+      expect(data).toMatchObject({ status: 'ACTIVE', cancelledAt: null });
+    });
+
+    it('eco do que nós mesmos fizemos não muda nada', async () => {
+      prisma.subscription.findFirst.mockResolvedValue(
+        local({ status: 'CANCELLED' }),
+      );
+      await service.syncCancellationFromStripe({
+        id: 'sub_1',
+        status: 'active',
+        cancelAtPeriodEnd: true,
+      });
+      prisma.subscription.findFirst.mockResolvedValue(local());
+      await service.syncCancellationFromStripe({
+        id: 'sub_1',
+        status: 'active',
+        cancelAtPeriodEnd: false,
+      });
+
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('3-D Secure (invoice.payment_action_required)', () => {
+    it('avisa com o link da fatura, uma vez por fatura', async () => {
+      (mail as Record<string, jest.Mock>).sendPaymentActionRequiredEmail = jest
+        .fn()
+        .mockResolvedValue(undefined);
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({ stripeSubscriptionId: 'sub_1', status: 'TRIAL' }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+
+      await service.registerPaymentActionRequired({
+        id: 'in_3ds',
+        stripeSubscriptionId: 'sub_1',
+        amountDue: 29.9,
+        hostedInvoiceUrl: 'https://invoice.stripe.com/i/x',
+      });
+
+      expect(
+        (mail as Record<string, jest.Mock>).sendPaymentActionRequiredEmail,
+      ).toHaveBeenCalledWith(
+        'ana@x.com',
+        expect.objectContaining({
+          url: 'https://invoice.stripe.com/i/x',
+          afterTrial: true,
+        }),
+      );
+
+      prisma.subscription.findFirst.mockResolvedValue({
+        ...subscription({
+          stripeSubscriptionId: 'sub_1',
+          metadata: { actionRequiredInvoiceId: 'in_3ds' },
+        }),
+        user: { email: 'ana@x.com', firstName: 'Ana' },
+      });
+      await service.registerPaymentActionRequired({
+        id: 'in_3ds',
+        stripeSubscriptionId: 'sub_1',
+        amountDue: 29.9,
+        hostedInvoiceUrl: 'https://invoice.stripe.com/i/x',
+      });
+      expect(
+        (mail as Record<string, jest.Mock>).sendPaymentActionRequiredEmail,
+      ).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -133,6 +133,10 @@ export class InvoicesService {
       this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } }),
     ]);
 
+    // Conta apagada (RN-6): a nota não se emite para ninguém.
+    const { user } = subscription;
+    if (!user) return;
+
     const invoiceNumber = this.generateInvoiceNumber();
     const serviceName = `Assinatura ${PLAN_NAMES[subscription.planType]}`;
     const serviceDescription = subscription.billingPeriod
@@ -152,15 +156,15 @@ export class InvoicesService {
         dueDate: payment.createdAt,
         paidAt: payment.paidAt,
         customerName:
-          `${subscription.user.firstName ?? ''} ${subscription.user.lastName ?? ''}`.trim() ||
-          subscription.user.email ||
+          `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() ||
+          user.email ||
           'Cliente',
-        customerEmail: subscription.user.email ?? '',
+        customerEmail: user.email ?? '',
         // CPF/CNPJ do cliente ainda não é coletado em nenhum lugar do produto
         // (placeholder herdado do legado — mesmo "TODO" que já existia lá).
         customerDocument: '000.000.000-00',
-        customerCity: subscription.user.city ?? undefined,
-        customerState: subscription.user.state ?? undefined,
+        customerCity: user.city ?? undefined,
+        customerState: user.state ?? undefined,
         description: serviceDescription,
       },
     });

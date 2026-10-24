@@ -1,3 +1,5 @@
+import { ConfigService } from '@nestjs/config';
+import { WhatsAppService } from './notifications/whatsapp.service';
 import { AiModule } from '../ai/ai.module';
 import { RecommendationsModule } from '../catalog/recommendations/recommendations.module';
 import { Module } from '@nestjs/common';
@@ -73,6 +75,13 @@ import { RelationshipsService } from './relationships/relationships.service';
   providers: [
     NotificationsService,
     NotificationSweepService,
+    {
+      provide: WhatsAppService,
+      inject: [ConfigService],
+      // Fábrica explícita: o segundo parâmetro do construtor (o `fetch`) é
+      // para os testes, não um provider do Nest.
+      useFactory: (config: ConfigService) => new WhatsAppService(config),
+    },
     RelationshipsService,
     LessonsService,
     LessonSchedulingService,

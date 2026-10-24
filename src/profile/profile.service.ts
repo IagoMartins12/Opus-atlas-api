@@ -32,6 +32,7 @@ import {
   StudentSection,
   TeacherSection,
 } from '../portal/profile/profile.service';
+import { SubscriptionsService } from '../billing/services/subscriptions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { DeleteAccountDto } from './dto/delete-account.dto';
@@ -185,6 +186,7 @@ export class ProfileService {
     private readonly storage: StorageService,
     private readonly cache: AppCacheService,
     private readonly portal: PortalProfileService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   /**
@@ -767,6 +769,9 @@ export class ProfileService {
         );
     }
 
+    // O financeiro fica, sem a pessoa (RN-6); se o Stripe recusar o
+    // encerramento, nada é apagado.
+    await this.subscriptions.detachForAccountDeletion(userId);
     await this.prisma.user.delete({ where: { id: userId } });
 
     return {

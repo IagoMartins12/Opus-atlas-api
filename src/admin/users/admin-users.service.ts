@@ -1032,7 +1032,7 @@ export class AdminUsersService {
         select: { userId: true },
         distinct: ['userId'],
       });
-      const ids = vivas.map((v) => v.userId);
+      const ids = vivas.flatMap((v) => (v.userId ? [v.userId] : []));
       and.push(
         query.plan === PlanType.FREE
           ? { id: { notIn: ids } }

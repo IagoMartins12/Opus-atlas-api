@@ -197,6 +197,10 @@ export const envValidationSchema = Joi.object({
       'string.pattern.base':
         'AI_PROVIDER_ORDER aceita anthropic, openai e groq, separados por vírgula',
     }),
+  WHATSAPP_TOKEN: Joi.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: Joi.string().optional(),
+  WHATSAPP_API_VERSION: Joi.string().optional(),
+  WHATSAPP_TEMPLATE_LANGUAGE: Joi.string().optional(),
   ANTHROPIC_API_KEY: Joi.string().optional(),
   ANTHROPIC_MODEL: Joi.string().optional(),
   ANTHROPIC_EFFORT: Joi.string().valid('low', 'medium', 'high').optional(),

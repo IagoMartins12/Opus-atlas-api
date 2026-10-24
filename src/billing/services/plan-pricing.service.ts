@@ -99,10 +99,12 @@ export class PlanPricingService {
 
     discount = Math.min(discount, originalPrice);
 
+    // Em centavos: 24,90 − 4,98 dava 19,919999… na resposta (e na tela).
+    const cents = (value: number) => Math.round(value * 100) / 100;
     return {
       originalPrice,
-      discount,
-      finalPrice: originalPrice - discount,
+      discount: cents(discount),
+      finalPrice: cents(originalPrice - discount),
     };
   }
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -15,7 +16,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { errorMessage } from '../../common/utils/error.util';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { MailService } from '../../mail/mail.service';
+import {
+  normalizePhone,
+  WHATSAPP_TEMPLATES,
+  WhatsAppService,
+} from './whatsapp.service';
 import {
   quietUntil,
   resolvePreferences,
@@ -50,7 +57,7 @@ export interface CreateNotificationInput {
    * Canais escolhidos por quem enviou (aviso avulso do professor). Sem valor,
    * vale só a preferência de quem recebe.
    */
-  channels?: { email?: boolean; sms?: boolean };
+  channels?: { email?: boolean; whatsapp?: boolean };
 }
 
 /** O fuso de quem recebe, até o usuário ter fuso próprio. */
@@ -78,6 +85,8 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly whatsapp: WhatsAppService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   // -------------------------------------------------------------------
@@ -279,6 +288,8 @@ export class NotificationsService {
       where: { id: input.userId },
       select: {
         email: true,
+        phone: true,
+        whatsappOptInAt: true,
         notificationChannels: true,
         quietHoursStart: true,
         quietHoursEnd: true,
@@ -289,7 +300,13 @@ export class NotificationsService {
     const prefs = resolvePreferences(user.notificationChannels)[topic.key];
     const wantsEmail =
       prefs.email && (input.channels?.email ?? true) && !!user.email;
-    const wantsSms = prefs.sms && (input.channels?.sms ?? true);
+    // WhatsApp: escolheu o tema, aceitou o canal, tem telefone e é do Maestro.
+    const wantsWhatsapp =
+      prefs.whatsapp &&
+      (input.channels?.whatsapp ?? true) &&
+      !!user.phone &&
+      !!user.whatsappOptInAt &&
+      (await this.subscriptions.whatsappEligible(input.userId));
 
     const notBefore =
       input.scheduledFor && input.scheduledFor > new Date()
@@ -304,8 +321,15 @@ export class NotificationsService {
     return {
       emailStatus: wantsEmail ? 'pending' : 'skipped',
       emailAfter: wantsEmail ? (afterQuiet ?? notBefore) : null,
-      // Guardado como escolha; o envio por SMS ainda não existe.
-      smsStatus: wantsSms ? 'unsupported' : null,
+      whatsappStatus: wantsWhatsapp
+        ? this.whatsapp.enabled
+          ? 'pending'
+          : 'unavailable'
+        : null,
+      whatsappAfter:
+        wantsWhatsapp && this.whatsapp.enabled
+          ? (afterQuiet ?? notBefore)
+          : null,
     };
   }
 
@@ -391,6 +415,95 @@ export class NotificationsService {
     return { sent, failed };
   }
 
+  /**
+   * Envia os WhatsApps pendentes cujo horário chegou — o mesmo ciclo do
+   * e-mail, pelo modelo aprovado do tema. Erro permanente (número, modelo,
+   * aceite na Meta) para na hora; o resto tenta de novo com espera crescente.
+   */
+  async flushWhatsApp(
+    now = new Date(),
+  ): Promise<{ sent: number; failed: number }> {
+    if (!this.whatsapp.enabled) return { sent: 0, failed: 0 };
+    const due = await this.prisma.notification.findMany({
+      where: { whatsappStatus: 'pending', whatsappAfter: { lte: now } },
+      select: {
+        id: true,
+        type: true,
+        title: true,
+        message: true,
+        actionUrl: true,
+        metadata: true,
+        user: { select: { phone: true, whatsappOptInAt: true } },
+      },
+      orderBy: { whatsappAfter: 'asc' },
+      take: EMAIL_BATCH,
+    });
+
+    const base = this.config.get<string>('mediaSearch.frontendBaseUrl') ?? '';
+    let sent = 0;
+    let failed = 0;
+
+    for (const n of due) {
+      const topic = topicOf(n.type);
+      const template = topic ? WHATSAPP_TEMPLATES[topic.key] : undefined;
+      // Desistiu do canal (ou apagou o telefone) depois do aviso criado.
+      if (!template || !n.user?.phone || !n.user.whatsappOptInAt) {
+        await this.prisma.notification.update({
+          where: { id: n.id },
+          data: { whatsappStatus: 'skipped' },
+        });
+        continue;
+      }
+      const link = n.actionUrl
+        ? n.actionUrl.startsWith('http')
+          ? n.actionUrl
+          : `${base}${n.actionUrl}`
+        : base;
+      const result = await this.whatsapp.sendTemplate({
+        to: n.user.phone,
+        template,
+        params: [n.title, n.message, link],
+      });
+
+      if (result.delivered) {
+        sent++;
+        await this.prisma.notification.update({
+          where: { id: n.id },
+          data: { whatsappStatus: 'sent' },
+        });
+        continue;
+      }
+      failed++;
+      const meta = (
+        n.metadata && typeof n.metadata === 'object' ? n.metadata : {}
+      ) as Record<string, unknown>;
+      const attempts = Number(meta.whatsappAttempts ?? 0) + 1;
+      await this.prisma.notification.update({
+        where: { id: n.id },
+        data:
+          result.permanent || attempts >= MAX_EMAIL_ATTEMPTS
+            ? {
+                whatsappStatus: 'failed',
+                metadata: {
+                  ...meta,
+                  whatsappAttempts: attempts,
+                  whatsappError: result.error ?? null,
+                },
+              }
+            : {
+                whatsappAfter: new Date(now.getTime() + 2 ** attempts * 60_000),
+                metadata: { ...meta, whatsappAttempts: attempts },
+              },
+      });
+    }
+
+    if (sent || failed)
+      this.logger.log(
+        `WhatsApp do portal: ${sent} enviados, ${failed} com falha`,
+      );
+    return { sent, failed };
+  }
+
   // -------------------------------------------------------------------
   // Preferências (04/10/2026)
   // -------------------------------------------------------------------
@@ -402,6 +515,7 @@ export class NotificationsService {
       select: {
         email: true,
         phone: true,
+        whatsappOptInAt: true,
         isTeacher: true,
         isStudent: true,
         notificationChannels: true,
@@ -422,13 +536,22 @@ export class NotificationsService {
         key: t.key,
         label: t.label,
         audience: t.audience,
+        // Só os temas com modelo aprovado na Meta saem por WhatsApp.
+        whatsappCapable: t.key in WHATSAPP_TEMPLATES,
         ...resolved[t.key],
       })),
       quietHoursStart: user.quietHoursStart,
       quietHoursEnd: user.quietHoursEnd,
       hasEmail: !!user.email,
       hasPhone: !!user.phone,
-      smsAvailable: false,
+      phone: user.phone,
+      // WhatsApp: do Maestro (o professor e os alunos dele) e com o canal
+      // ligado no servidor. Fora disso, a coluna aparece travada.
+      whatsappAvailable:
+        this.whatsapp.enabled &&
+        (await this.subscriptions.whatsappEligible(userId)),
+      whatsappEligible: await this.subscriptions.whatsappEligible(userId),
+      whatsappOptIn: !!user.whatsappOptInAt,
     };
   }
 
@@ -443,14 +566,48 @@ export class NotificationsService {
     const merged = {
       ...((current.notificationChannels as Record<string, unknown> | null) ??
         {}),
-    } as Record<string, { email?: boolean; sms?: boolean }>;
+    } as Record<string, { email?: boolean; whatsapp?: boolean }>;
     for (const [key, choice] of Object.entries(dto.channels ?? {})) {
       if (!known.has(key)) continue;
       merged[key] = {
         ...merged[key],
         ...(typeof choice?.email === 'boolean' ? { email: choice.email } : {}),
-        ...(typeof choice?.sms === 'boolean' ? { sms: choice.sms } : {}),
+        ...(typeof choice?.whatsapp === 'boolean'
+          ? { whatsapp: choice.whatsapp }
+          : {}),
       };
+    }
+
+    // Telefone e aceite do WhatsApp. Trocar o telefone pede aceite de novo;
+    // aceitar sem telefone não vale.
+    const phone =
+      dto.phone === undefined
+        ? undefined
+        : dto.phone === null || dto.phone.trim() === ''
+          ? null
+          : normalizePhone(dto.phone);
+    if (dto.phone && !phone) {
+      throw new BadRequestException(
+        'Telefone inválido. Use DDD e número, por exemplo (11) 91234-5678.',
+      );
+    }
+    const contact: Prisma.UserUpdateInput = {};
+    if (phone !== undefined) {
+      contact.phone = phone ? `+${phone}` : null;
+      contact.whatsappOptInAt = null;
+    }
+    if (dto.whatsappOptIn !== undefined) {
+      const current = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { phone: true },
+      });
+      const hasPhone = phone !== undefined ? !!phone : !!current?.phone;
+      if (dto.whatsappOptIn && !hasPhone) {
+        throw new BadRequestException(
+          'Informe o telefone para receber avisos por WhatsApp.',
+        );
+      }
+      contact.whatsappOptInAt = dto.whatsappOptIn ? new Date() : null;
     }
 
     // Silêncio só faz sentido com os dois horários.
@@ -466,7 +623,11 @@ export class NotificationsService {
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { notificationChannels: merged as Prisma.InputJsonValue, ...quiet },
+      data: {
+        notificationChannels: merged as Prisma.InputJsonValue,
+        ...quiet,
+        ...contact,
+      },
     });
     return this.getPreferences(userId);
   }
@@ -522,7 +683,7 @@ export class NotificationsService {
         scheduledFor: sendAt && sendAt > new Date() ? sendAt : undefined,
         channels: {
           email: dto.channels?.email ?? false,
-          sms: dto.channels?.sms ?? false,
+          whatsapp: dto.channels?.whatsapp ?? false,
         },
       })),
     );

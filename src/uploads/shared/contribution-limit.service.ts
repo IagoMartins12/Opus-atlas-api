@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PLAN_LABEL } from '../../billing/constants/plan-features.constants';
 import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { assertEmailVerified } from './verified-email';
 
@@ -43,9 +44,7 @@ export class ContributionLimitService {
 
     if (used >= access.limit) {
       throw new ForbiddenException(
-        `Seu plano (${access.plan}) permite ${access.limit} envios ao acervo ` +
-          `(compositores, obras e partituras), e você já tem ${used}. ` +
-          'Assine um plano para enviar sem limite.',
+        limitMessage('envios', access.plan, used, access.limit),
       );
     }
   }
@@ -57,4 +56,24 @@ export class ContributionLimitService {
       this.prisma.workScore.count({ where: { uploadedBy: userId } }),
     ]).then(([composers, works, scores]) => composers + works + scores);
   }
+}
+
+/**
+ * A mensagem de teto, igual para envios e vídeos (7.9.15-B): o plano, o
+ * número, e o caminho. As telas mostram o texto que vem daqui.
+ */
+export function limitMessage(
+  what: 'envios' | 'videos',
+  plan: keyof typeof PLAN_LABEL,
+  used: number,
+  limit: number,
+): string {
+  const label =
+    what === 'envios'
+      ? 'envios ao acervo (compositores, obras e partituras somados)'
+      : 'vídeos de performance';
+  return (
+    `O plano ${PLAN_LABEL[plan]} permite ${limit} ${label}, e você já tem ${used}. ` +
+    'Assine o Plus para enviar sem limite, ou apague um envio para liberar a vaga.'
+  );
 }

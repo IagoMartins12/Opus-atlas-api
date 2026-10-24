@@ -194,6 +194,18 @@ export const appConfiguration = () => ({
     /** Chamadas de IA por dia para biografia (geração + tradução). */
     bioDailyLimit: Number(process.env.AI_BIO_DAILY_LIMIT ?? 100),
   },
+  /**
+   * WhatsApp pela API oficial da Meta (Cloud API) — ver `WhatsAppService`.
+   * Sem token e número, o canal fica desligado e os avisos saem só pelo
+   * portal e pelo e-mail.
+   */
+  whatsapp: {
+    token: process.env.WHATSAPP_TOKEN,
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    apiVersion: process.env.WHATSAPP_API_VERSION ?? 'v23.0',
+    /** Idioma dos modelos aprovados na Meta. */
+    templateLanguage: process.env.WHATSAPP_TEMPLATE_LANGUAGE ?? 'pt_BR',
+  },
   /** Aviso de dado novo ao front — ver `RevalidationService`. */
   revalidation: {
     url: process.env.FRONT_REVALIDATE_URL,

@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadHistoryQueryService } from './upload-history-query.service';
 
@@ -15,7 +16,9 @@ describe('UploadHistoryQueryService', () => {
     work: { count: jest.Mock };
     workScore: { count: jest.Mock };
     uploadModeration: { count: jest.Mock };
+    storedAsset: { count: jest.Mock };
   };
+  let subscriptions: { effectivePlan: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -28,12 +31,17 @@ describe('UploadHistoryQueryService', () => {
       work: { count: jest.fn().mockResolvedValue(5) },
       workScore: { count: jest.fn().mockResolvedValue(3) },
       uploadModeration: { count: jest.fn().mockResolvedValue(1) },
+      storedAsset: { count: jest.fn().mockResolvedValue(3) },
+    };
+    subscriptions = {
+      effectivePlan: jest.fn().mockResolvedValue({ plan: 'FREE' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UploadHistoryQueryService,
         { provide: PrismaService, useValue: prisma },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -105,7 +113,17 @@ describe('UploadHistoryQueryService', () => {
         scores: 3,
         total: 10,
         pendingReports: 1,
+        plan: 'FREE',
+        limit: 20,
+        performanceVideos: { used: 3, limit: 4 },
       });
+    });
+
+    it('plano pago: sem teto (nulo), para a tela não mostrar "x de y"', async () => {
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'PLUS' });
+      const totals = await service.contributionTotals('user-1');
+      expect(totals.limit).toBeNull();
+      expect(totals.performanceVideos.limit).toBeNull();
     });
   });
 

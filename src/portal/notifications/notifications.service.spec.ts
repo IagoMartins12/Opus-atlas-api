@@ -2,9 +2,14 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationStatus, NotificationType } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
+import { WhatsAppService } from './whatsapp.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
 import { NotificationsService } from './notifications.service';
+
+let whatsapp: { enabled: boolean; sendTemplate: jest.Mock };
+let subscriptions: { whatsappEligible: jest.Mock };
 
 describe('NotificationsService', () => {
   let service: NotificationsService;
@@ -51,6 +56,13 @@ describe('NotificationsService', () => {
     mail = {
       sendPortalNotice: jest.fn().mockResolvedValue({ delivered: true }),
     };
+    whatsapp = {
+      enabled: true,
+      sendTemplate: jest.fn().mockResolvedValue({ delivered: true }),
+    };
+    subscriptions = {
+      whatsappEligible: jest.fn().mockResolvedValue(true),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -61,6 +73,8 @@ describe('NotificationsService', () => {
           provide: ConfigService,
           useValue: { get: () => 'https://opusatlas.test' },
         },
+        { provide: WhatsAppService, useValue: whatsapp },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -314,6 +328,13 @@ describe('NotificationsService — fora do portal', () => {
     mail = {
       sendPortalNotice: jest.fn().mockResolvedValue({ delivered: true }),
     };
+    whatsapp = {
+      enabled: true,
+      sendTemplate: jest.fn().mockResolvedValue({ delivered: true }),
+    };
+    subscriptions = {
+      whatsappEligible: jest.fn().mockResolvedValue(true),
+    };
     const module = await Test.createTestingModule({
       providers: [
         NotificationsService,
@@ -323,6 +344,8 @@ describe('NotificationsService — fora do portal', () => {
           provide: ConfigService,
           useValue: { get: () => 'https://opusatlas.test' },
         },
+        { provide: WhatsAppService, useValue: whatsapp },
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
     service = module.get(NotificationsService);
@@ -367,17 +390,150 @@ describe('NotificationsService — fora do portal', () => {
     expect(created().emailStatus).toBeUndefined();
   });
 
-  it('SMS escolhido fica registrado como ainda não suportado', async () => {
-    prisma.user.findUnique.mockResolvedValue(
-      user({ notificationChannels: { 'lesson-reminder': { sms: true } } }),
-    );
-    await service.notify({
-      userId: 'u',
-      type: NotificationType.LESSON_TOMORROW,
-      title: 't',
-      message: 'm',
+  describe('WhatsApp (Maestro)', () => {
+    const withPhone = (extra: Record<string, unknown> = {}) =>
+      user({
+        notificationChannels: { 'lesson-reminder': { whatsapp: true } },
+        phone: '+5511912345678',
+        whatsappOptInAt: new Date(),
+        ...extra,
+      });
+
+    it('escolhido, com telefone, aceite e Maestro: entra na caixa de saída', async () => {
+      prisma.user.findUnique.mockResolvedValue(withPhone());
+      await service.notify({
+        userId: 'u',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+      });
+      expect(created().whatsappStatus).toBe('pending');
+      expect(created().whatsappAfter).toBeInstanceOf(Date);
     });
-    expect(created().smsStatus).toBe('unsupported');
+
+    it('a escolha antiga de "SMS" vale como WhatsApp', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        withPhone({
+          notificationChannels: { 'lesson-reminder': { sms: true } },
+        }),
+      );
+      await service.notify({
+        userId: 'u',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+      });
+      expect(created().whatsappStatus).toBe('pending');
+    });
+
+    it('sem aceite, sem Maestro ou em tema sem modelo: não sai', async () => {
+      prisma.user.findUnique.mockResolvedValue(
+        withPhone({ whatsappOptInAt: null }),
+      );
+      await service.notify({
+        userId: 'u',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+      });
+      expect(created().whatsappStatus).toBeNull();
+
+      prisma.notification.create.mockClear();
+      prisma.user.findUnique.mockResolvedValue(withPhone());
+      subscriptions.whatsappEligible.mockResolvedValue(false);
+      await service.notify({
+        userId: 'u',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+      });
+      expect(created().whatsappStatus).toBeNull();
+    });
+
+    it('canal desligado no servidor: fica registrado como indisponível', async () => {
+      whatsapp.enabled = false;
+      prisma.user.findUnique.mockResolvedValue(withPhone());
+      await service.notify({
+        userId: 'u',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+      });
+      expect(created().whatsappStatus).toBe('unavailable');
+    });
+
+    it('a caixa de saída envia pelo modelo do tema, com título, texto e link', async () => {
+      prisma.notification.findMany.mockResolvedValue([
+        {
+          id: 'n1',
+          type: NotificationType.LESSON_TOMORROW,
+          title: 'Aula amanhã',
+          message: 'Piano às 15h',
+          actionUrl: '/student/lessons',
+          metadata: null,
+          user: { phone: '+5511912345678', whatsappOptInAt: new Date() },
+        },
+      ]);
+      const result = await service.flushWhatsApp(new Date());
+      expect(whatsapp.sendTemplate).toHaveBeenCalledWith({
+        to: '+5511912345678',
+        template: 'opus_aula_lembrete',
+        params: [
+          'Aula amanhã',
+          'Piano às 15h',
+          'https://opusatlas.test/student/lessons',
+        ],
+      });
+      expect(result.sent).toBe(1);
+      expect(prisma.notification.update.mock.calls[0][0].data).toEqual({
+        whatsappStatus: 'sent',
+      });
+    });
+
+    it('erro permanente da Meta para na hora; passageiro tenta de novo', async () => {
+      const pending = {
+        id: 'n1',
+        type: NotificationType.LESSON_TOMORROW,
+        title: 't',
+        message: 'm',
+        actionUrl: null,
+        metadata: null,
+        user: { phone: '+5511912345678', whatsappOptInAt: new Date() },
+      };
+      prisma.notification.findMany.mockResolvedValue([pending]);
+      whatsapp.sendTemplate.mockResolvedValue({
+        delivered: false,
+        permanent: true,
+        error: 'template',
+      });
+      await service.flushWhatsApp(new Date());
+      expect(
+        prisma.notification.update.mock.calls[0][0].data.whatsappStatus,
+      ).toBe('failed');
+
+      whatsapp.sendTemplate.mockResolvedValue({ delivered: false });
+      await service.flushWhatsApp(new Date());
+      expect(
+        prisma.notification.update.mock.calls[1][0].data.whatsappAfter,
+      ).toBeInstanceOf(Date);
+    });
+
+    it('telefone e aceite: trocar o telefone pede aceite de novo; aceite sem telefone é recusado', async () => {
+      await service.updatePreferences('u', { phone: '(11) 91234-5678' });
+      expect(prisma.user.update.mock.calls[0][0].data).toMatchObject({
+        phone: '+5511912345678',
+        whatsappOptInAt: null,
+      });
+
+      prisma.user.findUnique.mockResolvedValue(user({ phone: null }));
+      await expect(
+        service.updatePreferences('u', { whatsappOptIn: true }),
+      ).rejects.toThrow('telefone');
+
+      await expect(
+        service.updatePreferences('u', { phone: '123' }),
+      ).rejects.toThrow('Telefone inválido');
+    });
   });
 
   it('no horário de silêncio o e-mail espera o fim dele', async () => {
@@ -454,7 +610,8 @@ describe('NotificationsService — fora do portal', () => {
     const keys = prefs.topics.map((t) => t.key);
     expect(keys).toContain('announcement');
     expect(keys).not.toContain('absence'); // tema só de professor
-    expect(prefs.smsAvailable).toBe(false);
+    expect(prefs.whatsappAvailable).toBe(true);
+    expect(prefs.whatsappOptIn).toBe(false);
   });
 
   it('guardar preferências ignora tema desconhecido e exige os dois horários de silêncio', async () => {

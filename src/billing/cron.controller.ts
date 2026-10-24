@@ -1,12 +1,20 @@
-import { Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiOkResponse,
   ApiOperation,
+  ApiQuery,
   ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
 import { Public } from '../common/decorators/api-key.decorator';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
+import { appEnvOf } from '../config/env-files';
 import {
   CronCheckResult,
   SubscriptionsCronService,
@@ -48,12 +56,28 @@ export class CronController {
       },
     },
   })
-  async checkSubscriptions(): Promise<{
+  @ApiQuery({
+    name: 'at',
+    required: false,
+    description:
+      'Só fora da produção: roda como se fosse esta data (ISO), para acompanhar o relógio de teste do Stripe.',
+  })
+  async checkSubscriptions(@Query('at') at?: string): Promise<{
     success: true;
     timestamp: string;
     results: CronCheckResult;
   }> {
-    const results = await this.cronService.checkSubscriptions();
-    return { success: true, timestamp: new Date().toISOString(), results };
+    let now = new Date();
+    if (at) {
+      if (appEnvOf() === 'prd') {
+        throw new BadRequestException('Data forçada não vale em produção');
+      }
+      now = new Date(at);
+      if (Number.isNaN(now.getTime())) {
+        throw new BadRequestException('Data inválida em "at"');
+      }
+    }
+    const results = await this.cronService.checkSubscriptions(now);
+    return { success: true, timestamp: now.toISOString(), results };
   }
 }
