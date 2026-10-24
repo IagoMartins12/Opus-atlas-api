@@ -536,6 +536,8 @@ export class NotificationsService {
         key: t.key,
         label: t.label,
         audience: t.audience,
+        // Só os temas com modelo aprovado na Meta saem por WhatsApp.
+        whatsappCapable: t.key in WHATSAPP_TEMPLATES,
         ...resolved[t.key],
       })),
       quietHoursStart: user.quietHoursStart,
