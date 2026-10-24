@@ -82,6 +82,8 @@ export class StripeService {
     trialDays?: number;
     /** Cliente do Stripe que a pessoa já tem: cartão e faturas no mesmo lugar. */
     customerId?: string | null;
+    /** O idioma do site da pessoa: o checkout do Stripe fala o mesmo. */
+    language?: string | null;
   }): Promise<Stripe.Checkout.Session> {
     const priceId =
       data.priceId ?? this.getPriceId(data.planType, data.billingPeriod);
@@ -117,7 +119,9 @@ export class StripeService {
         : { subscription_data: { metadata } }),
       success_url: data.successUrl,
       cancel_url: data.cancelUrl,
-      locale: 'pt',
+      // Antes era sempre 'pt': quem usa o site em inglês pagava num checkout
+      // em português (achado da bateria, S-10).
+      locale: data.language === 'en' ? 'en' : 'pt-BR',
       metadata,
     });
   }

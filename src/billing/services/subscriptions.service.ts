@@ -385,6 +385,7 @@ export class SubscriptionsService {
         : null,
       trialDays,
       customerId: await this.stripeCustomerIdOf(userId),
+      language: await this.languageOf(userId),
     });
 
     const metadata: SubscriptionMetadata = {};
@@ -1341,6 +1342,7 @@ export class SubscriptionsService {
         dto.billingPeriod ?? 'MONTHLY',
       ),
       customerId: current.stripeCustomerId,
+      language: await this.languageOf(userId),
     });
 
     const newSubscription = await this.prisma.subscription.create({
@@ -1787,6 +1789,14 @@ export class SubscriptionsService {
   }
 
   /** O cliente do Stripe da pessoa, se ela já teve um: o checkout o reaproveita. */
+  private async languageOf(userId: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { language: true },
+    });
+    return user?.language ?? null;
+  }
+
   private async stripeCustomerIdOf(userId: string): Promise<string | null> {
     const previous = await this.prisma.subscription.findFirst({
       where: { userId, stripeCustomerId: { not: null } },

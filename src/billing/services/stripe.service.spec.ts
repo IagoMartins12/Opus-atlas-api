@@ -79,7 +79,7 @@ describe('StripeService', () => {
           mode: 'subscription',
           customer_email: 'a@x.com',
           line_items: [{ price: 'price_mentor_y', quantity: 1 }],
-          locale: 'pt',
+          locale: 'pt-BR',
           metadata: {
             userId: 'u1',
             planType: 'MENTOR',
