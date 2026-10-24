@@ -131,13 +131,16 @@ export class StripeService {
    * Sem esta chamada, o cancelamento existia só no nosso banco e o Stripe
    * seguia renovando e cobrando.
    */
+  /** Devolve a situação da assinatura no Stripe depois da mudança. */
   async setCancelAtPeriodEnd(
     stripeSubscriptionId: string,
     cancel: boolean,
-  ): Promise<void> {
-    await this.getClient().subscriptions.update(stripeSubscriptionId, {
-      cancel_at_period_end: cancel,
-    });
+  ): Promise<string> {
+    const updated = await this.getClient().subscriptions.update(
+      stripeSubscriptionId,
+      { cancel_at_period_end: cancel },
+    );
+    return updated.status;
   }
 
   /**
@@ -211,6 +214,8 @@ export class StripeService {
     amountPaid: number;
     currency: string;
     periodEnd: Date | null;
+    /** A situação no Stripe depois da troca (`trialing`, `active`…). */
+    status: string;
   }> {
     const client = this.getClient();
     const subscription =
@@ -243,6 +248,7 @@ export class StripeService {
       amountPaid: charged ? (invoice?.amount_paid ?? 0) / 100 : 0,
       currency: invoice?.currency ?? 'brl',
       periodEnd: end ? new Date(end * 1000) : null,
+      status: updated.status,
     };
   }
 

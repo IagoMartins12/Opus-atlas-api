@@ -1185,16 +1185,19 @@ export class SubscriptionsService {
       );
     }
 
-    if (subscription.stripeSubscriptionId) {
-      await this.stripeService.setCancelAtPeriodEnd(
-        subscription.stripeSubscriptionId,
-        false,
-      );
-    }
+    // Em teste ou não, quem diz é o Stripe; a data do fim do teste fica
+    // gravada depois que ele acaba (achado da bateria, S-42).
+    const stripeStatus = subscription.stripeSubscriptionId
+      ? await this.stripeService.setCancelAtPeriodEnd(
+          subscription.stripeSubscriptionId,
+          false,
+        )
+      : null;
 
-    const stillInTrial =
-      subscription.trialEndDate !== null &&
-      subscription.trialEndDate > new Date();
+    const stillInTrial = stripeStatus
+      ? stripeStatus === 'trialing'
+      : subscription.trialEndDate !== null &&
+        subscription.trialEndDate > new Date();
 
     const updated = await this.prisma.subscription.update({
       where: { id: subscription.id },
@@ -1497,7 +1500,6 @@ export class SubscriptionsService {
     // Subir desfaz o cancelamento no Stripe (`changePriceNow`); aqui o estado
     // volta junto — antes ficava `CANCELLED` com a assinatura valendo (B3).
     const reactivated = current.status === 'CANCELLED';
-    const now = new Date();
 
     const updated = await this.prisma.subscription.update({
       where: { id: current.id },
@@ -1508,12 +1510,7 @@ export class SubscriptionsService {
         autoRenew: true,
         cancelledAt: null,
         ...(reactivated
-          ? {
-              status:
-                current.trialEndDate && current.trialEndDate > now
-                  ? 'TRIAL'
-                  : 'ACTIVE',
-            }
+          ? { status: charge.status === 'trialing' ? 'TRIAL' : 'ACTIVE' }
           : {}),
         ...(charge.periodEnd ? { endDate: charge.periodEnd } : {}),
         metadata,

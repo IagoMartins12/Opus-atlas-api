@@ -1026,6 +1026,25 @@ describe('SubscriptionsService', () => {
         expect(result.message).toContain('primeira cobrança');
       });
 
+      // S-47: quem diz se ainda é teste é o Stripe, não a data gravada.
+      it('cancelada que sobe ainda no teste do Stripe volta a teste', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({ stripeSubscriptionId: 'sub_1', status: 'CANCELLED' }),
+        );
+        stripe.changePriceNow.mockResolvedValue({
+          invoiceId: null,
+          amountPaid: 0,
+          currency: 'brl',
+          periodEnd: null,
+          status: 'trialing',
+        });
+
+        await service.upgrade(USER, 'a@x.com', { newPlanType: 'MAESTRO' });
+
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data.status).toBe('TRIAL');
+      });
+
       // B3: subir desfaz o cancelamento no Stripe e o estado volta aqui.
       it('cancelada que sobe volta a ativa', async () => {
         prisma.subscription.findFirst.mockResolvedValue(
