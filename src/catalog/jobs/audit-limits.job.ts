@@ -308,7 +308,7 @@ export const work: CatalogJobWork = async ({ prisma, logger, progress }) => {
   });
   const shouldBe = new Map<string, string>();
   for (const s of valid)
-    if (!shouldBe.has(s.userId)) shouldBe.set(s.userId, s.planType);
+    if (s.userId && !shouldBe.has(s.userId)) shouldBe.set(s.userId, s.planType);
   let drift = 0;
   let driftExample: string | undefined;
   for (const u of users) {

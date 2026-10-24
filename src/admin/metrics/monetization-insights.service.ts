@@ -120,15 +120,17 @@ export class MonetizationInsightsService {
    * mas os números dela vinham de estimativas com fator aleatório.
    */
   private async usersAtPlanLimit(): Promise<Insight> {
-    const assinaturas = await this.prisma.subscription.findMany({
-      where: {
-        status: {
-          in: [SubscriptionPlanStatus.ACTIVE, SubscriptionPlanStatus.TRIAL],
+    const assinaturas = (
+      await this.prisma.subscription.findMany({
+        where: {
+          status: {
+            in: [SubscriptionPlanStatus.ACTIVE, SubscriptionPlanStatus.TRIAL],
+          },
         },
-      },
-      select: { userId: true, planType: true },
-      take: 5000,
-    });
+        select: { userId: true, planType: true },
+        take: 5000,
+      })
+    ).flatMap((a) => (a.userId ? [{ ...a, userId: a.userId }] : []));
 
     if (assinaturas.length === 0) {
       return buildInsight({

@@ -154,6 +154,20 @@ export class StripeService {
   }
 
   /**
+   * Apaga o cliente no Stripe (conta apagada, RN-6): o e-mail e o cartão saem
+   * de lá; as faturas já emitidas ficam, como o Stripe guarda. Já apagado não
+   * é erro.
+   */
+  async deleteCustomer(customerId: string): Promise<void> {
+    try {
+      await this.getClient().customers.del(customerId);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'resource_missing') return;
+      throw error;
+    }
+  }
+
+  /**
    * Troca o preço **a partir da próxima cobrança**, sem cobrança proporcional:
    * é a descida de plano agendada. O plano local muda quando essa fatura for
    * paga (`registerRenewal`).

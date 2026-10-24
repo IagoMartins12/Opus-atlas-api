@@ -106,11 +106,14 @@ export class SubscriptionsService {
    * exportado para outros módulos (uploads, portal) consultarem limites de
    * plano nas fases seguintes, sem duplicar esta query. */
   async getCurrentSubscription(userId: string) {
-    return this.prisma.subscription.findFirst({
+    const subscription = await this.prisma.subscription.findFirst({
       where: { userId, ...ACCESS_WHERE(new Date()) },
       orderBy: { createdAt: 'desc' },
       include: { coupon: true },
     });
+    // Buscada pelo dono: o `userId` existe (só a assinatura de conta apagada
+    // fica sem ele, e essa nunca casa com esta consulta).
+    return subscription ? { ...subscription, userId } : null;
   }
 
   /**
@@ -456,7 +459,8 @@ export class SubscriptionsService {
       include: { user: true },
     });
 
-    if (!subscription) {
+    // Sem dono: a conta foi apagada e a assinatura ficou só como registro.
+    if (!subscription?.userId || !subscription.user) {
       this.logger.warn(`Assinatura não encontrada para sessão ${sessionId}`);
       return;
     }
@@ -647,7 +651,7 @@ export class SubscriptionsService {
       include: { user: true },
     });
 
-    if (!subscription) {
+    if (!subscription?.userId || !subscription.user) {
       this.logger.warn(
         `Cobrança recusada sem assinatura conhecida (stripeSubscriptionId=${invoice.stripeSubscriptionId})`,
       );
@@ -742,7 +746,7 @@ export class SubscriptionsService {
       include: { user: true },
     });
 
-    if (!subscription) {
+    if (!subscription?.userId || !subscription.user) {
       this.logger.warn(
         `Renovação sem assinatura conhecida (stripeSubscriptionId=${invoice.stripeSubscriptionId})`,
       );
@@ -856,7 +860,7 @@ export class SubscriptionsService {
       where: { stripeSubscriptionId: invoice.stripeSubscriptionId },
       include: { user: true },
     });
-    if (!subscription?.user.email || !invoice.hostedInvoiceUrl) return;
+    if (!subscription?.user?.email || !invoice.hostedInvoiceUrl) return;
 
     const metadata = metadataOf(subscription);
     if (metadata.actionRequiredInvoiceId === invoice.id) return;
@@ -896,7 +900,7 @@ export class SubscriptionsService {
       where: { stripeSubscriptionId: stripeSub.id },
       include: { user: true },
     });
-    if (!subscription) return;
+    if (!subscription?.userId || !subscription.user) return;
 
     const now = new Date();
 
@@ -972,6 +976,92 @@ export class SubscriptionsService {
       });
       await this.updateUserPlanCache(subscription.userId);
     }
+  }
+
+  /**
+   * A conta vai ser apagada (RN-6): **o registro financeiro fica, sem a
+   * pessoa.** Antes o cascade apagava assinatura, pagamentos e notas junto —
+   * e a política é guardá-los 5 anos (obrigação contábil e fiscal).
+   *
+   * 1. O que ainda cobra é encerrado no Stripe agora, e o cliente de lá é
+   *    apagado (e-mail e cartão saem). Se o Stripe falhar, a conta **não** é
+   *    apagada: apagar com cobrança viva seria o pior desfecho.
+   * 2. Aqui, a assinatura fica encerrada; pagamentos e notas perdem nome,
+   *    e-mail e documento; o histórico perde o `userId`.
+   * 3. O vínculo com a pessoa é solto (`userId` nulo) — o `delete` do usuário
+   *    faria o mesmo pelo `SetNull`, mas explícito não depende disso.
+   */
+  async detachForAccountDeletion(userId: string): Promise<void> {
+    const subscriptions = await this.prisma.subscription.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        status: true,
+        stripeSubscriptionId: true,
+        stripeCustomerId: true,
+        metadata: true,
+      },
+    });
+    if (subscriptions.length === 0) return;
+
+    const live = ['TRIAL', 'ACTIVE', 'PAST_DUE', 'CANCELLED', 'PENDING'];
+    for (const s of subscriptions) {
+      if (s.stripeSubscriptionId && live.includes(s.status)) {
+        await this.stripeService.cancelSubscriptionNow(s.stripeSubscriptionId);
+      }
+    }
+    for (const customerId of new Set(
+      subscriptions.flatMap((s) =>
+        s.stripeCustomerId ? [s.stripeCustomerId] : [],
+      ),
+    )) {
+      await this.stripeService.deleteCustomer(customerId);
+    }
+
+    const now = new Date();
+    const ids = subscriptions.map((s) => s.id);
+    for (const s of subscriptions) {
+      await this.prisma.subscription.update({
+        where: { id: s.id },
+        data: {
+          userId: null,
+          ...(live.includes(s.status)
+            ? {
+                status: s.status === 'PENDING' ? 'EXPIRED' : 'CANCELLED',
+                cancelledAt: now,
+                endDate: now,
+                autoRenew: false,
+              }
+            : {}),
+          stripeCheckoutUrl: null,
+          metadata: {
+            ...metadataOf(s),
+            cancelFeedback: null,
+            accountDeletedAt: now.toISOString(),
+          },
+        },
+      });
+    }
+    await this.prisma.payment.updateMany({
+      where: { subscriptionId: { in: ids } },
+      data: { payerEmail: null, payerName: null, payerDocument: null },
+    });
+    await this.prisma.invoice.updateMany({
+      where: { subscriptionId: { in: ids } },
+      data: {
+        customerName: 'Conta excluída',
+        customerEmail: '',
+        customerDocument: '',
+        customerAddress: null,
+        customerCity: null,
+        customerState: null,
+        customerZipCode: null,
+      },
+    });
+    await this.prisma.subscriptionHistory.updateMany({
+      where: { userId },
+      data: { userId: null },
+    });
   }
 
   async cancel(
@@ -1574,7 +1664,9 @@ export class SubscriptionsService {
     return updated;
   }
 
-  async updateUserPlanCache(userId: string): Promise<void> {
+  async updateUserPlanCache(userId: string | null): Promise<void> {
+    // Assinatura de conta apagada (RN-6): não há plano de ninguém a refazer.
+    if (!userId) return;
     await this.writePlanCache(userId);
 
     // Professor: o plano dele decide o Plus dos alunos. Subiu para o Maestro,

@@ -63,6 +63,14 @@ const nomeDe = (u: {
   email: string | null;
 }) => [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || '—';
 
+/** A assinatura de quem apagou a conta: o registro financeiro fica (RN-6). */
+const CONTA_APAGADA = {
+  id: null,
+  nome: 'Conta apagada',
+  email: null,
+  imagem: null,
+} as const;
+
 /**
  * Assinaturas: quem paga, quanto entra e quem vai embora.
  *
@@ -391,6 +399,10 @@ export class AdminSubscriptionsService {
     // Uma linha por pessoa: a assinatura que venceu por último.
     const vistos = new Set<string>();
     const unicas = linhas
+      // Conta apagada (RN-6) não volta para a lista de quem pode voltar.
+      .flatMap((l) =>
+        l.userId && l.user ? [{ ...l, userId: l.userId, user: l.user }] : [],
+      )
       .filter((l) => (vistos.has(l.userId) ? false : vistos.add(l.userId)))
       .slice(0, recentes);
 
@@ -415,7 +427,7 @@ export class AdminSubscriptionsService {
       select: { userId: true },
       distinct: ['userId'],
     });
-    return linhas.map((l) => l.userId);
+    return linhas.flatMap((l) => (l.userId ? [l.userId] : []));
   }
 
   private async totalPagoPorUsuario(userIds: string[]) {
@@ -503,12 +515,14 @@ export class AdminSubscriptionsService {
     return {
       items: linhas.map((l) => ({
         id: l.id,
-        usuario: {
-          id: l.user.id,
-          nome: nomeDe(l.user),
-          email: l.user.email,
-          imagem: l.user.image,
-        },
+        usuario: l.user
+          ? {
+              id: l.user.id,
+              nome: nomeDe(l.user),
+              email: l.user.email,
+              imagem: l.user.image,
+            }
+          : CONTA_APAGADA,
         plano: l.planType,
         periodo: l.billingPeriod,
         status: l.status,
@@ -626,13 +640,15 @@ export class AdminSubscriptionsService {
 
     return {
       id: sub.id,
-      usuario: {
-        id: sub.user.id,
-        nome: nomeDe(sub.user),
-        email: sub.user.email,
-        imagem: sub.user.image,
-        desde: sub.user.createdAt,
-      },
+      usuario: sub.user
+        ? {
+            id: sub.user.id,
+            nome: nomeDe(sub.user),
+            email: sub.user.email,
+            imagem: sub.user.image,
+            desde: sub.user.createdAt,
+          }
+        : { ...CONTA_APAGADA, desde: null },
       plano: sub.planType,
       periodo: sub.billingPeriod,
       status: sub.status,

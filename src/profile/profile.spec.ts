@@ -1,3 +1,4 @@
+import { SubscriptionsService } from '../billing/services/subscriptions.service';
 import {
   BadRequestException,
   ConflictException,
@@ -126,6 +127,7 @@ describe('ProfileService', () => {
   let cache: { invalidateMany: jest.Mock };
   let portal: Record<string, jest.Mock>;
   let service: ProfileService;
+  let subscriptions: { detachForAccountDeletion: jest.Mock };
   let argonHash: string;
 
   beforeAll(async () => {
@@ -202,6 +204,9 @@ describe('ProfileService', () => {
       })),
       recordProfileChange: jest.fn().mockResolvedValue(undefined),
     };
+    subscriptions = {
+      detachForAccountDeletion: jest.fn().mockResolvedValue(undefined),
+    };
     service = new ProfileService(
       prisma as unknown as PrismaService,
       mail as unknown as MailService,
@@ -212,6 +217,7 @@ describe('ProfileService', () => {
       storage as unknown as StorageService,
       cache as unknown as AppCacheService,
       portal as unknown as PortalProfileService,
+      subscriptions as unknown as SubscriptionsService,
     );
   });
 
@@ -774,6 +780,24 @@ describe('ProfileService', () => {
       } as never);
       expect(result).toMatchObject({ email: 'a@x.com', name: 'Ana Lima' });
       expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: USER } });
+      // RN-6: o financeiro é solto antes, não apagado junto.
+      expect(subscriptions.detachForAccountDeletion).toHaveBeenCalledWith(USER);
+    });
+
+    it('se o Stripe recusar o encerramento, a conta não é apagada', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: USER,
+        email: null,
+        hashedPassword: null,
+      });
+      subscriptions.detachForAccountDeletion.mockRejectedValue(
+        new Error('stripe fora'),
+      );
+
+      await expect(service.deleteAccount(USER, {} as never)).rejects.toThrow(
+        'stripe fora',
+      );
+      expect(prisma.user.delete).not.toHaveBeenCalled();
     });
 
     it('e-mail de despedida que falha não impede a exclusão; sem senha nem e-mail', async () => {

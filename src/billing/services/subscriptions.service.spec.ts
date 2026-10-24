@@ -1258,6 +1258,88 @@ describe('SubscriptionsService', () => {
     });
   });
 
+  describe('conta apagada (RN-6)', () => {
+    it('encerra no Stripe, anonimiza e solta o vínculo, sem apagar o financeiro', async () => {
+      const extra = prisma as unknown as Record<
+        string,
+        Record<string, jest.Mock>
+      >;
+      extra.subscription.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 's1',
+          status: 'ACTIVE',
+          stripeSubscriptionId: 'sub_1',
+          stripeCustomerId: 'cus_1',
+          metadata: { cancelFeedback: 'caro' },
+        },
+        {
+          id: 's0',
+          status: 'EXPIRED',
+          stripeSubscriptionId: 'sub_0',
+          stripeCustomerId: 'cus_1',
+          metadata: null,
+        },
+      ]);
+      extra.payment.updateMany = jest.fn().mockResolvedValue({ count: 2 });
+      extra.invoice = { updateMany: jest.fn().mockResolvedValue({ count: 2 }) };
+      extra.subscriptionHistory.updateMany = jest
+        .fn()
+        .mockResolvedValue({ count: 3 });
+      (stripe as Record<string, jest.Mock>).deleteCustomer = jest
+        .fn()
+        .mockResolvedValue(undefined);
+
+      await service.detachForAccountDeletion(USER);
+
+      // Só a viva é encerrada no Stripe; o cliente sai uma vez.
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledTimes(1);
+      expect(stripe.cancelSubscriptionNow).toHaveBeenCalledWith('sub_1');
+      expect(
+        (stripe as Record<string, jest.Mock>).deleteCustomer,
+      ).toHaveBeenCalledTimes(1);
+      const [{ data: viva }] = prisma.subscription.update.mock.calls[0];
+      expect(viva).toMatchObject({ userId: null, status: 'CANCELLED' });
+      expect(viva.metadata.cancelFeedback).toBeNull();
+      const [{ data: antiga }] = prisma.subscription.update.mock.calls[1];
+      expect(antiga.userId).toBeNull();
+      expect(antiga.status).toBeUndefined();
+      expect(extra.payment.updateMany).toHaveBeenCalledWith({
+        where: { subscriptionId: { in: ['s1', 's0'] } },
+        data: { payerEmail: null, payerName: null, payerDocument: null },
+      });
+      expect(extra.invoice.updateMany.mock.calls[0][0].data).toMatchObject({
+        customerName: 'Conta excluída',
+        customerEmail: '',
+      });
+      expect(extra.subscriptionHistory.updateMany).toHaveBeenCalledWith({
+        where: { userId: USER },
+        data: { userId: null },
+      });
+    });
+
+    it('Stripe falhou: nada é anonimizado aqui', async () => {
+      const extra = prisma as unknown as Record<
+        string,
+        Record<string, jest.Mock>
+      >;
+      extra.subscription.findMany = jest.fn().mockResolvedValue([
+        {
+          id: 's1',
+          status: 'ACTIVE',
+          stripeSubscriptionId: 'sub_1',
+          stripeCustomerId: null,
+          metadata: null,
+        },
+      ]);
+      stripe.cancelSubscriptionNow.mockRejectedValue(new Error('stripe fora'));
+
+      await expect(service.detachForAccountDeletion(USER)).rejects.toThrow(
+        'stripe fora',
+      );
+      expect(prisma.subscription.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('portal do Stripe (customer.subscription.updated)', () => {
     const local = (over: Record<string, unknown> = {}) => ({
       ...subscription({ stripeSubscriptionId: 'sub_1', ...over }),

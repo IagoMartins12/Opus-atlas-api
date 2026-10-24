@@ -3270,8 +3270,11 @@ model Subscription {
   id String @id @default(auto()) @map("_id") @db.ObjectId
 
   // Relacionamento com usuário
-  userId String @db.ObjectId
-  user   User   @relation("UserSubscriptions", fields: [userId], references: [id], onDelete: Cascade)
+  // Opcional desde 24/10 (RN-6): apagar a conta solta a assinatura, os
+  // pagamentos e as notas em vez de apagá-los — o registro financeiro fica 5
+  // anos, sem a pessoa (ver `SubscriptionsService.detachForAccountDeletion`).
+  userId String? @db.ObjectId
+  user   User?   @relation("UserSubscriptions", fields: [userId], references: [id], onDelete: SetNull)
 
   // Plano e período
   planType      PlanType       @default(FREE)
@@ -3448,7 +3451,7 @@ model SubscriptionHistory {
   subscriptionId String       @db.ObjectId
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
-  userId String @db.ObjectId
+  userId String? @db.ObjectId // nulo depois que a conta é apagada (RN-6)
 
   // Ação realizada
   action String // CREATED, UPGRADED, DOWNGRADED, CANCELLED, REACTIVATED, RENEWED, EXPIRED

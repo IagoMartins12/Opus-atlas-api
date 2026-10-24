@@ -106,7 +106,7 @@ export class SubscriptionsCronService {
           },
         );
 
-        if (alreadyNotified || !subscription.user.email) {
+        if (alreadyNotified || !subscription.user?.email) {
           continue;
         }
 
@@ -216,7 +216,7 @@ export class SubscriptionsCronService {
         if (
           alreadyReminded ||
           !subscription.endDate ||
-          !subscription.user.email
+          !subscription.user?.email
         ) {
           continue;
         }
