@@ -1075,6 +1075,33 @@ describe('SubscriptionsService', () => {
         });
       });
 
+      // S-34: desistir da descida agendada escolhendo o próprio plano.
+      it('escolher o próprio plano com descida agendada desfaz a descida', async () => {
+        prisma.subscription.findFirst.mockResolvedValue(
+          subscription({
+            stripeSubscriptionId: 'sub_1',
+            planType: 'MAESTRO',
+            metadata: {
+              pendingDowngrade: 'PLUS',
+              pendingBillingPeriod: 'MONTHLY',
+            },
+          }),
+        );
+
+        const result = await service.upgrade(USER, 'a@x.com', {
+          newPlanType: 'MAESTRO',
+        });
+
+        expect(catalog.priceIdFor).toHaveBeenCalledWith('MAESTRO', 'MONTHLY');
+        expect(stripe.changePriceAtRenewal).toHaveBeenCalledWith(
+          'sub_1',
+          'price_vigente',
+        );
+        const [{ data }] = prisma.subscription.update.mock.calls[0];
+        expect(data.metadata).toEqual({});
+        expect(result.message).toContain('Maestro');
+      });
+
       it('cancelada não agenda descida; atrasada não desce', async () => {
         prisma.subscription.findFirst.mockResolvedValue(
           subscription({

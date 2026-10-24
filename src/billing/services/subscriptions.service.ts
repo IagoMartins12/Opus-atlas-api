@@ -23,6 +23,7 @@ import {
   getFeatureLimit,
   getPlanChangeType,
   hasFeature,
+  PLAN_LABEL,
 } from '../constants/plan-features.constants';
 import { CancelSubscriptionDto } from '../dto/cancel-subscription.dto';
 import { CreateSubscriptionDto } from '../dto/create-subscription.dto';
@@ -1242,6 +1243,19 @@ export class SubscriptionsService {
     const targetPeriod =
       dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY';
     let changeType = getPlanChangeType(current.planType, dto.newPlanType);
+
+    // Escolher o próprio plano com uma descida agendada é desistir dela: a
+    // próxima cobrança volta ao preço de hoje. Antes não havia como desfazer
+    // (dava "você já está neste plano"; achado da bateria, S-34).
+    const scheduled = metadataOf(current);
+    if (
+      changeType === 'SAME' &&
+      targetPeriod === (current.billingPeriod ?? 'MONTHLY') &&
+      scheduled.pendingDowngrade
+    ) {
+      return this.keepCurrentPlan(current);
+    }
+
     if (changeType === 'SAME') {
       // Mesmo plano, outro período: mensal → anual sobe agora (cobra a
       // diferença proporcional); anual → mensal vale na renovação.
@@ -1384,6 +1398,45 @@ export class SubscriptionsService {
         sessionId: checkoutSession.id,
         checkoutUrl: checkoutSession.url!,
       },
+    };
+  }
+
+  /** Desfaz a descida agendada: a renovação volta ao plano e preço de hoje. */
+  private async keepCurrentPlan(
+    current: NonNullable<
+      Awaited<ReturnType<SubscriptionsService['getCurrentSubscription']>>
+    >,
+  ): Promise<SubscriptionActionResponseDto> {
+    const period = current.billingPeriod ?? 'MONTHLY';
+    if (current.stripeSubscriptionId) {
+      await this.stripeService.changePriceAtRenewal(
+        current.stripeSubscriptionId,
+        await this.stripeCatalog.priceIdFor(current.planType, period),
+      );
+    }
+    const metadata = { ...metadataOf(current) };
+    const dropped = metadata.pendingDowngrade;
+    delete metadata.pendingDowngrade;
+    delete metadata.pendingBillingPeriod;
+    const updated = await this.prisma.subscription.update({
+      where: { id: current.id },
+      data: { metadata },
+    });
+    await this.prisma.subscriptionHistory.create({
+      data: {
+        subscriptionId: current.id,
+        userId: current.userId,
+        action: 'UPGRADED',
+        fromPlan: dropped ?? current.planType,
+        toPlan: current.planType,
+        toPrice: current.price,
+        reason: 'Descida agendada desfeita: o plano continua o mesmo',
+      },
+    });
+    return {
+      success: true,
+      message: `Pronto: você continua no ${PLAN_LABEL[current.planType]}. Nada muda na renovação.`,
+      subscription: updated,
     };
   }
 
