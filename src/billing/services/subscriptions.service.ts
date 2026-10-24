@@ -5,7 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PlanType, Prisma, Subscription, TeacherStatus } from '@prisma/client';
+import {
+  BillingPeriod,
+  PlanType,
+  Prisma,
+  Subscription,
+  TeacherStatus,
+} from '@prisma/client';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
 import { MailService } from '../../mail/mail.service';
@@ -72,6 +78,8 @@ type SubscriptionMetadata = {
   trialDays?: number;
   replacesSubscriptionId?: string;
   pendingDowngrade?: PlanType;
+  pendingBillingPeriod?: BillingPeriod;
+  actionRequiredInvoiceId?: string;
   paymentFailedAt?: string;
   origin?: string;
 } & Prisma.JsonObject;
@@ -260,7 +268,15 @@ export class SubscriptionsService {
   ): Promise<SubscriptionActionResponseDto> {
     const existing = await this.getCurrentSubscription(userId);
     if (existing) {
-      throw new BadRequestException('Você já possui uma assinatura ativa');
+      // Cada estado tem um caminho, e a mensagem diz qual (achado B2 de 21/10:
+      // cancelada ou atrasada caía no mesmo "já possui", sem saída).
+      throw new BadRequestException(
+        existing.status === 'CANCELLED'
+          ? 'Sua assinatura foi cancelada, mas ainda vale até o fim do período. Para continuar, reative-a em Meu perfil → Assinatura.'
+          : existing.status === 'PAST_DUE'
+            ? 'Há uma cobrança em atraso. Atualize o cartão em Meu perfil → Assinatura → Pagamento e faturas.'
+            : 'Você já tem uma assinatura. Para mudar de plano, use Meu perfil → Assinatura.',
+      );
     }
 
     if (dto.planType !== 'FREE' && !dto.billingPeriod) {
@@ -759,9 +775,10 @@ export class SubscriptionsService {
 
     // A descida agendada vale a partir desta fatura: o Stripe já cobrou o
     // preço novo (`changePriceAtRenewal`), e o plano daqui acompanha.
-    const { pendingDowngrade } = metadataOf(subscription);
+    const { pendingDowngrade, pendingBillingPeriod } = metadataOf(subscription);
     const metadata = { ...metadataOf(subscription) };
     delete metadata.pendingDowngrade;
+    delete metadata.pendingBillingPeriod;
     delete metadata.paymentFailedAt;
 
     await this.prisma.subscription.update({
@@ -773,9 +790,14 @@ export class SubscriptionsService {
         status: 'ACTIVE',
         endDate,
         metadata,
-        ...(pendingDowngrade
-          ? { planType: pendingDowngrade, price: invoice.amountPaid }
+        ...(pendingDowngrade ? { planType: pendingDowngrade } : {}),
+        ...(pendingBillingPeriod
+          ? { billingPeriod: pendingBillingPeriod }
           : {}),
+        // O preço passa a ser o que o Stripe cobrou: o cupom do checkout vale
+        // só na primeira cobrança, e o preço gravado com desconto deixava o
+        // MRR para sempre abaixo do real.
+        ...(invoice.amountPaid > 0 ? { price: invoice.amountPaid } : {}),
       },
     });
 
@@ -817,6 +839,139 @@ export class SubscriptionsService {
     this.logger.log(
       `Assinatura ${subscription.id} renovada até ${endDate.toISOString()}`,
     );
+  }
+
+  /**
+   * O banco pediu 3-D Secure para cobrar (fim do teste ou renovação): sem a
+   * pessoa a cobrança não sai, e antes ninguém a avisava (achado B5). Manda o
+   * link da fatura do Stripe, onde ela confirma. Um aviso por fatura.
+   */
+  async registerPaymentActionRequired(invoice: {
+    id: string;
+    stripeSubscriptionId: string;
+    amountDue: number;
+    hostedInvoiceUrl: string | null;
+  }): Promise<void> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { stripeSubscriptionId: invoice.stripeSubscriptionId },
+      include: { user: true },
+    });
+    if (!subscription?.user.email || !invoice.hostedInvoiceUrl) return;
+
+    const metadata = metadataOf(subscription);
+    if (metadata.actionRequiredInvoiceId === invoice.id) return;
+
+    await this.prisma.subscription.update({
+      where: { id: subscription.id },
+      data: {
+        metadata: { ...metadata, actionRequiredInvoiceId: invoice.id },
+      },
+    });
+
+    await this.mailService.sendPaymentActionRequiredEmail(
+      subscription.user.email,
+      {
+        firstName: subscription.user.firstName ?? 'Usuário',
+        planType: subscription.planType,
+        amount: invoice.amountDue,
+        url: invoice.hostedInvoiceUrl,
+        afterTrial: subscription.status === 'TRIAL',
+      },
+    );
+  }
+
+  /**
+   * Cancelar ou reativar **pelo portal do Stripe** (achado B4): o evento
+   * `customer.subscription.updated` traz `cancel_at_period_end`, e o estado
+   * daqui acompanha — antes o perfil dizia "ativa" para quem tinha cancelado
+   * lá. O que nós mesmos fizemos chega aqui de novo como eco e não muda nada:
+   * as condições só valem quando os dois lados discordam.
+   */
+  async syncCancellationFromStripe(stripeSub: {
+    id: string;
+    status: string;
+    cancelAtPeriodEnd: boolean;
+  }): Promise<void> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: { stripeSubscriptionId: stripeSub.id },
+      include: { user: true },
+    });
+    if (!subscription) return;
+
+    const now = new Date();
+
+    if (
+      stripeSub.cancelAtPeriodEnd &&
+      ['TRIAL', 'ACTIVE'].includes(subscription.status)
+    ) {
+      await this.prisma.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: now,
+          autoRenew: false,
+          metadata: {
+            ...metadataOf(subscription),
+            cancelledBy: 'stripe_portal',
+          },
+        },
+      });
+      await this.prisma.subscriptionHistory.create({
+        data: {
+          subscriptionId: subscription.id,
+          userId: subscription.userId,
+          action: 'CANCELLED',
+          fromPlan: subscription.planType,
+          toPlan: 'FREE',
+          fromPrice: subscription.price,
+          toPrice: 0,
+          reason: 'Cancelamento pelo portal do Stripe',
+        },
+      });
+      await this.updateUserPlanCache(subscription.userId);
+      if (subscription.user.email) {
+        await this.mailService.sendSubscriptionCancelledEmail(
+          subscription.user.email,
+          {
+            firstName: subscription.user.firstName ?? 'Usuário',
+            planType: subscription.planType,
+          },
+        );
+      }
+      return;
+    }
+
+    if (
+      !stripeSub.cancelAtPeriodEnd &&
+      ['active', 'trialing'].includes(stripeSub.status) &&
+      subscription.status === 'CANCELLED' &&
+      (!subscription.endDate || subscription.endDate > now)
+    ) {
+      await this.prisma.subscription.update({
+        where: { id: subscription.id },
+        data: {
+          status: stripeSub.status === 'trialing' ? 'TRIAL' : 'ACTIVE',
+          cancelledAt: null,
+          autoRenew: true,
+          metadata: {
+            ...metadataOf(subscription),
+            reactivatedAt: now.toISOString(),
+            reactivatedBy: 'stripe_portal',
+          },
+        },
+      });
+      await this.prisma.subscriptionHistory.create({
+        data: {
+          subscriptionId: subscription.id,
+          userId: subscription.userId,
+          action: 'REACTIVATED',
+          toPlan: subscription.planType,
+          toPrice: subscription.price,
+          reason: 'Reativação pelo portal do Stripe',
+        },
+      });
+      await this.updateUserPlanCache(subscription.userId);
+    }
   }
 
   async cancel(
@@ -979,14 +1134,39 @@ export class SubscriptionsService {
       throw new NotFoundException('Nenhuma assinatura ativa encontrada');
     }
 
-    const changeType = getPlanChangeType(current.planType, dto.newPlanType);
+    const targetPeriod =
+      dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY';
+    let changeType = getPlanChangeType(current.planType, dto.newPlanType);
     if (changeType === 'SAME') {
-      throw new BadRequestException('Você já está neste plano');
+      // Mesmo plano, outro período: mensal → anual sobe agora (cobra a
+      // diferença proporcional); anual → mensal vale na renovação.
+      if (
+        !current.stripeSubscriptionId ||
+        targetPeriod === (current.billingPeriod ?? 'MONTHLY')
+      ) {
+        throw new BadRequestException('Você já está neste plano');
+      }
+      changeType = targetPeriod === 'YEARLY' ? 'UPGRADE' : 'DOWNGRADE';
+    }
+
+    // Atrasada: primeiro o pagamento (subir ou descer mexe numa assinatura
+    // que o Stripe ainda tenta cobrar).
+    if (current.status === 'PAST_DUE') {
+      throw new BadRequestException(
+        'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.',
+      );
+    }
+    // Cancelada: descer não faz sentido (ela acaba no fim do período); subir
+    // reativa (ver `upgradeInPlace`).
+    if (current.status === 'CANCELLED' && changeType === 'DOWNGRADE') {
+      throw new BadRequestException(
+        'Sua assinatura está cancelada. Reative-a antes de agendar outro plano.',
+      );
     }
 
     const { finalPrice } = await this.planPricingService.calculateFinalPrice(
       dto.newPlanType,
-      dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY',
+      targetPeriod,
     );
 
     if (changeType === 'DOWNGRADE') {
@@ -997,10 +1177,7 @@ export class SubscriptionsService {
       if (current.stripeSubscriptionId) {
         await this.stripeService.changePriceAtRenewal(
           current.stripeSubscriptionId,
-          await this.stripeCatalog.priceIdFor(
-            dto.newPlanType,
-            dto.billingPeriod ?? current.billingPeriod ?? 'MONTHLY',
-          ),
+          await this.stripeCatalog.priceIdFor(dto.newPlanType, targetPeriod),
         );
       }
 
@@ -1011,6 +1188,7 @@ export class SubscriptionsService {
           metadata: {
             ...metadataOf(current),
             pendingDowngrade: dto.newPlanType,
+            pendingBillingPeriod: targetPeriod,
           },
         },
       });
@@ -1039,12 +1217,11 @@ export class SubscriptionsService {
     // diferença do que falta do ciclo. Antes abria um checkout novo, cobrava o
     // preço cheio e encerrava a antiga sem devolver o que sobrava.
     if (current.stripeSubscriptionId) {
-      if (current.status === 'PAST_DUE') {
-        throw new BadRequestException(
-          'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.',
-        );
-      }
-      return this.upgradeInPlace(current, dto, finalPrice);
+      return this.upgradeInPlace(
+        current,
+        { ...dto, billingPeriod: targetPeriod },
+        finalPrice,
+      );
     }
 
     const frontendBaseUrl = this.getFrontendBaseUrl();
@@ -1156,6 +1333,12 @@ export class SubscriptionsService {
 
     const metadata = { ...metadataOf(current) };
     delete metadata.pendingDowngrade;
+    delete metadata.pendingBillingPeriod;
+
+    // Subir desfaz o cancelamento no Stripe (`changePriceNow`); aqui o estado
+    // volta junto — antes ficava `CANCELLED` com a assinatura valendo (B3).
+    const reactivated = current.status === 'CANCELLED';
+    const now = new Date();
 
     const updated = await this.prisma.subscription.update({
       where: { id: current.id },
@@ -1165,6 +1348,14 @@ export class SubscriptionsService {
         price: finalPrice,
         autoRenew: true,
         cancelledAt: null,
+        ...(reactivated
+          ? {
+              status:
+                current.trialEndDate && current.trialEndDate > now
+                  ? 'TRIAL'
+                  : 'ACTIVE',
+            }
+          : {}),
         ...(charge.periodEnd ? { endDate: charge.periodEnd } : {}),
         metadata,
       },

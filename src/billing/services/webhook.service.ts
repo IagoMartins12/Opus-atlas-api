@@ -167,6 +167,29 @@ export class WebhookService {
         break;
       }
 
+      case 'invoice.payment_action_required': {
+        const invoice = event.data.object as StripeInvoiceWithSubscription;
+        const stripeSubscriptionId = subscriptionIdOf(invoice);
+        if (!stripeSubscriptionId || !invoice.id) break;
+        await this.subscriptionsService.registerPaymentActionRequired({
+          id: invoice.id,
+          stripeSubscriptionId,
+          amountDue: (invoice.amount_due ?? 0) / 100,
+          hostedInvoiceUrl: invoice.hosted_invoice_url ?? null,
+        });
+        break;
+      }
+
+      case 'customer.subscription.updated': {
+        const stripeSub = event.data.object as Stripe.Subscription;
+        await this.subscriptionsService.syncCancellationFromStripe({
+          id: stripeSub.id,
+          status: stripeSub.status,
+          cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+        });
+        break;
+      }
+
       // O dinheiro que sai depois do pagamento: reembolso e contestação.
       case 'refund.created':
       case 'refund.updated': {

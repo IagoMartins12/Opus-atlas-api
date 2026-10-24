@@ -396,6 +396,56 @@ export function paymentFailed(
   };
 }
 
+/**
+ * O banco pediu confirmação (3-D Secure) para cobrar: sem a pessoa, a cobrança
+ * não acontece. O link é a página da fatura no Stripe, onde ela confirma.
+ */
+export function paymentActionRequired(
+  data: {
+    firstName: string;
+    planType: PlanType;
+    amount: number;
+    url: string;
+    afterTrial: boolean;
+  },
+  { say, language }: TemplateContext,
+): EmailSpec {
+  const plan = PLAN_NAMES[language][data.planType];
+  const amount = formatBRL(data.amount, language);
+  return {
+    subject: say(
+      `Confirme o pagamento do plano ${plan}`,
+      `Confirm the payment for your ${plan} plan`,
+    ),
+    preheader: say(
+      'O seu banco pediu uma confirmação para liberar a cobrança.',
+      'Your bank asked for a confirmation to release the charge.',
+    ),
+    title: say('Falta confirmar o pagamento', 'Payment needs confirmation'),
+    paragraphs: [
+      data.afterTrial
+        ? say(
+            `Olá, ${data.firstName}. O teste do plano ${plan} terminou, e o seu banco pediu que você confirme a cobrança de ${amount}.`,
+            `Hi, ${data.firstName}. Your ${plan} trial has ended, and your bank asked you to confirm the ${amount} charge.`,
+          )
+        : say(
+            `Olá, ${data.firstName}. O seu banco pediu que você confirme a renovação do plano ${plan} (${amount}).`,
+            `Hi, ${data.firstName}. Your bank asked you to confirm the renewal of your ${plan} plan (${amount}).`,
+          ),
+      say(
+        'É uma etapa de segurança do cartão (3-D Secure): abra o link, confirme no app ou na mensagem do banco, e pronto. Sem a confirmação a cobrança não acontece, e o plano é encerrado depois do prazo.',
+        'It is a card security step (3-D Secure): open the link, confirm in your bank app or message, and that is it. Without it the charge does not go through, and the plan ends after the grace period.',
+      ),
+    ],
+    emblem: 'recibo',
+    action: {
+      label: say('Confirmar o pagamento', 'Confirm the payment'),
+      url: data.url,
+    },
+    footer: 'cobranca',
+  };
+}
+
 /** The grace period ended without payment: the subscription is over. */
 export function subscriptionEnded(
   data: { firstName: string; planType: PlanType },

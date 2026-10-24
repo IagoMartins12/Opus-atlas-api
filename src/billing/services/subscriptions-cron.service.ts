@@ -45,8 +45,12 @@ export class SubscriptionsCronService {
     private readonly mrr: MrrService,
   ) {}
 
-  async checkSubscriptions(): Promise<CronCheckResult> {
-    const now = new Date();
+  /**
+   * `now` só muda na bateria de testes (homologação e local): o Stripe de
+   * teste avança o próprio relógio, e o cron precisa enxergar a mesma data
+   * para expirar o teste ou encerrar o atraso (achado B6).
+   */
+  async checkSubscriptions(now = new Date()): Promise<CronCheckResult> {
     const result: CronCheckResult = {
       trialsExpiring: 0,
       trialsExpired: 0,

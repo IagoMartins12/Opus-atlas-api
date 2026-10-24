@@ -1,5 +1,43 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`e-mails de cobranca payment-action-required (en) 1`] = `
+{
+  "subject": "Confirm the payment for your Mentor plan",
+  "text": "Payment needs confirmation
+
+Hi, Ana. Your Mentor trial has ended, and your bank asked you to confirm the R$39.90 charge.
+It is a card security step (3-D Secure): open the link, confirm in your bank app or message, and that is it. Without it the charge does not go through, and the plan ends after the grace period.
+
+Confirm the payment: https://invoice.stripe.com/i/exemplo
+
+Warmly,
+The Opus Atlas team
+
+---
+Billed by Stripe, in Brazilian reais. To change or cancel your plan, go to My profile → Account settings. Within 7 days of subscribing you can cancel and get your money back.
+opusatlas.com.br · São Paulo, Brazil",
+}
+`;
+
+exports[`e-mails de cobranca payment-action-required (pt) 1`] = `
+{
+  "subject": "Confirme o pagamento do plano Mentor",
+  "text": "Falta confirmar o pagamento
+
+Olá, Ana. O teste do plano Mentor terminou, e o seu banco pediu que você confirme a cobrança de R$ 39,90.
+É uma etapa de segurança do cartão (3-D Secure): abra o link, confirme no app ou na mensagem do banco, e pronto. Sem a confirmação a cobrança não acontece, e o plano é encerrado depois do prazo.
+
+Confirmar o pagamento: https://invoice.stripe.com/i/exemplo
+
+Com carinho,
+Equipe Opus Atlas
+
+---
+Cobrança feita pelo Stripe, em reais. Para trocar de plano ou cancelar, use Meu perfil → Configurações da Conta. Em até 7 dias da assinatura você pode desistir e receber o valor de volta.
+opusatlas.com.br · São Paulo, Brasil",
+}
+`;
+
 exports[`e-mails de cobranca payment-approved (en) 1`] = `
 {
   "subject": "Payment confirmed: your Mentor plan is active",

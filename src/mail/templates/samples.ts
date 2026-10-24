@@ -238,6 +238,22 @@ export const EMAIL_SAMPLES: EmailSample[] = [
       ),
   },
   {
+    id: 'payment-action-required',
+    group: 'cobranca',
+    name: 'Confirmar pagamento (3-D Secure)',
+    build: (c) =>
+      t.paymentActionRequired(
+        {
+          firstName: 'Ana',
+          planType: 'MENTOR',
+          amount: 39.9,
+          url: 'https://invoice.stripe.com/i/exemplo',
+          afterTrial: true,
+        },
+        c,
+      ),
+  },
+  {
     id: 'subscription-ended',
     group: 'cobranca',
     name: 'Assinatura encerrada',

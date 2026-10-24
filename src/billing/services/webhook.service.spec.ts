@@ -38,6 +38,8 @@ describe('WebhookService', () => {
     registerRenewal: jest.Mock;
     registerPaymentFailure: jest.Mock;
     updateUserPlanCache: jest.Mock;
+    registerPaymentActionRequired: jest.Mock;
+    syncCancellationFromStripe: jest.Mock;
   };
   let catalog: { handleEvent: jest.Mock };
   let adjustments: {
@@ -65,6 +67,8 @@ describe('WebhookService', () => {
       registerRenewal: jest.fn().mockResolvedValue(undefined),
       registerPaymentFailure: jest.fn().mockResolvedValue(undefined),
       updateUserPlanCache: jest.fn().mockResolvedValue(undefined),
+      registerPaymentActionRequired: jest.fn().mockResolvedValue(undefined),
+      syncCancellationFromStripe: jest.fn().mockResolvedValue(undefined),
     };
 
     catalog = { handleEvent: jest.fn().mockResolvedValue(false) };
@@ -220,6 +224,40 @@ describe('WebhookService', () => {
       );
 
       expect(subscriptions.confirmCheckoutSession).not.toHaveBeenCalled();
+    });
+
+    it('3-D Secure pedido: avisa a pessoa com o link da fatura', async () => {
+      await service.handleEvent(
+        makeEvent('invoice.payment_action_required', {
+          id: 'in_3ds',
+          subscription: 'sub_1',
+          amount_due: 2990,
+          hosted_invoice_url: 'https://invoice.stripe.com/i/x',
+        }),
+      );
+
+      expect(subscriptions.registerPaymentActionRequired).toHaveBeenCalledWith({
+        id: 'in_3ds',
+        stripeSubscriptionId: 'sub_1',
+        amountDue: 29.9,
+        hostedInvoiceUrl: 'https://invoice.stripe.com/i/x',
+      });
+    });
+
+    it('cancelamento pelo portal do Stripe chega ao banco', async () => {
+      await service.handleEvent(
+        makeEvent('customer.subscription.updated', {
+          id: 'sub_1',
+          status: 'active',
+          cancel_at_period_end: true,
+        }),
+      );
+
+      expect(subscriptions.syncCancellationFromStripe).toHaveBeenCalledWith({
+        id: 'sub_1',
+        status: 'active',
+        cancelAtPeriodEnd: true,
+      });
     });
 
     it('não registra duas vezes a falha quando o Stripe reentrega o evento', async () => {
