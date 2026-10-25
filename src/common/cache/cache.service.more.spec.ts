@@ -16,7 +16,7 @@ describe('AppCacheService', () => {
     store?: unknown;
   };
   let metrics: { recordCacheHit: jest.Mock; recordCacheMiss: jest.Mock };
-  let events: { emit: jest.Mock };
+  let events: { emitAsync: jest.Mock };
   let service: AppCacheService;
 
   beforeEach(() => {
@@ -26,7 +26,7 @@ describe('AppCacheService', () => {
       del: jest.fn().mockResolvedValue(undefined),
     };
     metrics = { recordCacheHit: jest.fn(), recordCacheMiss: jest.fn() };
-    events = { emit: jest.fn() };
+    events = { emitAsync: jest.fn().mockResolvedValue([]) };
     service = new AppCacheService(
       store as unknown as Cache,
       metrics as unknown as MetricsService,
@@ -146,14 +146,14 @@ describe('AppCacheService', () => {
     it('invalidar vários namespaces avisa uma vez, com todos', async () => {
       await service.invalidateMany(['works', 'composers'] as never);
 
-      expect(events.emit).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
+      expect(events.emitAsync).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
         namespaces: ['works', 'composers'],
       });
     });
 
     it('lista vazia não avisa', async () => {
       await service.invalidateMany([]);
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(events.emitAsync).not.toHaveBeenCalled();
     });
 
     it('apagar uma chave avisa o namespace dela, mesmo se o Redis falhar', async () => {
@@ -161,14 +161,14 @@ describe('AppCacheService', () => {
 
       await service.del('composers:detail:c1');
 
-      expect(events.emit).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
+      expect(events.emitAsync).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
         namespaces: ['composers'],
       });
     });
 
     it('chave fora dos namespaces não avisa; sem barramento de eventos, não quebra', async () => {
       await service.del('imslp-scores:tried:w1');
-      expect(events.emit).not.toHaveBeenCalled();
+      expect(events.emitAsync).not.toHaveBeenCalled();
 
       const semEventos = new AppCacheService(
         store as unknown as Cache,

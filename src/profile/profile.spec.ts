@@ -435,6 +435,9 @@ describe('ProfileService', () => {
       expect(cache.invalidateMany).toHaveBeenCalledWith([
         'teachers',
         'blog:articles',
+        'composers',
+        'works',
+        'collections',
       ]);
     });
 
@@ -862,6 +865,9 @@ describe('ProfileService', () => {
     expect(cache.invalidateMany).toHaveBeenCalledWith([
       'teachers',
       'blog:articles',
+      'composers',
+      'works',
+      'collections',
     ]);
   });
 

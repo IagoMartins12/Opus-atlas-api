@@ -154,14 +154,15 @@ const WORK_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 const WORK_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /**
- * TTL da camada em memória do processo (ver `HotCache`).
- *
- * Só vale para leitura pública de catálogo, que é idêntica para todo visitante.
- * Dez segundos é o teto de divergência entre réplicas: a invalidação limpa o
- * Redis e o L1 de quem a executou, e as demais réplicas servem o valor anterior
- * até aqui. Em troca, a resposta quente não sai do processo.
+ * TTL da camada em memória do processo (ver `HotCache`) — **desligado em
+ * 24/10 (0)**. A invalidação limpa o Redis e o L1 só de quem a executou;
+ * com o aviso ao front saindo em ~150 ms depois da gravação, o front relê a
+ * obra logo em seguida, e se a leitura caísse
+ * noutra réplica, o L1 dela devolvia a versão velha (até 10 s) e o front a
+ * guardava por horas, já com data nova — e nenhum aviso a derrubaria depois.
+ * O cache do Next segura a carga; o Redis continua na frente do banco.
  */
-const WORK_HOT_CACHE_TTL_MS = 10 * 1000;
+const WORK_HOT_CACHE_TTL_MS = 0;
 
 /**
  * Teto de tempo **no banco** para as agregações da busca.

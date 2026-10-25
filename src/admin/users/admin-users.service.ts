@@ -892,8 +892,15 @@ export class AdminUsersService {
       }
     });
 
-    // Virar ou deixar de ser professor muda o diretório público.
-    await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+    // Virar ou deixar de ser professor muda o diretório público; nome, foto e
+    // bloqueio mudam o que aparece como autor no blog, no acervo e nas coleções.
+    await this.cache.invalidateMany([
+      CacheNamespace.TEACHERS,
+      CacheNamespace.BLOG_ARTICLES,
+      CacheNamespace.COMPOSERS,
+      CacheNamespace.WORKS,
+      CacheNamespace.COLLECTIONS,
+    ]);
 
     // Promovido agora: o convite sai por e-mail (o perfil está pendente), com
     // o plano que a equipe decidiu conceder, se houver.

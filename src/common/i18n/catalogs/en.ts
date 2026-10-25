@@ -297,7 +297,8 @@ export const en: Catalog = {
   'Redirecionando para o checkout seguro...':
     'Redirecting to the secure checkout…',
   'Cupom aplicado! Você economizou {0}%': 'Coupon applied. You saved {0}%',
-  'Esta contribuição já foi reprovada.': 'This contribution was already rejected.',
+  'Esta contribuição já foi reprovada.':
+    'This contribution was already rejected.',
   'Há uma cobrança em atraso. Regularize o pagamento antes de mudar de plano.':
     'There is an overdue charge. Settle the payment before changing plans.',
   'Plano {0} ativado. Cobramos só a diferença proporcional ao que faltava do ciclo.':
@@ -417,4 +418,33 @@ export const en: Catalog = {
   'Áudio apagado': 'Audio deleted',
   'Áudio gerado ({0} pedaço(s))': 'Audio made ({0} part(s))',
   'Áudio já existe': 'The audio already exists',
+  // Added 24/10/2026 (billing, achievements, year in review)
+  'Conquista desbloqueada': 'Achievement unlocked',
+  'Novas conquistas': 'New achievements',
+  '{0} conquistas desbloqueadas': '{0} achievements unlocked',
+  '{0} e mais {1}. Veja todas na sua página de conquistas.':
+    '{0} and {1} more. See them all on your achievements page.',
+  'Data forçada não vale em produção':
+    'A forced date is not allowed in production',
+  'Data inválida em "at"': 'Invalid date in "at"',
+  'Há uma cobrança em atraso. Atualize o cartão em Meu perfil → Assinatura → Pagamento e faturas.':
+    'A payment is overdue. Update your card in My profile → Subscription → Payment and invoices.',
+  'Mudança agendada. Você continua no {0} até o fim do ciclo atual.':
+    'Change scheduled. You keep {0} until the end of the current cycle.',
+  'O cartão recusou a cobrança da diferença. Nada mudou: você continua no {0}. Atualize o cartão em Meu perfil → Assinatura → Pagamento e faturas e tente de novo.':
+    'The card declined the difference. Nothing changed: you keep {0}. Update your card in My profile → Subscription → Payment and invoices and try again.',
+  'Pronto: você continua no {0}. Nada muda na renovação.':
+    'Done: you keep {0}. Nothing changes at renewal.',
+  'Sua assinatura está cancelada. Reative-a antes de agendar outro plano.':
+    'Your subscription is cancelled. Reactivate it before scheduling another plan.',
+  'Sua assinatura foi cancelada, mas ainda vale até o fim do período. Para continuar, reative-a em Meu perfil → Assinatura.':
+    'Your subscription was cancelled but stays active until the end of the period. To keep it, reactivate it in My profile → Subscription.',
+  'Você já tem uma assinatura. Para mudar de plano, use Meu perfil → Assinatura.':
+    'You already have a subscription. To change plans, use My profile → Subscription.',
+  'Ainda faltam obras para o histórico: são precisas {0} entre "quero estudar" e "já aprendi" (ou 3 aprendidas).':
+    'Your history needs more works: {0} between "want to learn" and "learned" (or 3 learned).',
+  'O histórico visual é do Plus em diante.':
+    'Visual history comes with Plus and above.',
+  'Retrospectiva ainda não gerada': 'Year in review not generated yet',
+  'Retrospectiva não encontrada': 'Year in review not found',
 };

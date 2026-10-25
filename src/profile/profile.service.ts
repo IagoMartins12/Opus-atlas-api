@@ -191,14 +191,18 @@ export class ProfileService {
 
   /**
    * Nome, foto e bio aparecem em páginas públicas com cache: o diretório de
-   * professores e o blog (autor do artigo, página do autor). Sem derrubar o
-   * do blog, a bio nova não aparecia e o blog seguia com o texto de reserva
-   * ("Escreve no Blog do Opus Atlas").
+   * professores, o blog (autor do artigo, página do autor), e — desde 24/10 —
+   * compositor, obra e coleções, onde a pessoa aparece como quem contribuiu,
+   * quem contou a curiosidade ou quem montou a coleção. Sem isso, o nome novo
+   * só aparecia ali quando o cache vencia sozinho.
    */
   private async refreshTeacherDirectory(): Promise<void> {
     await this.cache.invalidateMany([
       CacheNamespace.TEACHERS,
       CacheNamespace.BLOG_ARTICLES,
+      CacheNamespace.COMPOSERS,
+      CacheNamespace.WORKS,
+      CacheNamespace.COLLECTIONS,
     ]);
   }
 
@@ -773,6 +777,8 @@ export class ProfileService {
     // encerramento, nada é apagado.
     await this.subscriptions.detachForAccountDeletion(userId);
     await this.prisma.user.delete({ where: { id: userId } });
+    // O que a pessoa escreveu some das páginas públicas junto com a conta.
+    await this.refreshTeacherDirectory();
 
     return {
       deletedAt: new Date().toISOString(),

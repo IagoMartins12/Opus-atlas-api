@@ -14,7 +14,7 @@ describe('namespaceOfKey', () => {
 
 describe('AppCacheService — aviso de dado novo', () => {
   const make = () => {
-    const events = { emit: jest.fn() };
+    const events = { emitAsync: jest.fn().mockResolvedValue([]) };
     // Store sem SCAN: a limpeza no Redis não acontece, e o aviso tem de sair.
     const cache = { del: jest.fn(), store: {} } as unknown as Cache;
     const service = new AppCacheService(
@@ -31,7 +31,7 @@ describe('AppCacheService — aviso de dado novo', () => {
 
     await service.invalidateMany(['works', 'composers']);
 
-    expect(events.emit).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
+    expect(events.emitAsync).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
       namespaces: ['works', 'composers'],
     });
   });
@@ -41,7 +41,7 @@ describe('AppCacheService — aviso de dado novo', () => {
 
     await service.del('works:detail:1');
 
-    expect(events.emit).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
+    expect(events.emitAsync).toHaveBeenCalledWith(CACHE_INVALIDATED_EVENT, {
       namespaces: ['works'],
     });
   });

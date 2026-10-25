@@ -8,8 +8,15 @@ import {
 } from '../common/cache/cache-keys';
 import { errorMessage } from '../common/utils/error.util';
 
-/** Avisos que chegam juntos (uma escrita limpa vários domínios) viram um só. */
-export const REVALIDATE_DEBOUNCE_MS = 2_000;
+/**
+ * Avisos que chegam juntos (uma escrita limpa vários domínios) viram um só.
+ *
+ * Curto de propósito (24/10): quem gravou espera o aviso chegar ao front
+ * antes de receber a resposta (`CacheService` aguarda o evento), para ver o
+ * que mandou já na próxima página. Com 2 s em segundo plano, a recarga logo
+ * depois da gravação ainda pegava a cópia velha.
+ */
+export const REVALIDATE_DEBOUNCE_MS = 150;
 
 const REQUEST_TIMEOUT_MS = 5_000;
 
@@ -47,6 +54,8 @@ export class RevalidationService implements OnModuleDestroy {
   private readonly secret?: string;
   private readonly pending = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
+  /** O envio do lote em formação: quem pediu espera por ele. */
+  private batch: Promise<void> | null = null;
 
   constructor(config: ConfigService) {
     this.url = config.get<string>('revalidation.url') || undefined;
@@ -63,15 +72,23 @@ export class RevalidationService implements OnModuleDestroy {
     return !!this.url && !!this.secret;
   }
 
-  @OnEvent(CACHE_INVALIDATED_EVENT)
-  onCacheInvalidated(event: CacheInvalidatedEvent): void {
-    if (!this.enabled) return;
+  /**
+   * Junta as tags no lote e devolve a promessa do envio dele — o
+   * `CacheService` a espera (com teto) antes de a gravação responder.
+   */
+  @OnEvent(CACHE_INVALIDATED_EVENT, { promisify: true })
+  onCacheInvalidated(event: CacheInvalidatedEvent): Promise<void> {
+    if (!this.enabled) return Promise.resolve();
 
     event.namespaces.forEach((namespace) => this.pending.add(tagOf(namespace)));
 
-    this.timer ??= setTimeout(() => {
-      void this.flush();
-    }, REVALIDATE_DEBOUNCE_MS);
+    this.batch ??= new Promise<void>((resolve) => {
+      this.timer = setTimeout(() => {
+        this.batch = null;
+        void this.flush().finally(resolve);
+      }, REVALIDATE_DEBOUNCE_MS);
+    });
+    return this.batch;
   }
 
   /** Envia o que estiver acumulado. */
@@ -80,6 +97,7 @@ export class RevalidationService implements OnModuleDestroy {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.batch = null;
 
     if (this.pending.size === 0 || !this.url || !this.secret) return;
 

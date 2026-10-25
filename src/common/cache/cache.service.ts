@@ -55,6 +55,9 @@ interface RedisBackedStore {
  *    mil obras, o pool do Prisma encheu e as consultas rápidas morreram na
  *    fila. Aqui a primeira calcula e as outras esperam o mesmo resultado.
  */
+/** Quanto a gravação espera o aviso ao front, no máximo. */
+const ANNOUNCE_WAIT_MS = 3_000;
+
 @Injectable()
 export class AppCacheService {
   private readonly logger = new Logger(AppCacheService.name);
@@ -163,11 +166,25 @@ export class AppCacheService {
   }
 
   /** Avisa que o dado destes domínios mudou (ver `CACHE_INVALIDATED_EVENT`). */
-  private announce(namespaces: CacheNamespaceValue[]): void {
-    if (namespaces.length === 0) return;
+  /**
+   * Avisa que o dado mudou e **espera** quem escuta (a revalidação do front),
+   * com teto: a gravação responde depois de o front saber, e quem gravou vê o
+   * que mandou na próxima página. Antes o aviso saía em segundo plano e a
+   * recarga logo depois pegava a cópia velha (24/10). Falha ou demora do
+   * front nunca vira erro nem trava a escrita.
+   */
+  private async announce(namespaces: CacheNamespaceValue[]): Promise<void> {
+    if (namespaces.length === 0 || !this.events) return;
 
     const payload: CacheInvalidatedEvent = { namespaces };
-    this.events?.emit(CACHE_INVALIDATED_EVENT, payload);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.events.emitAsync(CACHE_INVALIDATED_EVENT, payload).catch(() => []),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, ANNOUNCE_WAIT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
   }
 
   async get<T>(key: string, metricRoute?: string): Promise<T | undefined> {
@@ -257,7 +274,7 @@ export class AppCacheService {
     await Promise.all(
       namespaces.map((namespace) => this.invalidateNamespace(namespace)),
     );
-    this.announce(namespaces);
+    await this.announce(namespaces);
   }
 
   async del(key: string): Promise<void> {
@@ -272,6 +289,6 @@ export class AppCacheService {
     }
 
     const namespace = namespaceOfKey(key);
-    if (namespace) this.announce([namespace]);
+    if (namespace) await this.announce([namespace]);
   }
 }

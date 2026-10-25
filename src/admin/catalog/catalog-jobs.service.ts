@@ -301,6 +301,11 @@ export class CatalogJobsService {
       clearInterval(timer);
       const text = errorMessage(error);
       logger.error(text);
+      // Parada ou falha no meio já gravou parte: o site precisa ver o que mudou.
+      if (run.apply)
+        await this.cache
+          .invalidateMany([...CATALOG_NAMESPACES, CacheNamespace.COLLECTIONS])
+          .catch(() => undefined);
       await this.finish(
         runId,
         stopRequested || text === 'Parada pedida' ? 'stopped' : 'failed',

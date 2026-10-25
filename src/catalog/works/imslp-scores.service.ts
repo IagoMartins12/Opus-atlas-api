@@ -4,6 +4,7 @@ import { Prisma, ScoreSource } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { isMongoId } from 'class-validator';
 import { AppCacheService } from '../../common/cache/cache.service';
+import { CacheNamespace } from '../../common/cache/cache-keys';
 import { buildIdempotencyKey, envelope } from '../../common/queue/job-contract';
 import {
   JOB_IMSLP_SCORES,
@@ -242,6 +243,13 @@ export class ImslpScoresService {
       }
 
       await this.mark(workId, 'done', TRIED_TTL_MS);
+      // A página da obra (e a contagem no compositor) mostra as novas.
+      if (parsed.scores.length > 0) {
+        await this.cache.invalidateMany([
+          CacheNamespace.WORKS,
+          CacheNamespace.COMPOSERS,
+        ]);
+      }
       this.logger.log(
         `IMSLP: ${parsed.scores.length} partitura(s) gravadas para a obra ${workId}`,
       );
@@ -304,6 +312,12 @@ export class ImslpScoresService {
     }
 
     await this.mark(workId, 'done', TRIED_TTL_MS);
+    if (created || updated) {
+      await this.cache.invalidateMany([
+        CacheNamespace.WORKS,
+        CacheNamespace.COMPOSERS,
+      ]);
+    }
     return { created, updated, total: parsed.scores.length };
   }
 

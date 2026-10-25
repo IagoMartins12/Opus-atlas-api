@@ -51,6 +51,23 @@ describe('RevalidationService', () => {
     });
   });
 
+  // Quem gravou espera o aviso: a promessa só resolve depois do POST.
+  it('a promessa do aviso resolve quando o front já foi avisado', async () => {
+    const service = new RevalidationService(config(ON));
+    let done = false;
+    const a = service.onCacheInvalidated({ namespaces: ['composers'] });
+    const b = service.onCacheInvalidated({ namespaces: ['works'] });
+    void Promise.all([a, b]).then(() => (done = true));
+
+    await jest.advanceTimersByTimeAsync(REVALIDATE_DEBOUNCE_MS - 1);
+    expect(done).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+    await Promise.all([a, b]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(done).toBe(true);
+  });
+
   it('sem URL, fica desligado', async () => {
     const service = new RevalidationService(config({}));
 

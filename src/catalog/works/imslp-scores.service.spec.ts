@@ -45,7 +45,7 @@ describe('ImslpScoresService', () => {
     work: { findUnique: jest.Mock };
   };
   let fetcher: { load: jest.Mock };
-  let cache: { get: jest.Mock; set: jest.Mock };
+  let cache: { get: jest.Mock; set: jest.Mock; invalidateMany: jest.Mock };
   let redis: ReturnType<typeof fakeRedis>;
   let queue: {
     add: jest.Mock;
@@ -72,6 +72,7 @@ describe('ImslpScoresService', () => {
     cache = {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
+      invalidateMany: jest.fn().mockResolvedValue(undefined),
     };
     redis = fakeRedis();
     queue = {
@@ -219,6 +220,8 @@ describe('ImslpScoresService', () => {
         24 * 60 * 60 * 1000,
       );
       expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
+      // A obra e o compositor mostram as partituras novas já na próxima página.
+      expect(cache.invalidateMany).toHaveBeenCalledWith(['works', 'composers']);
     });
 
     it('com a trava tomada (o admin relendo), não raspa', async () => {
