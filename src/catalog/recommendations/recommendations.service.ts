@@ -69,6 +69,12 @@ const NOT_A_PERSON =
 const POPULAR_KEY = 'recommendations:popular';
 const POPULAR_TTL = 60 * 60 * 1000;
 const WORK_TTL = 6 * 60 * 60 * 1000;
+/**
+ * Never fewer than this, on the work page and in "Recomendadas para você"
+ * (owner's call, 25/10/2026): a row of four fills the grid, and the locked
+ * preview shows as many. Missing ones come from the most studied works.
+ */
+const MINIMO = 4;
 const USER_TTL = 30 * 60 * 1000;
 
 /**
@@ -118,17 +124,53 @@ export class RecommendationsService {
     );
 
     const exclude = userId ? await this.listedBy(userId) : new Set<string>();
-    const chosen = ranked
-      .filter((r) => !exclude.has(r.id))
-      .slice(0, open ? limit : 3);
+    exclude.add(workId);
+    const chosen = await this.complete(
+      ranked.filter((r) => !exclude.has(r.id)).slice(0, open ? limit : MINIMO),
+      exclude,
+    );
     return { locked: !open, items: await this.hydrate(chosen, !open) };
   }
 
   async forUser(userId: string, limit = 12): Promise<RecommendationsResponse> {
     const open = await this.unlocked(userId);
     const ranked = await this.rankedForUser(userId);
-    const chosen = ranked.slice(0, open ? limit : 3);
+    const chosen = await this.complete(
+      ranked.slice(0, open ? limit : MINIMO),
+      await this.listedBy(userId),
+    );
     return { locked: !open, items: await this.hydrate(chosen, !open) };
+  }
+
+  /**
+   * Fills up to `MINIMO` with the most studied and favorited works the
+   * person does not have yet (`popular`), and, on a catalog too new to have
+   * those, with any work. Each filler says why: "muito estudada".
+   */
+  private async complete(
+    chosen: Ranked[],
+    exclude: Set<string>,
+  ): Promise<Ranked[]> {
+    if (chosen.length >= MINIMO) return chosen;
+    const taken = new Set([...exclude, ...chosen.map((c) => c.id)]);
+    const { works, count } = await this.popular();
+    const filler: Ranked[] = works
+      .filter((w) => !taken.has(w.id))
+      .sort((a, b) => (count.get(b.id) ?? 0) - (count.get(a.id) ?? 0))
+      .slice(0, MINIMO - chosen.length)
+      .map((w) => ({ id: w.id, score: 0, reasons: ['popular' as Reason] }));
+    const result = [...chosen, ...filler];
+    if (result.length >= MINIMO) return result;
+    for (const r of result) taken.add(r.id);
+    const any = await this.prisma.work.findMany({
+      where: { id: { notIn: [...taken] } },
+      select: { id: true },
+      take: MINIMO - result.length,
+    });
+    return [
+      ...result,
+      ...any.map((w) => ({ id: w.id, score: 0, reasons: [] as Reason[] })),
+    ];
   }
 
   /**

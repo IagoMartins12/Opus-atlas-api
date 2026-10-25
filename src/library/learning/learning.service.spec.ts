@@ -247,6 +247,28 @@ describe('LearningService', () => {
       expect(prisma.learned.deleteMany).toHaveBeenCalled();
       expect(storage.deleteAsset).toHaveBeenCalledWith('a1');
     });
+
+    // 25/10/2026: a obra movida de "já aprendi" para "quero aprender" deixava
+    // o arquivo do vídeo ativo, contando no teto do plano sem aparecer.
+    it('mover a obra para quero aprender apaga o vídeo dela', async () => {
+      prisma.work.findUnique.mockResolvedValue({
+        id: 'w1',
+        instrument: { name: 'Piano' },
+      });
+      prisma.learned.findFirst.mockResolvedValue({ videoUrl: asset.secureUrl });
+      prisma.storedAsset.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.wantToLearn.upsert.mockResolvedValue({
+        work: { id: 'w1', title: 'Sonata', composer: {} },
+      });
+
+      await service.addOrRemoveWantToLearn('user-1', {
+        workId: 'w1',
+        action: 'add',
+      } as any);
+
+      expect(prisma.learned.deleteMany).toHaveBeenCalled();
+      expect(storage.deleteAsset).toHaveBeenCalledWith('a1');
+    });
   });
 
   describe('updateLearned', () => {

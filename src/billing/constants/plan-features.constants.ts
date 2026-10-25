@@ -60,7 +60,7 @@ export const PLAN_FEATURES: Record<PlanType, PlanFeatureSet> = {
     // (`ContributionLimitService`). Os números estão também na página de
     // planos do front (`conteudo/planos.ts`, `LIMITES`) — mude os dois.
     uploadLimit: 20,
-    maxPerformanceVideos: 4,
+    maxPerformanceVideos: 5,
     smartRecommendations: false,
     aiAssistant: false,
     weeklyGoals: false,

@@ -12,6 +12,7 @@ describe('UploadsService', () => {
   let prisma: {
     storedAsset: { findUnique: jest.Mock };
     user: { findUnique: jest.Mock };
+    learned: { count: jest.Mock; findFirst: jest.Mock };
   };
   let storage: {
     createSignedUpload: jest.Mock;
@@ -40,6 +41,11 @@ describe('UploadsService', () => {
   beforeEach(async () => {
     prisma = {
       storedAsset: { findUnique: jest.fn() },
+      // Performance videos count by the works in "já aprendi" that have one.
+      learned: {
+        count: jest.fn().mockResolvedValue(0),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       user: {
         findUnique: jest.fn().mockResolvedValue({ emailVerified: new Date() }),
       },
@@ -135,7 +141,7 @@ describe('UploadsService', () => {
 
   describe('limite por plano (RN-1)', () => {
     it('libera quando o usuário está abaixo do limite', async () => {
-      storage.countActiveByOwner.mockResolvedValue(2);
+      prisma.learned.count.mockResolvedValue(2);
 
       await expect(
         service.createSignedUpload('user-1', {
@@ -146,7 +152,7 @@ describe('UploadsService', () => {
     });
 
     it('bloqueia ao atingir o limite do plano', async () => {
-      storage.countActiveByOwner.mockResolvedValue(3);
+      prisma.learned.count.mockResolvedValue(3);
 
       await expect(
         service.createSignedUpload('user-1', {
@@ -159,7 +165,7 @@ describe('UploadsService', () => {
     // Barrar só na confirmação faria o usuário gastar a banda dele e a cota do
     // provedor com 500MB de vídeo antes de descobrir que não podia enviar.
     it('checa o limite antes de reservar espaço no armazenamento', async () => {
-      storage.countActiveByOwner.mockResolvedValue(3);
+      prisma.learned.count.mockResolvedValue(3);
 
       await expect(
         service.createSignedUpload('user-1', {
@@ -169,6 +175,18 @@ describe('UploadsService', () => {
       ).rejects.toThrow(ForbiddenException);
 
       expect(storage.createSignedUpload).not.toHaveBeenCalled();
+    });
+
+    it('vídeo que troca o de uma obra que já tem vídeo não conta como mais um', async () => {
+      prisma.learned.count.mockResolvedValue(3);
+      prisma.learned.findFirst.mockResolvedValue({ id: 'learned-1' });
+
+      await expect(
+        service.createSignedUpload('user-1', {
+          kind: StorageAssetKind.PERFORMANCE_VIDEO,
+          scopeId: '68cdafc97fa77c2157417c12',
+        }),
+      ).resolves.toBeDefined();
     });
 
     it('usa maxPerformanceVideos para vídeo de performance', async () => {
@@ -213,7 +231,7 @@ describe('UploadsService', () => {
         hasAccess: true,
         limit: undefined,
       });
-      storage.countActiveByOwner.mockResolvedValue(999);
+      prisma.learned.count.mockResolvedValue(999);
 
       await expect(
         service.createSignedUpload('user-1', {
@@ -231,7 +249,7 @@ describe('UploadsService', () => {
         hasAccess: true,
         limit: -1,
       });
-      storage.countActiveByOwner.mockResolvedValue(999);
+      prisma.learned.count.mockResolvedValue(999);
 
       await expect(
         service.createSignedUpload('user-1', {

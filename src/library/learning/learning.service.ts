@@ -89,9 +89,16 @@ export class LearningService {
     );
 
     // Exclusão mútua com "já aprendi" (mesma obra não fica nas duas listas).
+    // O vídeo da performance sai junto do item: sem ele, o arquivo ficava
+    // solto no armazenamento e contava no teto do plano.
+    const learned = await this.prisma.learned.findFirst({
+      where: { userId, workId: dto.workId },
+      select: { videoUrl: true },
+    });
     await this.prisma.learned.deleteMany({
       where: { userId, workId: dto.workId },
     });
+    await this.dropVideo(userId, learned?.videoUrl);
 
     let progress: number | undefined;
     if (dto.progressMilestones) {

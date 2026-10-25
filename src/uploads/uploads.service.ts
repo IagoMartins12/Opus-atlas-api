@@ -19,6 +19,7 @@ import { CreateSignedUploadDto } from './dto/create-signed-upload.dto';
 import { SignedUploadResponseDto } from './dto/signed-upload-response.dto';
 import { StoredAssetDto } from './dto/stored-asset.dto';
 import { ContributionLimitService } from './shared/contribution-limit.service';
+import { countPerformanceVideos } from './shared/performance-videos';
 import { assertEmailVerified } from './shared/verified-email';
 
 /**
@@ -51,7 +52,7 @@ export class UploadsService {
     userId: string,
     dto: CreateSignedUploadDto,
   ): Promise<SignedUploadResponseDto> {
-    await this.assertWithinPlanLimit(userId, dto.kind);
+    await this.assertWithinPlanLimit(userId, dto.kind, dto.scopeId);
 
     const { asset, upload, maxBytes, allowedMimeTypes } =
       await this.storage.createSignedUpload({
@@ -96,7 +97,7 @@ export class UploadsService {
     scopeId: string,
     file: UploadedFile,
   ): Promise<StoredAssetDto> {
-    await this.assertWithinPlanLimit(userId, kind);
+    await this.assertWithinPlanLimit(userId, kind, scopeId);
 
     // Partitura e miniatura sobem antes do registro e são adotadas por ele na
     // criação (`claimAsset`), que só aceita arquivo ainda sem dono. Com o
@@ -152,6 +153,7 @@ export class UploadsService {
   private async assertWithinPlanLimit(
     userId: string,
     kind: StorageAssetKind,
+    scopeId?: string,
   ): Promise<void> {
     const feature = PLAN_LIMITED_KINDS[kind];
 
@@ -179,7 +181,14 @@ export class UploadsService {
       return;
     }
 
-    const used = await this.storage.countActiveByOwner(userId, kind);
+    let used: number;
+    if (kind === StorageAssetKind.PERFORMANCE_VIDEO) {
+      // A video replacing the one a work already has is not one more.
+      if (scopeId && (await this.hasVideo(userId, scopeId))) return;
+      used = await countPerformanceVideos(this.prisma, userId);
+    } else {
+      used = await this.storage.countActiveByOwner(userId, kind);
+    }
 
     if (used >= access.limit) {
       throw new ForbiddenException(
@@ -191,6 +200,16 @@ export class UploadsService {
         ),
       );
     }
+  }
+
+  /** Whether the work (`scopeId` of a performance video) already has one. */
+  private async hasVideo(userId: string, workId: string): Promise<boolean> {
+    if (!/^[a-f\d]{24}$/i.test(workId)) return false;
+    const item = await this.prisma.learned.findFirst({
+      where: { userId, workId, videoUrl: { not: null } },
+      select: { id: true },
+    });
+    return !!item;
   }
 
   /** Entidade dona por tipo de arquivo, usada para busca e exclusão em cascata. */

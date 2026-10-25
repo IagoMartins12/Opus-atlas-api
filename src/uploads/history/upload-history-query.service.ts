@@ -1,14 +1,10 @@
 import { PLAN_FEATURES } from '../../billing/constants/plan-features.constants';
+import { countPerformanceVideos } from '../shared/performance-videos';
 import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { toCsv } from '../../common/utils/csv.util';
 import { escapeRegex } from '../../common/utils/regex.util';
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import {
-  Prisma,
-  ScoreSource,
-  StorageAssetKind,
-  StorageAssetStatus,
-} from '@prisma/client';
+import { Prisma, ScoreSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListHistoryQueryDto } from './dto/list-history-query.dto';
 import { ListMyUploadsQueryDto } from './dto/list-my-uploads-query.dto';
@@ -316,13 +312,7 @@ export class UploadHistoryQueryService {
         this.prisma.uploadModeration.count({
           where: { reportedBy: userId, status: 'pending' },
         }),
-        this.prisma.storedAsset.count({
-          where: {
-            ownerId: userId,
-            kind: StorageAssetKind.PERFORMANCE_VIDEO,
-            status: StorageAssetStatus.ACTIVE,
-          },
-        }),
+        countPerformanceVideos(this.prisma, userId),
         this.subscriptions.effectivePlan(userId),
       ]);
 

@@ -16,7 +16,7 @@ describe('UploadHistoryQueryService', () => {
     work: { count: jest.Mock };
     workScore: { count: jest.Mock };
     uploadModeration: { count: jest.Mock };
-    storedAsset: { count: jest.Mock };
+    learned: { count: jest.Mock };
   };
   let subscriptions: { effectivePlan: jest.Mock };
 
@@ -31,7 +31,7 @@ describe('UploadHistoryQueryService', () => {
       work: { count: jest.fn().mockResolvedValue(5) },
       workScore: { count: jest.fn().mockResolvedValue(3) },
       uploadModeration: { count: jest.fn().mockResolvedValue(1) },
-      storedAsset: { count: jest.fn().mockResolvedValue(3) },
+      learned: { count: jest.fn().mockResolvedValue(3) },
     };
     subscriptions = {
       effectivePlan: jest.fn().mockResolvedValue({ plan: 'FREE' }),
@@ -115,7 +115,7 @@ describe('UploadHistoryQueryService', () => {
         pendingReports: 1,
         plan: 'FREE',
         limit: 20,
-        performanceVideos: { used: 3, limit: 4 },
+        performanceVideos: { used: 3, limit: 5 },
       });
     });
 
