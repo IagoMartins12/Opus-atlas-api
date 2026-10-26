@@ -49,6 +49,9 @@ describe('NotificationsProcessor', () => {
   const moderation = { sweep: jest.fn().mockResolvedValue('moderação') };
   const publishing = { publishDue: jest.fn().mockResolvedValue('blog') };
   const contributions = { grantDueXp: jest.fn().mockResolvedValue('xp') };
+  const indexNow = {
+    submitChanged: jest.fn().mockResolvedValue({ urls: 0, refused: [] }),
+  };
   const queue = { upsertSchedule: jest.fn().mockResolvedValue(undefined) };
   const runs = runsMock();
   const processor = new NotificationsProcessor(
@@ -56,6 +59,7 @@ describe('NotificationsProcessor', () => {
     moderation as never,
     publishing as never,
     contributions as never,
+    indexNow as never,
     queue as never,
     runs as never,
   );
@@ -75,7 +79,7 @@ describe('NotificationsProcessor', () => {
     expect(prazo.gravar({ notified: 2 })).toBe(true);
   });
 
-  it('reafirma os quatro agendamentos na subida', async () => {
+  it('reafirma os cinco agendamentos na subida', async () => {
     await processor.onApplicationBootstrap();
 
     expect(
@@ -85,6 +89,7 @@ describe('NotificationsProcessor', () => {
       ['moderation:sla-sweep', '0 * * * *'],
       ['blog:publish-scheduled', '* * * * *'],
       ['contributions:grant-xp', '20 4 * * *'],
+      ['seo:indexnow', '*/15 * * * *'],
     ]);
   });
 

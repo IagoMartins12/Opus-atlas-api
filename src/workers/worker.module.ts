@@ -6,6 +6,7 @@ import { PortalModule } from '../portal/portal.module';
 import { ScrapersModule } from '../scrapers/scrapers.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { ContributionsModule } from '../library/contributions/contributions.module';
+import { SeoModule } from '../seo/seo.module';
 import { QUEUE_NAMES } from '../common/queue/queue.constants';
 import { resolveQueueRole } from '../common/queue/queue-role';
 import { CatalogJobsProcessor } from './catalog-jobs.processor';
@@ -38,6 +39,7 @@ import { SchedulesKeeper } from './schedules-keeper';
     ContributionsModule,
     ArticlesModule,
     WorksModule,
+    SeoModule,
   ],
   providers: [
     NewsletterProcessor,

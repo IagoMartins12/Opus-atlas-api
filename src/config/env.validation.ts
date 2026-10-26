@@ -184,6 +184,10 @@ export const envValidationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
+  // A chave do IndexNow (`seo/indexnow.service.ts`); o front a serve.
+  INDEXNOW_KEY: Joi.string()
+    .pattern(/^[a-zA-Z0-9-]{8,128}$/)
+    .optional(),
   SUPPORT_EMAIL: Joi.string().optional(),
 
   // Biografia de compositor por IA, em cascata. Sem nenhuma chave, a geração

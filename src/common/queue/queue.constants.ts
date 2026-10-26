@@ -132,6 +132,9 @@ export const JOB_BLOG_PUBLISH_SCHEDULED = 'blog.publish-scheduled';
  */
 export const JOB_CONTRIBUTIONS_GRANT_XP = 'contributions.grant-xp';
 
+/** Avisa os buscadores (IndexNow) das páginas que mudaram. */
+export const JOB_INDEXNOW_SUBMIT = 'seo.indexnow-submit';
+
 /** Executa uma rotina do acervo (`CatalogJobRun`). Um job por execução. */
 export const JOB_CATALOG_RUN = 'catalog.job.run';
 

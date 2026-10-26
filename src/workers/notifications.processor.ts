@@ -5,6 +5,7 @@ import { ArticlePublishingService } from '../blog/articles/article-publishing.se
 import {
   JOB_BLOG_PUBLISH_SCHEDULED,
   JOB_CONTRIBUTIONS_GRANT_XP,
+  JOB_INDEXNOW_SUBMIT,
   JOB_MODERATION_SLA_SWEEP,
   JOB_NOTIFICATIONS_SWEEP,
   QUEUE_NOTIFICATIONS,
@@ -12,6 +13,7 @@ import {
 import { QueueService } from '../common/queue/queue.service';
 import { TaskRunsService } from '../common/queue/task-runs.service';
 import { ContributionsService } from '../library/contributions/contributions.service';
+import { IndexNowService } from '../seo/indexnow.service';
 import { NotificationSweepService } from '../portal/notifications/notification-sweep.service';
 import { ModerationSweepService } from '../uploads/moderation/moderation-sweep.service';
 
@@ -58,6 +60,11 @@ const CONTRIBUTIONS_XP_CRON = '20 4 * * *';
 
 const CONTRIBUTIONS_XP_SCHEDULER_ID = 'contributions:grant-xp';
 
+/** IndexNow: a cada 15 minutos, o que mudou no acervo e no blog. */
+const INDEXNOW_CRON = '*/15 * * * *';
+
+const INDEXNOW_SCHEDULER_ID = 'seo:indexnow';
+
 /**
  * Consumidor das notificações automáticas.
  *
@@ -83,6 +90,7 @@ export class NotificationsProcessor
     private readonly moderationSweep: ModerationSweepService,
     private readonly articlePublishing: ArticlePublishingService,
     private readonly contributions: ContributionsService,
+    private readonly indexNow: IndexNowService,
     private readonly queue: QueueService,
     private readonly runs: TaskRunsService,
   ) {
@@ -137,6 +145,18 @@ export class NotificationsProcessor
     });
 
     this.logger.log(`XP das contribuições pago: ${CONTRIBUTIONS_XP_CRON}`);
+
+    await this.queue.upsertSchedule({
+      queue: QUEUE_NOTIFICATIONS,
+      schedulerId: INDEXNOW_SCHEDULER_ID,
+      cron: INDEXNOW_CRON,
+      timezone: 'America/Sao_Paulo',
+      job: JOB_INDEXNOW_SUBMIT,
+      payload: {},
+      requestedBy: null,
+    });
+
+    this.logger.log(`Aviso aos buscadores (IndexNow): ${INDEXNOW_CRON}`);
   }
 
   async process(job: Job): Promise<unknown> {
@@ -204,6 +224,20 @@ export class NotificationsProcessor
             }),
           },
           () => this.contributions.grantDueXp(),
+        );
+      case JOB_INDEXNOW_SUBMIT:
+        return this.runs.rastrear(
+          job,
+          {
+            queue: QUEUE_NOTIFICATIONS,
+            task: JOB_INDEXNOW_SUBMIT,
+            taskName: 'Aviso aos buscadores (IndexNow)',
+            gravar: (r) => r.urls > 0 || r.refused.length > 0,
+            relato: (r) => ({
+              summary: { enderecos: r.urls, recusados: r.refused.length },
+            }),
+          },
+          () => this.indexNow.submitChanged(),
         );
       default:
         throw new UnrecoverableError(
