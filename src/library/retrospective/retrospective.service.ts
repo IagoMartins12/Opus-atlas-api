@@ -17,6 +17,8 @@ import {
   buildCards,
   eligible,
   Lang,
+  Face,
+  NextWork,
   RetroCard,
   RetroStats,
   RETRO_MIN_TOTAL,
@@ -212,7 +214,7 @@ export class RetrospectiveService {
       opOrCatalog: true,
       composerId: true,
       workGenresArr: true,
-      composer: { select: { name: true } },
+      composer: { select: { name: true, portraitUrl: true } },
       epoch: { select: { name: true } },
       instrument: { select: { name: true } },
     } as const;
@@ -288,10 +290,25 @@ export class RetrospectiveService {
     };
 
     const composer = tallyTop((i) => i.work.composerId);
-    const composerName = composer
-      ? (items.find((i) => i.work.composerId === composer.name)?.work.composer
-          .name ?? '')
-      : '';
+    const composerOf = (id: string) =>
+      items.find((i) => i.work.composerId === id)?.work.composer;
+    const composerName = composer ? (composerOf(composer.name)?.name ?? '') : '';
+    const epoch = tallyTop((i) => i.work.epoch?.name);
+    /** The composers most on the lists (of one era, or of all), as faces. */
+    const facesOf = (only: (i: Item) => boolean, max: number): Face[] => {
+      const m = new Map<string, number>();
+      for (const i of items)
+        if (only(i))
+          m.set(i.work.composerId, (m.get(i.work.composerId) ?? 0) + 1);
+      return [...m.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, max)
+        .map(([id]) => {
+          const c = composerOf(id);
+          return { name: c?.name ?? '', url: c?.portraitUrl ?? null };
+        })
+        .filter((f) => f.name);
+    };
     const genreMap = new Map<string, number>();
     for (const i of items)
       for (const g of i.work.workGenresArr ?? [])
@@ -323,10 +340,14 @@ export class RetrospectiveService {
       (a, b) => RARITY.indexOf(a.rarity) - RARITY.indexOf(b.rarity),
     )[0];
 
-    let next: string[] = [];
+    let next: NextWork[] = [];
     try {
       next = (await this.recommendations.forUser(userId, 3)).items.map(
-        (w) => `${w.title} — ${w.composer.name}`,
+        (w) => ({
+          label: `${w.title} — ${w.composer.name}`,
+          href: `/works/${w.id}`,
+          composer: { name: w.composer.name, url: w.composer.portraitUrl },
+        }),
       );
     } catch {
       next = [];
@@ -345,6 +366,7 @@ export class RetrospectiveService {
         ? {
             name: composerName,
             count: composer.count,
+            portraitUrl: composerOf(composer.name)?.portraitUrl ?? null,
             topPercent: await this.rankAmongFans(
               { work: { composerId: composer.name } },
               userId,
@@ -361,7 +383,11 @@ export class RetrospectiveService {
             ),
           }
         : null,
-      topEpoch: tallyTop((i) => i.work.epoch?.name),
+      topEpoch: epoch,
+      faces: facesOf(() => true, 6),
+      epochFaces: epoch
+        ? facesOf((i) => i.work.epoch?.name === epoch.name, 3)
+        : [],
       topInstrument: tallyTop((i) => i.work.instrument?.name),
       masteryAvg: learned.length
         ? learned.reduce((n, l) => n + l.mastery, 0) / learned.length
@@ -372,6 +398,7 @@ export class RetrospectiveService {
               title: best.work!.title,
               composer: best.work!.composer.name,
               mastery: best.mastery,
+              portraitUrl: best.work!.composer.portraitUrl ?? null,
             }
           : null,
       busiestMonth:

@@ -25,7 +25,11 @@ const stats = (over: Partial<RetroStats> = {}): RetroStats => ({
   practice: { minutes: 600, days: 12 },
   achievements: { count: 3, rarest: 'Maratonista' },
   community: { annotations: 2, contributions: 1 },
-  next: ['Ballade No.1', 'Valsa Op.64', 'Estudo Op.10 No.3'],
+  next: ['Ballade No.1', 'Valsa Op.64', 'Estudo Op.10 No.3'].map((t, i) => ({
+    label: `${t} — Chopin`,
+    href: `/works/w${i}`,
+    composer: { name: 'Chopin', url: null },
+  })),
   ...over,
 });
 
@@ -47,6 +51,35 @@ describe('retrospectiva', () => {
     expect(t('month')).toBe('Em março você não parou');
     expect(cards[0].eyebrow).toBe('Seu 2026 na música');
     expect(cards[cards.length - 1].list).toHaveLength(3);
+  });
+
+  it('cada cartão desenha o seu: retrato, instrumento, época, mês e as próximas com link', () => {
+    const cards = buildCards(
+      stats({
+        topComposer: {
+          name: 'Chopin',
+          count: 4,
+          topPercent: 3,
+          portraitUrl: 'https://x/chopin.jpg',
+        },
+        epochFaces: [{ name: 'Liszt', url: null }],
+      }),
+      'pt',
+    );
+    const art = (k: string) => cards.find((c) => c.kind === k)?.art;
+    expect(art('composer')?.portrait).toEqual({
+      name: 'Chopin',
+      url: 'https://x/chopin.jpg',
+    });
+    expect(art('persona')?.instrument).toBe('Piano');
+    expect(art('epoch')).toEqual({
+      epoch: 'Romântico',
+      faces: [{ name: 'Liszt', url: null }],
+    });
+    expect(art('month')?.month).toBe(2);
+    const next = cards[cards.length - 1];
+    expect(next.links).toEqual(['/works/w0', '/works/w1', '/works/w2']);
+    expect(next.list?.[0]).toBe('Ballade No.1 — Chopin');
   });
 
   it('o primeiro lugar vira "maior fã"; sem base para comparar, sem ranking', () => {

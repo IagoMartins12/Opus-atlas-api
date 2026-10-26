@@ -10,6 +10,19 @@
 
 export type Lang = 'pt' | 'en';
 
+/** A composer's face on a card: the portrait, or the initials when none. */
+export interface Face {
+  name: string;
+  url: string | null;
+}
+
+/** A suggested work for "next chapter", with its page. */
+export interface NextWork {
+  label: string;
+  href: string;
+  composer: Face;
+}
+
 export interface RetroStats {
   firstName: string;
   period: 'year' | 'all';
@@ -23,17 +36,27 @@ export interface RetroStats {
     name: string;
     count: number;
     topPercent: number | null;
+    portraitUrl?: string | null;
   } | null;
   topGenre: { name: string; count: number; topPercent: number | null } | null;
   topEpoch: { name: string; count: number; share: number } | null;
   topInstrument: { name: string; count: number; share: number } | null;
   masteryAvg: number | null;
-  bestWork: { title: string; composer: string; mastery: number } | null;
+  bestWork: {
+    title: string;
+    composer: string;
+    mastery: number;
+    portraitUrl?: string | null;
+  } | null;
+  /** The composers most on the lists, most first (up to 6). */
+  faces?: Face[];
+  /** The same, only from the top era (up to 3). */
+  epochFaces?: Face[];
   busiestMonth: { month: number; count: number } | null;
   practice: { minutes: number; days: number } | null;
   achievements: { count: number; rarest: string | null };
   community: { annotations: number; contributions: number };
-  next: string[];
+  next: NextWork[];
 }
 
 export type CardKind =
@@ -51,6 +74,23 @@ export type CardKind =
   | 'community'
   | 'next';
 
+/**
+ * What each card draws besides its number, so no two plates look alike: a
+ * portrait in the middle (the composer, the work most mastered), faces in
+ * orbit (the repertoire, the era, the next works), the instrument, the era,
+ * the month. Cards saved before this have none and draw only the number.
+ */
+export interface RetroArt {
+  portrait?: Face;
+  faces?: Face[];
+  /** The top instrument's name, as in the catalog. */
+  instrument?: string;
+  /** The top era, by its catalog name (`Barroco`, `Romântico`...). */
+  epoch?: string;
+  /** 0 to 11. */
+  month?: number;
+}
+
 export interface RetroCard {
   kind: CardKind;
   eyebrow: string;
@@ -58,6 +98,9 @@ export interface RetroCard {
   value: string | null;
   detail: string | null;
   list?: string[];
+  /** The page of each item of `list`, in the same order. */
+  links?: string[];
+  art?: RetroArt;
 }
 
 /** A partir de quanto se mostra "entre os X%": menos que isso é pouca gente. */
@@ -191,6 +234,7 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
     eyebrow: pt ? 'Seu perfil' : 'Your profile',
     title: personaOf(s, lang),
     value: null,
+    art: s.topInstrument ? { instrument: s.topInstrument.name } : undefined,
     detail:
       [
         s.topInstrument &&
@@ -227,6 +271,7 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
       detail: pt
         ? `${c.count === 1 ? 'obra' : 'obras'} de ${c.name} nas suas listas`
         : `${c.count === 1 ? 'work' : 'works'} by ${c.name} on your lists`,
+      art: { portrait: { name: c.name, url: c.portraitUrl ?? null } },
     });
   }
 
@@ -268,6 +313,10 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
       detail: pt
         ? `das suas obras são do período ${name}`
         : `of your works come from the ${name} period`,
+      art: {
+        epoch: e.name,
+        ...(s.epochFaces?.length ? { faces: s.epochFaces.slice(0, 3) } : {}),
+      },
     });
   }
 
@@ -296,6 +345,12 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
       title: s.bestWork.title,
       value: `${s.bestWork.mastery}%`,
       detail: s.bestWork.composer,
+      art: {
+        portrait: {
+          name: s.bestWork.composer,
+          url: s.bestWork.portraitUrl ?? null,
+        },
+      },
     });
   }
 
@@ -327,6 +382,7 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
           ? `e ${s.favoriteComposers} nos favoritos`
           : `and ${s.favoriteComposers} in your favorites`
         : null,
+      art: s.faces?.length ? { faces: s.faces.slice(0, 6) } : undefined,
     });
   }
 
@@ -340,6 +396,7 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
       detail: pt
         ? 'obras adicionadas ou aprendidas no mês'
         : 'works added or learned that month',
+      art: { month: s.busiestMonth.month },
     });
   }
 
@@ -386,7 +443,11 @@ export function buildCards(s: RetroStats, lang: Lang): RetroCard[] {
       : pt
         ? 'continue estudando: a próxima retrospectiva fica ainda melhor'
         : 'keep studying: the next one gets even better',
-    list: s.next.slice(0, 3),
+    list: s.next.slice(0, 3).map((w) => w.label),
+    links: s.next.slice(0, 3).map((w) => w.href),
+    art: s.next.length
+      ? { faces: s.next.slice(0, 3).map((w) => w.composer) }
+      : undefined,
   });
 
   return cards;
