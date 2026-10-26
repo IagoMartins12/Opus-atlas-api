@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'fs';
 import {
   CatalogWork,
@@ -6,29 +8,42 @@ import {
   changesFor,
   matchPopularNames,
 } from '../catalog/works/popular-names/popular-names';
-import { runCatalogScript } from './catalog-script';
+import { errorMessage } from '../common/utils/error.util';
 
 const DEFAULT_FILE = 'prisma/data/popular-names.json';
 
 /**
  * Writes the popular names of works ("Sonata ao Luar", "New World
- * Symphony") from the editorial list onto the catalog.
+ * Symphony") and their famous parts from the editorial list onto the
+ * catalog.
  *
  * Simulates by default and prints, for each entry, the works it matched:
  * read it before `--apply`. Entries that match nothing or more than a few
  * works are flagged. A name already on a work (a curator's edit) is kept
  * unless `--force`. Idempotent.
  *
+ * **Only the database, not the application.** It used to boot the whole API
+ * (`runCatalogScript`), which connects to Redis — and the homologation Redis
+ * answers only by its internal name inside Render, so run from a laptop the
+ * script died before reading anything. The API caches the works for up to an
+ * hour: restart it (a deploy does) to show the names at once.
+ *
  * Usage:
  *   node dist/scripts/import-popular-names.js [--file=list.json]          # dry run
  *   node dist/scripts/import-popular-names.js [--file=list.json] --apply  # writes
  */
-void runCatalogScript(
-  'ImportPopularNames',
-  async ({ prisma, apply, logger, args }) => {
-    const force = process.argv.includes('--force');
+async function main(): Promise<void> {
+  const apply = process.argv.includes('--apply');
+  const force = process.argv.includes('--force');
+  const file =
+    process.argv.find((a) => a.startsWith('--file='))?.slice(7) ?? DEFAULT_FILE;
+  const logger = new Logger('ImportPopularNames');
+  const prisma = new PrismaClient();
+
+  try {
+    logger.log(apply ? 'GRAVANDO (--apply)' : 'Simulação: nada é gravado');
     const entries = JSON.parse(
-      readFileSync(args.file ?? DEFAULT_FILE, 'utf-8'),
+      readFileSync(file, 'utf-8'),
     ) as PopularNameEntry[];
 
     const porCompositor = new Map<string, CatalogWork[]>();
@@ -83,5 +98,16 @@ void runCatalogScript(
       logger.warn(
         `Padrões que casaram muitas obras (conferir): ${largas.join('; ')}`,
       );
-  },
-);
+    if (apply && escritas)
+      logger.log(
+        'Reinicie a API para os nomes aparecerem já (o cache das obras dura até 1 hora).',
+      );
+  } catch (error: unknown) {
+    logger.error(`Falha: ${errorMessage(error)}`);
+    process.exitCode = 1;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+void main();
