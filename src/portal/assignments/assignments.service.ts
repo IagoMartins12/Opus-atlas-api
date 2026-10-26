@@ -14,6 +14,8 @@ import {
   StorageAssetStatus,
   StudentInviteStatus,
 } from '@prisma/client';
+import { hasFeature } from '../../billing/constants/plan-features.constants';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { errorMessage } from '../../common/utils/error.util';
@@ -124,7 +126,21 @@ export class AssignmentsService {
     private readonly notifications: NotificationsService,
     private readonly storage: StorageService,
     private readonly activities: SchoolActivitiesService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
+
+  /**
+   * Vídeo como entrega de tarefa é do Maestro (`videoSubmissions`): o que vale
+   * é o plano do professor da tarefa, não o do aluno. A página de planos vende
+   * "Envio de vídeos nas tarefas" só no Maestro; até 25/10/2026 a regra não
+   * era conferida e o Mentor também recebia vídeo. Áudio continua para todos.
+   */
+  private async videoAllowed(assignment: AssignmentRow): Promise<boolean> {
+    const teacherUserId = assignment.lesson?.teacher?.userId;
+    if (!teacherUserId) return false;
+    const { plan } = await this.subscriptions.effectivePlan(teacherUserId);
+    return hasFeature(plan, 'videoSubmissions');
+  }
 
   // -------------------------------------------------------------------
   // Criação
@@ -305,6 +321,10 @@ export class AssignmentsService {
         // devolvida como verdadeira para o **aluno**, invertendo os papéis.
         canGiveFeedback: role === 'teacher',
         canSubmit: role === 'student' && !assignment.isCompleted,
+        canSubmitVideo:
+          role === 'student' &&
+          !assignment.isCompleted &&
+          (await this.videoAllowed(assignment)),
         canComplete: role === 'student' && !assignment.isCompleted,
       },
     };
@@ -536,6 +556,12 @@ export class AssignmentsService {
 
     if (!dto.assetId && !dto.note) {
       throw new BadRequestException('Envie um arquivo ou um comentário');
+    }
+
+    if (dto.kind === 'video' && !(await this.videoAllowed(assignment))) {
+      throw new ForbiddenException(
+        'O envio de vídeo nas tarefas é do plano Maestro do seu professor. Envie uma gravação de áudio.',
+      );
     }
 
     const submissions = readSubmissions(assignment.submissions);

@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Prisma, StorageAssetStatus, StoredAsset } from '@prisma/client';
+import {
+  Prisma,
+  StorageAssetKind,
+  StorageAssetStatus,
+  StoredAsset,
+} from '@prisma/client';
 import { StorageService } from '../../common/storage/storage.service';
 import { errorMessage } from '../../common/utils/error.util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -20,11 +25,21 @@ export interface FiltroDeOrfaos {
   /** ISO; sem `de` e `ate`, todos — o padrão da tela. */
   de?: string;
   ate?: string;
-  /** Um tipo de dono, ou `sem-dono` para os que não declaram dono. */
-  tipo?: OwnerType | 'sem-dono';
+  /**
+   * Um tipo de dono, `sem-dono` para os que não declaram dono, ou
+   * `video-sem-peca` para vídeos de performance que nenhuma peça usa.
+   */
+  tipo?: OwnerType | 'sem-dono' | 'video-sem-peca';
 }
 
-type Motivo = 'dono-removido' | 'sem-dono';
+type Motivo = 'dono-removido' | 'sem-dono' | 'video-sem-peca';
+
+/**
+ * Um vídeo recém-enviado fica ativo antes de ser ligado à peça (o envio e a
+ * gravação do "já aprendi" são dois passos): só depois de um dia sem peça ele
+ * conta como solto, como a limpeza de reservas do armazenamento.
+ */
+const CARENCIA_DO_VIDEO_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Arquivos órfãos, um a um: a imagem, de onde era, quem enviou, quando,
@@ -64,7 +79,7 @@ export class OrphanFilesService {
     const achados: Array<{ asset: StoredAsset; motivo: Motivo }> = [];
     const janela = this.janela(filtro);
 
-    if (filtro.tipo !== 'sem-dono') {
+    if (filtro.tipo !== 'sem-dono' && filtro.tipo !== 'video-sem-peca') {
       const tipos = filtro.tipo ? [filtro.tipo] : OWNER_TYPES;
       for (const tipo of tipos) {
         let cursor: string | undefined;
@@ -95,6 +110,17 @@ export class OrphanFilesService {
       }
     }
 
+    // Vídeo de performance que nenhuma peça usa: a obra existe (o arquivo
+    // aponta para ela), então a busca por dono removido não o acha. Saía assim
+    // quando a peça ia de "já aprendi" para "quero aprender" (até 25/10/2026).
+    if (!filtro.tipo || filtro.tipo === 'video-sem-peca') {
+      const listados = new Set(achados.map((x) => x.asset.id));
+      for (const asset of await this.videosSemPeca(janela)) {
+        if (!listados.has(asset.id))
+          achados.push({ asset, motivo: 'video-sem-peca' });
+      }
+    }
+
     if (!filtro.tipo || filtro.tipo === 'sem-dono') {
       const soltos = await this.prisma.storedAsset.findMany({
         where: {
@@ -111,6 +137,31 @@ export class OrphanFilesService {
     return achados.sort(
       (a, b) => b.asset.createdAt.getTime() - a.asset.createdAt.getTime(),
     );
+  }
+
+  /** Vídeos de performance ativos, com mais de um dia, fora de toda peça. */
+  private async videosSemPeca(
+    janela: Prisma.StoredAssetWhereInput,
+  ): Promise<StoredAsset[]> {
+    const videos = await this.prisma.storedAsset.findMany({
+      where: {
+        status: StorageAssetStatus.ACTIVE,
+        kind: StorageAssetKind.PERFORMANCE_VIDEO,
+        secureUrl: { not: null },
+        ...janela,
+        AND: [
+          { createdAt: { lt: new Date(Date.now() - CARENCIA_DO_VIDEO_MS) } },
+        ],
+      },
+      take: 5000,
+    });
+    if (!videos.length) return [];
+    const usados = await this.prisma.learned.findMany({
+      where: { videoUrl: { in: videos.map((v) => v.secureUrl!) } },
+      select: { videoUrl: true },
+    });
+    const emUso = new Set(usados.map((u) => u.videoUrl));
+    return videos.filter((v) => !emUso.has(v.secureUrl));
   }
 
   async listar(filtro: FiltroDeOrfaos, page = 1, limit = 40) {
@@ -168,7 +219,7 @@ export class OrphanFilesService {
     const porTipo: Record<string, number> = {};
     let bytes = 0;
     for (const { asset, motivo } of todos) {
-      const chave = motivo === 'sem-dono' ? 'sem-dono' : asset.entityType!;
+      const chave = motivo === 'dono-removido' ? asset.entityType! : motivo;
       porTipo[chave] = (porTipo[chave] ?? 0) + 1;
       bytes += asset.bytes ?? 0;
     }
@@ -255,15 +306,36 @@ export class OrphanFilesService {
       }
     }
 
+    // Vídeo de performance: o que decide é estar numa peça, não a obra existir.
+    const videos = assets.filter(
+      (a) => a.kind === StorageAssetKind.PERFORMANCE_VIDEO && a.secureUrl,
+    );
+    const videoEmUso = new Set(
+      videos.length
+        ? (
+            await this.prisma.learned.findMany({
+              where: { videoUrl: { in: videos.map((v) => v.secureUrl!) } },
+              select: { videoUrl: true },
+            })
+          ).map((u) => u.videoUrl)
+        : [],
+    );
+
     const removidos: string[] = [];
     const recusados: Array<{ id: string; motivo: string }> = [];
 
     for (const a of assets) {
+      const ehVideo = a.kind === StorageAssetKind.PERFORMANCE_VIDEO;
+      if (ehVideo && videoEmUso.has(a.secureUrl)) {
+        recusados.push({ id: a.id, motivo: 'O vídeo está numa peça' });
+        continue;
+      }
       if (a.entityType && !isOwnerType(a.entityType)) {
         recusados.push({ id: a.id, motivo: 'Tipo de dono desconhecido' });
         continue;
       }
       if (
+        !ehVideo &&
         a.entityType &&
         a.entityId &&
         vivos.has(`${a.entityType}:${a.entityId}`)

@@ -23,6 +23,7 @@ describe('OrphanFilesService', () => {
   let prisma: {
     storedAsset: { findMany: jest.Mock; findUnique: jest.Mock };
     work: { findMany: jest.Mock };
+    learned: { findMany: jest.Mock };
     user: { findMany: jest.Mock };
     adminAuditLog: { findMany: jest.Mock };
   };
@@ -43,6 +44,7 @@ describe('OrphanFilesService', () => {
         findUnique: jest.fn().mockResolvedValue({ status: 'DELETED' }),
       },
       work: { findMany: jest.fn().mockResolvedValue([{ id: 'w-viva' }]) },
+      learned: { findMany: jest.fn().mockResolvedValue([]) },
       user: {
         findMany: jest
           .fn()
@@ -111,5 +113,66 @@ describe('OrphanFilesService', () => {
     await expect(
       service.remover(Array.from({ length: 201 }, (_, i) => `id${i}`)),
     ).rejects.toThrow('No máximo 200');
+  });
+
+  describe('vídeo de performance fora de peça', () => {
+    const video = (over: Record<string, unknown> = {}) =>
+      asset({
+        id: 'v1',
+        kind: 'PERFORMANCE_VIDEO',
+        resourceType: 'VIDEO',
+        secureUrl: 'https://res.cloudinary.com/v1.mp4',
+        entityId: 'w-viva',
+        ...over,
+      });
+
+    it('lista o vídeo que nenhuma peça usa, mesmo com a obra existindo', async () => {
+      prisma.storedAsset.findMany.mockImplementation(
+        (args: { where: { kind?: string } }) =>
+          Promise.resolve(
+            args.where.kind === 'PERFORMANCE_VIDEO' ? [video()] : [],
+          ),
+      );
+
+      const r = await service.listar({ tipo: 'video-sem-peca' });
+
+      expect(r.items).toHaveLength(1);
+      expect(r.items[0]).toMatchObject({ id: 'v1', motivo: 'video-sem-peca' });
+      expect(r.resumo.porTipo).toEqual({ 'video-sem-peca': 1 });
+    });
+
+    it('não lista o vídeo que está numa peça', async () => {
+      prisma.storedAsset.findMany.mockImplementation(
+        (args: { where: { kind?: string } }) =>
+          Promise.resolve(
+            args.where.kind === 'PERFORMANCE_VIDEO' ? [video()] : [],
+          ),
+      );
+      prisma.learned.findMany.mockResolvedValue([
+        { videoUrl: 'https://res.cloudinary.com/v1.mp4' },
+      ]);
+
+      const r = await service.listar({ tipo: 'video-sem-peca' });
+
+      expect(r.items).toHaveLength(0);
+    });
+
+    it('remove o vídeo fora de peça, e recusa o que voltou a uma peça', async () => {
+      prisma.storedAsset.findMany.mockResolvedValue([
+        video(),
+        video({ id: 'v2', secureUrl: 'https://res.cloudinary.com/v2.mp4' }),
+      ]);
+      prisma.learned.findMany.mockResolvedValue([
+        { videoUrl: 'https://res.cloudinary.com/v2.mp4' },
+      ]);
+
+      const r = await service.remover(['v1', 'v2']);
+
+      expect(storage.deleteAsset).toHaveBeenCalledWith('v1');
+      expect(storage.deleteAsset).not.toHaveBeenCalledWith('v2');
+      expect(r.recusados).toEqual([
+        { id: 'v2', motivo: 'O vídeo está numa peça' },
+      ]);
+    });
   });
 });

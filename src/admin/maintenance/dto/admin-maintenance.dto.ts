@@ -163,13 +163,13 @@ export class ListOrphansQueryDto {
   ate?: string;
 
   @ApiPropertyOptional({
-    enum: [...OWNER_TYPES, 'sem-dono'],
+    enum: [...OWNER_TYPES, 'sem-dono', 'video-sem-peca'],
     description:
       'Tipo do dono removido, ou `sem-dono` para os sem dono declarado',
   })
   @IsOptional()
-  @IsIn([...OWNER_TYPES, 'sem-dono'])
-  tipo?: OwnerType | 'sem-dono';
+  @IsIn([...OWNER_TYPES, 'sem-dono', 'video-sem-peca'])
+  tipo?: OwnerType | 'sem-dono' | 'video-sem-peca';
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

@@ -9,6 +9,7 @@ import { StorageService } from '../../common/storage/storage.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SchoolActivitiesService } from '../school-activities/school-activities.service';
+import { SubscriptionsService } from '../../billing/services/subscriptions.service';
 import { AssignmentsService } from './assignments.service';
 
 /** Prazo futuro estável, para o teste não depender do relógio. */
@@ -48,6 +49,7 @@ describe('AssignmentsService', () => {
     deleteAsset: jest.Mock;
     deleteByEntity: jest.Mock;
   };
+  let subscriptions: { effectivePlan: jest.Mock };
 
   const assignmentRow = (overrides: Record<string, unknown> = {}) => ({
     id: 'assignment-1',
@@ -144,6 +146,10 @@ describe('AssignmentsService', () => {
       deleteByEntity: jest.fn().mockResolvedValue(1),
     };
 
+    subscriptions = {
+      effectivePlan: jest.fn().mockResolvedValue({ plan: 'MAESTRO' }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AssignmentsService,
@@ -155,6 +161,9 @@ describe('AssignmentsService', () => {
           provide: SchoolActivitiesService,
           useValue: { record: jest.fn(), recordCollapsing: jest.fn() },
         },
+        // O professor das tarefas é Maestro: vídeo liberado, salvo onde o
+        // teste diz o contrário.
+        { provide: SubscriptionsService, useValue: subscriptions },
       ],
     }).compile();
 
@@ -445,6 +454,29 @@ describe('AssignmentsService', () => {
           assetId: 'asset-de-outro',
         }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('vídeo só com professor Maestro: com Mentor, recusa e pede áudio', async () => {
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'MENTOR' });
+
+      await expect(
+        service.addSubmission('student-user', 'assignment-1', {
+          kind: 'video',
+          assetId: 'asset-1',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(subscriptions.effectivePlan).toHaveBeenCalledWith('teacher-user');
+    });
+
+    it('áudio passa com qualquer plano do professor', async () => {
+      subscriptions.effectivePlan.mockResolvedValue({ plan: 'MENTOR' });
+
+      await expect(
+        service.addSubmission('student-user', 'assignment-1', {
+          kind: 'audio',
+          assetId: 'asset-1',
+        }),
+      ).resolves.toBeDefined();
     });
 
     it('recusa envio sem arquivo nem comentário', async () => {
@@ -778,6 +810,7 @@ describe('AssignmentsService', () => {
         canDelete: true,
         canGiveFeedback: true,
         canSubmit: false,
+        canSubmitVideo: false,
         canComplete: false,
       });
 
@@ -787,6 +820,8 @@ describe('AssignmentsService', () => {
         canDelete: false,
         canGiveFeedback: false,
         canSubmit: true,
+        // O professor da tarefa é Maestro (o dublê de assinaturas).
+        canSubmitVideo: true,
         canComplete: true,
       });
     });
