@@ -49,8 +49,9 @@ export class WorkUploadResponseDto {
   @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
   epochId: string;
 
-  @ApiProperty({ example: 1839, nullable: true })
-  compositionYear: number | null;
+  /** Text, as the sources write it ("1830-32", "1845 ca."). */
+  @ApiProperty({ example: '1839', nullable: true })
+  compositionYear: string | null;
 
   @ApiProperty({ nullable: true })
   firstPublishDate: string | null;
