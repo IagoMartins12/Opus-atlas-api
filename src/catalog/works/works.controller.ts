@@ -267,6 +267,29 @@ export class WorksController {
     return { status: await this.imslpScores.status(id) };
   }
 
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':id/scores/search-again')
+  @ApiOperation({
+    summary:
+      'Procura de novo as partituras da obra no IMSLP, na frente da fila',
+    description:
+      'O botão "Procurar novamente" da página da obra, quando a busca ficou sem resposta ' +
+      '(fila cheia, espera longa). Só para obra com página válida no IMSLP e sem leitura ' +
+      'no dia; uma vez por minuto por obra; respeita a pausa do IMSLP fora do ar.',
+  })
+  @ApiOkResponse({ type: ImslpScoresStatusDto })
+  async searchScoresAgain(
+    @Param('id') id: string,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<ImslpScoresStatusDto> {
+    return {
+      status: await this.imslpScores.searchAgain(id, {
+        robot: isRobotUserAgent(userAgent),
+      }),
+    };
+  }
+
   @ApiBearerAuth('access-token')
   @Roles('ADMIN')
   @Post(':id/scores/refresh')

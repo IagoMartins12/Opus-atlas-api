@@ -21,7 +21,9 @@ export class ArticleSummaryDto {
   @ApiProperty() isFeatured: boolean;
   @ApiPropertyOptional({ nullable: true }) featuredOrder?: number | null;
   @ApiProperty({ enum: ArticleType, isArray: true }) types: ArticleType[];
-  @ApiProperty({ type: AuthorRefDto }) author: AuthorRefDto;
+  /** `null`: the author deleted their account; the site shows "Autor desconhecido". */
+  @ApiProperty({ type: AuthorRefDto, nullable: true })
+  author: AuthorRefDto | null;
   @ApiPropertyOptional({ nullable: true }) publishedAt?: Date | null;
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;

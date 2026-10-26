@@ -2918,9 +2918,10 @@ model BlogArticle {
   // ===== TIPOS E CATEGORIAS =====
   types ArticleType[] @default([]) // Múltiplos tipos possíveis
 
-  // Autor
-  authorId String @db.ObjectId
-  author   User   @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  // Autor. Sem autor quando a conta foi excluída: o artigo fica no ar e o
+  // site escreve "Autor desconhecido" (antes a exclusão levava o artigo junto).
+  authorId String? @db.ObjectId
+  author   User?   @relation("BlogAuthor", fields: [authorId], references: [id], onDelete: SetNull)
 
   // Co-autores (opcional)
   coAuthorIds String[] @default([]) @db.ObjectId

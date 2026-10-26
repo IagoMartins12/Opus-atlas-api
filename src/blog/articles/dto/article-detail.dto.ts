@@ -85,7 +85,9 @@ export class ArticleDetailDto {
   @ApiProperty({ enum: ArticleStatus }) status: ArticleStatus;
   @ApiProperty() isFeatured: boolean;
   @ApiProperty({ enum: ArticleType, isArray: true }) types: ArticleType[];
-  @ApiProperty({ type: AuthorRefWithBioDto }) author: AuthorRefWithBioDto;
+  /** `null`: the author deleted their account; the site shows "Autor desconhecido". */
+  @ApiProperty({ type: AuthorRefWithBioDto, nullable: true })
+  author: AuthorRefWithBioDto | null;
   @ApiPropertyOptional({ nullable: true }) publishedAt?: Date | null;
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;

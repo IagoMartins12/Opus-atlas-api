@@ -51,6 +51,16 @@ const BREAKER_OPEN_MS = 10 * 60 * 1000;
 /** Trava por obra: a busca da fila e o "reler" do admin não rodam juntos. */
 const LOCK_TTL_MS = 60 * 1000;
 
+/** Um "procurar novamente" por obra a cada minuto: botão apertado em série não fura a fila em série. */
+const RETRY_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * O endereço de uma obra no IMSLP: uma página do wiki, e não uma categoria
+ * (a do compositor) nem uma busca. Fora disso nada é pedido ao IMSLP.
+ */
+const IMSLP_WORK_PAGE =
+  /^https?:\/\/(www\.)?imslp\.org\/wiki\/(?!Category:|Special:Search)[^\s?#]+/i;
+
 // Fora dos namespaces de cache de propósito: uma escrita no catálogo limpa
 // `works:*`, e a marca de tentativa não deve sumir junto.
 /**
@@ -68,6 +78,7 @@ export const imslpScoresJobId = (workId: string) =>
 
 const triedKey = (workId: string) => `imslp-scores:tried:${workId}`;
 const lockKey = (workId: string) => `imslp-scores:lock:${workId}`;
+const retryKey = (workId: string) => `imslp-scores:retry:${workId}`;
 const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
 const BREAKER_OPEN = 'imslp-scores:breaker:open';
 
@@ -164,6 +175,64 @@ export class ImslpScoresService {
     } catch (error: unknown) {
       this.logger.warn(
         `IMSLP: não foi possível pedir as partituras da obra ${workId}: ${errorMessage(error)}`,
+      );
+      return 'unavailable';
+    }
+  }
+
+  /**
+   * "Procurar novamente": a obra que ficou sem resposta (fila cheia, espera
+   * longa) volta à fila **na frente de todas** (`lifo`) — o job que já
+   * esperava sai e entra de novo no começo. Não fura o disjuntor (o IMSLP
+   * falhando continua em pausa), não busca obra sem página no IMSLP nem a
+   * que já foi lida hoje, e vale uma vez por minuto por obra. Nunca lança.
+   */
+  async searchAgain(
+    workId: string,
+    options: { robot?: boolean } = {},
+  ): Promise<ImslpStatus> {
+    try {
+      if (!isMongoId(workId)) return 'none';
+      if ((await this.storedCount(workId)) > 0) return 'stored';
+      if (!(await this.permlinkOf(workId))) return 'none';
+      const mark = await this.cache.get<TriedMark | boolean>(triedKey(workId));
+      if (mark === 'done' || mark === true) return 'none';
+      if (options.robot || (await this.breakerOpen())) return 'unavailable';
+
+      const redis = await this.redis();
+      const id = imslpScoresJobId(workId);
+      if (
+        !(await redis.set(retryKey(workId), '1', 'PX', RETRY_COOLDOWN_MS, 'NX'))
+      ) {
+        return (await this.queue.getJob(id)) ? 'pending' : 'unavailable';
+      }
+
+      // A falha de uma hora atrás não segura quem pediu de novo.
+      if (mark === 'failed') await this.cache.del(triedKey(workId));
+      const job = await this.queue.getJob(id);
+      if (job) {
+        // Já sendo lida: é só esperar.
+        if ((await job.getState()) === 'active') return 'pending';
+        await job.remove();
+      }
+      await this.queue.add(
+        JOB_IMSLP_SCORES,
+        envelope<ImslpScoresJobPayload>({
+          idempotencyKey: id,
+          payload: { workId },
+        }),
+        {
+          jobId: id,
+          attempts: 1,
+          removeOnComplete: true,
+          removeOnFail: true,
+          lifo: true,
+        },
+      );
+      return 'pending';
+    } catch (error: unknown) {
+      this.logger.warn(
+        `IMSLP: não foi possível procurar de novo as partituras da obra ${workId}: ${errorMessage(error)}`,
       );
       return 'unavailable';
     }
@@ -327,6 +396,8 @@ export class ImslpScoresService {
   private async knownStatus(workId: string): Promise<ImslpStatus | null> {
     if (!isMongoId(workId)) return 'none';
     if ((await this.storedCount(workId)) > 0) return 'stored';
+    // Sem página válida no IMSLP não há o que buscar: nem fila, nem espera.
+    if (!(await this.permlinkOf(workId))) return 'none';
 
     const mark = await this.cache.get<TriedMark | boolean>(triedKey(workId));
     // `true` é a marca gravada antes da fila existir: tentativa feita.
@@ -397,9 +468,7 @@ export class ImslpScoresService {
     });
 
     const permlink = work?.imslpPermlink?.trim();
-    return permlink && /^https?:\/\/(www\.)?imslp\.org\//.test(permlink)
-      ? permlink
-      : null;
+    return permlink && IMSLP_WORK_PAGE.test(permlink) ? permlink : null;
   }
 
   private fields(score: ParsedImslpScore, totals: string) {

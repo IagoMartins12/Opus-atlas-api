@@ -126,7 +126,8 @@ export class SeoService {
   private async blogPages(
     articles: Array<{
       updatedAt: Date;
-      authorId: string;
+      /** `null`: the author's account was deleted; no author page to list. */
+      authorId: string | null;
       categories: Array<{ category: { slug: string; isActive: boolean } }>;
       tags: Array<{ tag: { slug: string } }>;
     }>,
@@ -148,7 +149,8 @@ export class SeoService {
       for (const { tag } of article.tags) {
         recente(tags, tag.slug, article.updatedAt);
       }
-      recente(autores, article.authorId, article.updatedAt);
+      if (article.authorId)
+        recente(autores, article.authorId, article.updatedAt);
     }
 
     const usuarios = autores.size

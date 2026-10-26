@@ -45,7 +45,12 @@ describe('ImslpScoresService', () => {
     work: { findUnique: jest.Mock };
   };
   let fetcher: { load: jest.Mock };
-  let cache: { get: jest.Mock; set: jest.Mock; invalidateMany: jest.Mock };
+  let cache: {
+    get: jest.Mock;
+    set: jest.Mock;
+    del: jest.Mock;
+    invalidateMany: jest.Mock;
+  };
   let redis: ReturnType<typeof fakeRedis>;
   let queue: {
     add: jest.Mock;
@@ -72,6 +77,7 @@ describe('ImslpScoresService', () => {
     cache = {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
+      del: jest.fn().mockResolvedValue(undefined),
       invalidateMany: jest.fn().mockResolvedValue(undefined),
     };
     redis = fakeRedis();
@@ -181,6 +187,70 @@ describe('ImslpScoresService', () => {
     it('id inválido não chega ao banco nem à fila', async () => {
       await expect(service.request('abc')).resolves.toBe('none');
       expect(prisma.workScore.count).not.toHaveBeenCalled();
+      expect(queue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('link do IMSLP', () => {
+    it.each([
+      [null],
+      [''],
+      ['https://example.com/wiki/Nocturnes'],
+      ['https://imslp.org/wiki/Category:Chopin,_Frédéric'],
+      ['https://imslp.org/'],
+    ])('sem página válida (%s) não enfileira nem espera', async (link) => {
+      prisma.work.findUnique.mockResolvedValue({ imslpPermlink: link });
+
+      await expect(service.request(WORK)).resolves.toBe('none');
+      expect(queue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('procurar novamente (o botão)', () => {
+    const job = (state: string) => ({
+      getState: jest.fn().mockResolvedValue(state),
+      remove: jest.fn().mockResolvedValue(undefined),
+    });
+
+    it('tira o job que esperava e põe de novo na frente da fila', async () => {
+      const esperando = job('waiting');
+      queue.getJob.mockResolvedValue(esperando);
+      cache.get.mockResolvedValue('failed');
+
+      await expect(service.searchAgain(WORK)).resolves.toBe('pending');
+      expect(esperando.remove).toHaveBeenCalled();
+      expect(cache.del).toHaveBeenCalled();
+      expect(queue.add).toHaveBeenCalledWith(
+        'imslp.work.scores',
+        expect.objectContaining({ payload: { workId: WORK } }),
+        expect.objectContaining({ jobId: imslpScoresJobId(WORK), lifo: true }),
+      );
+    });
+
+    it('já sendo lida, só espera', async () => {
+      queue.getJob.mockResolvedValue(job('active'));
+
+      await expect(service.searchAgain(WORK)).resolves.toBe('pending');
+      expect(queue.add).not.toHaveBeenCalled();
+    });
+
+    it('uma vez por minuto por obra', async () => {
+      await service.searchAgain(WORK);
+      queue.getJob.mockResolvedValue(job('waiting'));
+      await service.searchAgain(WORK);
+
+      expect(queue.add).toHaveBeenCalledTimes(1);
+    });
+
+    it('não busca obra sem página no IMSLP, já lida hoje, nem com o IMSLP em pausa', async () => {
+      prisma.work.findUnique.mockResolvedValueOnce({ imslpPermlink: null });
+      await expect(service.searchAgain(WORK)).resolves.toBe('none');
+
+      cache.get.mockResolvedValueOnce('done');
+      await expect(service.searchAgain(WORK)).resolves.toBe('none');
+
+      redis.store.set('imslp-scores:breaker:open', '1');
+      await expect(service.searchAgain(WORK)).resolves.toBe('unavailable');
       expect(queue.add).not.toHaveBeenCalled();
     });
   });

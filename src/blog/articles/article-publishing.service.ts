@@ -69,7 +69,11 @@ export class ArticlePublishingService {
     ]);
 
     const pessoas = await this.prisma.user.findMany({
-      where: { id: { in: autores.map((a) => a.authorId) } },
+      where: {
+        id: {
+          in: autores.flatMap((a) => (a.authorId ? [a.authorId] : [])),
+        },
+      },
       select: { id: true, firstName: true, lastName: true, image: true },
     });
     const porId = new Map(pessoas.map((p) => [p.id, p]));
@@ -83,15 +87,18 @@ export class ArticlePublishingService {
       porEstado: estados,
       visualizacoes: visualizacoes._sum.viewCount ?? 0,
       autores: autores
-        .map((a) => ({
-          id: a.authorId,
-          nome:
-            [porId.get(a.authorId)?.firstName, porId.get(a.authorId)?.lastName]
-              .filter(Boolean)
-              .join(' ') || 'Conta removida',
-          imagem: porId.get(a.authorId)?.image ?? null,
-          artigos: a._count._all,
-        }))
+        .map((a) => {
+          // Sem autor: a conta foi excluída e o artigo ficou.
+          const p = a.authorId ? porId.get(a.authorId) : undefined;
+          return {
+            id: a.authorId,
+            nome:
+              [p?.firstName, p?.lastName].filter(Boolean).join(' ') ||
+              'Autor desconhecido',
+            imagem: p?.image ?? null,
+            artigos: a._count._all,
+          };
+        })
         .sort((a, b) => b.artigos - a.artigos),
     };
   }
