@@ -14,6 +14,26 @@ const MAX_WORKS = 2_000;
 const MAX_ARTICLES = 5_000;
 const MAX_TEACHERS = 2_000;
 
+/**
+ * URLs por arquivo do sitemap do acervo. O teto do protocolo é 50 mil por
+ * arquivo (e 50 MB); com a versão em inglês de cada endereço, 40 mil deixam
+ * folga nos dois.
+ */
+export const CATALOG_PAGE_SIZE = 40_000;
+/** O acervo inteiro muda devagar: um dia de cache por página do sitemap. */
+const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
+
+export type CatalogKind = 'composers' | 'works';
+
+/**
+ * As obras que têm página própria no sitemap: as principais. Os movimentos
+ * ("II. Adagio") ficam de fora — são achados pela página da obra mãe, que os
+ * lista, e sozinhos seriam quase cópias dela.
+ */
+const MAIN_WORK = {
+  OR: [{ parentWorkId: null }, { parentWorkId: { isSet: false } }],
+};
+
 export interface SitemapEntries {
   generatedAt: string;
   composers: Array<{ id: string; name: string; lastModified: Date }>;
@@ -60,6 +80,93 @@ export class SeoService {
     const entries = await this.load();
     await this.cache.set(key, entries, SITEMAP_TTL_MS);
     return entries;
+  }
+
+  /**
+   * Quantos arquivos o sitemap do acervo tem, por tipo: o índice do sitemap
+   * (`/sitemap.xml`, no Next) lista um por página.
+   */
+  async catalogIndex(): Promise<{
+    pageSize: number;
+    composers: number;
+    works: number;
+  }> {
+    const key = `${CacheNamespace.DISCOVERY}:sitemap:catalog:index:v1`;
+    const cached = await this.cache.get<{
+      pageSize: number;
+      composers: number;
+      works: number;
+    }>(key, 'seo/sitemap/catalog');
+    if (cached) return cached;
+
+    const [composerIds, works] = await Promise.all([
+      this.composersWithWorks(),
+      this.prisma.work.count({ where: MAIN_WORK }),
+    ]);
+    const pages = (n: number) => Math.max(1, Math.ceil(n / CATALOG_PAGE_SIZE));
+    const index = {
+      pageSize: CATALOG_PAGE_SIZE,
+      composers: pages(composerIds.length),
+      works: pages(works),
+    };
+    await this.cache.set(key, index, CATALOG_TTL_MS);
+    return index;
+  }
+
+  /**
+   * Uma página do sitemap do acervo: **todos** os compositores com obra e
+   * todas as obras principais, não só os "relevantes" do sitemap antigo (500
+   * compositores e 2 mil obras, de um acervo de centenas de milhares — o
+   * buscador não sabia que o resto existia). Em ordem de id, que é estável
+   * entre um dia e outro.
+   */
+  async catalogPage(
+    kind: CatalogKind,
+    page: number,
+  ): Promise<Array<{ id: string; lastModified: Date }>> {
+    const key = `${CacheNamespace.DISCOVERY}:sitemap:catalog:${kind}:${page}:v1`;
+    const cached = await this.cache.get<
+      Array<{ id: string; lastModified: Date }>
+    >(key, 'seo/sitemap/catalog');
+    if (cached) return cached;
+
+    const skip = page * CATALOG_PAGE_SIZE;
+    let rows: Array<{ id: string; updatedAt: Date }>;
+    if (kind === 'composers') {
+      const ids = (await this.composersWithWorks()).slice(
+        skip,
+        skip + CATALOG_PAGE_SIZE,
+      );
+      rows = ids.length
+        ? await this.prisma.composer.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, updatedAt: true },
+            orderBy: { id: 'asc' },
+          })
+        : [];
+    } else {
+      rows = await this.prisma.work.findMany({
+        where: MAIN_WORK,
+        select: { id: true, updatedAt: true },
+        orderBy: { id: 'asc' },
+        skip,
+        take: CATALOG_PAGE_SIZE,
+      });
+    }
+
+    const entries = rows.map((r) => ({ id: r.id, lastModified: r.updatedAt }));
+    await this.cache.set(key, entries, CATALOG_TTL_MS);
+    return entries;
+  }
+
+  /**
+   * Os compositores com ao menos uma obra no acervo, em ordem de id. Sem obra,
+   * a página do compositor é só um nome: fica fora do sitemap (continua no
+   * ar, achável pelos links).
+   */
+  private async composersWithWorks(): Promise<string[]> {
+    const groups = await this.prisma.work.groupBy({ by: ['composerId'] });
+    return groups.map((g) => g.composerId).sort();
   }
 
   private async load(): Promise<SitemapEntries> {

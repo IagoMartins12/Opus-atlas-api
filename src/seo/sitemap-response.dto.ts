@@ -98,3 +98,22 @@ export class SitemapEntriesDto {
   @ApiProperty({ type: [SitemapTeacherDto] })
   teachers: SitemapTeacherDto[];
 }
+
+export class SitemapCatalogIndexDto {
+  @ApiProperty({ example: 40000 })
+  pageSize: number;
+
+  @ApiProperty({ example: 1, description: 'Páginas de compositores' })
+  composers: number;
+
+  @ApiProperty({ example: 6, description: 'Páginas de obras' })
+  works: number;
+}
+
+export class SitemapCatalogEntryDto {
+  @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
+  id: string;
+
+  @ApiProperty()
+  lastModified: Date;
+}

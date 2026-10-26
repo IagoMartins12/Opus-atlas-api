@@ -4,7 +4,10 @@ import { SeoService } from './seo.service';
 
 describe('SeoService', () => {
   const updatedAt = new Date('2026-09-01T00:00:00Z');
-  let prisma: Record<string, { findMany?: jest.Mock; groupBy?: jest.Mock }>;
+  let prisma: Record<
+    string,
+    { findMany?: jest.Mock; groupBy?: jest.Mock; count?: jest.Mock }
+  >;
   let cache: { get: jest.Mock; set: jest.Mock };
   let service: SeoService;
 
@@ -106,5 +109,50 @@ describe('SeoService', () => {
 
     expect(prisma.favoriteWork.groupBy).toHaveBeenCalled();
     expect(result.works[0]).toMatchObject({ id: 'w1', title: 'Noturno' });
+  });
+
+  describe('sitemap do acervo inteiro', () => {
+    it('conta as páginas: compositores com obra e obras principais, 40 mil por arquivo', async () => {
+      prisma.work.groupBy = jest
+        .fn()
+        .mockResolvedValue([{ composerId: 'b' }, { composerId: 'a' }]);
+      prisma.work.count = jest.fn().mockResolvedValue(85_000);
+
+      await expect(service.catalogIndex()).resolves.toEqual({
+        pageSize: 40_000,
+        composers: 1,
+        works: 3,
+      });
+      // Os movimentos ficam de fora: a obra mãe os lista.
+      expect(prisma.work.count).toHaveBeenCalledWith({
+        where: {
+          OR: [{ parentWorkId: null }, { parentWorkId: { isSet: false } }],
+        },
+      });
+    });
+
+    it('uma página de obras vem em ordem de id, a partir do lugar dela', async () => {
+      await service.catalogPage('works', 2);
+
+      expect(prisma.work.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { id: 'asc' },
+          skip: 80_000,
+          take: 40_000,
+        }),
+      );
+    });
+
+    it('a página de compositores só traz quem tem obra', async () => {
+      prisma.work.groupBy = jest
+        .fn()
+        .mockResolvedValue([{ composerId: 'c2' }, { composerId: 'c1' }]);
+
+      await service.catalogPage('composers', 0);
+
+      expect(prisma.composer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: ['c1', 'c2'] } } }),
+      );
+    });
   });
 });
