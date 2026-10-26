@@ -43,6 +43,10 @@ interface WorkMediaFields {
 const SCALAR_FIELDS = [
   'title',
   'subtitle',
+  'popularName',
+  'popularNameEn',
+  'famousParts',
+  'famousPartsEn',
   'opOrCatalog',
   'compositionYear',
   'firstPublishDate',

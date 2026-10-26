@@ -26,8 +26,17 @@ const TEXT_INDEXES: TextIndexSpec[] = [
     collection: 'Work',
     name: 'work_text_search',
     // Título pesa mais que número de catálogo: quem busca "Sonata" quer a obra,
-    // não uma correspondência acidental em "Op. 27".
-    fields: { title: 10, opOrCatalog: 4, subtitle: 2 },
+    // não uma correspondência acidental em "Op. 27". O nome popular pesa como
+    // o título: "sonata ao luar" é como a pessoa procura a Op.27 nº 2.
+    fields: {
+      title: 10,
+      popularName: 10,
+      popularNameEn: 10,
+      famousParts: 6,
+      famousPartsEn: 5,
+      opOrCatalog: 4,
+      subtitle: 2,
+    },
   },
   {
     collection: 'Composer',
@@ -93,7 +102,52 @@ export class TextIndexService implements OnApplicationBootstrap {
     return Promise.all(TEXT_INDEXES.map((spec) => this.ensureIndex(spec)));
   }
 
-  private async ensureIndex(spec: TextIndexSpec): Promise<TextIndexReport> {
+  /**
+   * The collection's text index, when it exists with other fields or weights
+   * than the spec (a field was added): it is dropped so the new one can be
+   * built. A
+   * collection takes a single text index, so creating the new one alongside
+   * fails, and the search would go on without the new fields.
+   */
+  private async dropOutdated(spec: TextIndexSpec): Promise<boolean> {
+    const result = (await this.prisma.$runCommandRaw({
+      listIndexes: spec.collection,
+    })) as {
+      cursor?: {
+        firstBatch?: Array<{
+          name: string;
+          key?: Record<string, unknown>;
+          weights?: Record<string, number>;
+        }>;
+      };
+    };
+    const texto = (result.cursor?.firstBatch ?? []).find(
+      (i) => i.key && Object.values(i.key).includes('text'),
+    );
+    if (!texto) return false;
+    // Fields and weights: a new weight also needs the index rebuilt.
+    const assinatura = (pesos: Record<string, number>) =>
+      Object.entries(pesos)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([campo, peso]) => `${campo}:${peso}`)
+        .join(',');
+    const atuais = assinatura(texto.weights ?? {});
+    const desejados = assinatura(spec.fields);
+    if (atuais === desejados) return false;
+    await this.prisma.$runCommandRaw({
+      dropIndexes: spec.collection,
+      index: texto.name,
+    });
+    this.logger.log(
+      `Índice de texto de ${spec.collection} com outros campos (${atuais}): refeito com ${desejados}`,
+    );
+    return true;
+  }
+
+  private async ensureIndex(
+    spec: TextIndexSpec,
+    retried = false,
+  ): Promise<TextIndexReport> {
     const key: Record<string, string> = {};
     const weights: Record<string, number> = {};
 
@@ -125,6 +179,11 @@ export class TextIndexService implements OnApplicationBootstrap {
       return { collection: spec.collection, name: spec.name, ready: true };
     } catch (error: unknown) {
       const message = errorMessage(error);
+
+      // An index with other fields or weights: replace it once with this spec.
+      if (!retried && (await this.dropOutdated(spec).catch(() => false))) {
+        return this.ensureIndex(spec, true);
+      }
 
       // Uma coleção só aceita um índice de texto. Se já existir outro com nome
       // diferente, a busca por `$text` continua funcionando — só não com os

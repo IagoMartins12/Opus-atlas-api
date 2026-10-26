@@ -307,6 +307,10 @@ const COMPOSER_WORKS_SELECT = {
   id: true,
   title: true,
   subtitle: true,
+  popularName: true,
+  popularNameEn: true,
+  famousParts: true,
+  famousPartsEn: true,
   opOrCatalog: true,
   compositionYear: true,
   tone: true,
@@ -748,6 +752,10 @@ export class ComposersService {
       id: work.id,
       title: work.title,
       subtitle: this.normalizeOptionalString(work.subtitle),
+      popularName: this.normalizeOptionalString(work.popularName),
+      popularNameEn: this.normalizeOptionalString(work.popularNameEn),
+      famousParts: work.famousParts ?? [],
+      famousPartsEn: work.famousPartsEn ?? [],
       opOrCatalog: this.normalizeOptionalString(work.opOrCatalog),
       compositionYear: this.normalizeOptionalString(work.compositionYear),
       tone: this.normalizeOptionalString(work.tone),
@@ -962,6 +970,18 @@ export class ComposersService {
         },
         {
           subtitle: {
+            contains: escapeRegex(query.search),
+            mode: 'insensitive',
+          },
+        },
+        {
+          popularName: {
+            contains: escapeRegex(query.search),
+            mode: 'insensitive',
+          },
+        },
+        {
+          popularNameEn: {
             contains: escapeRegex(query.search),
             mode: 'insensitive',
           },

@@ -37,6 +37,18 @@ export class WorkUploadResponseDto {
   @ApiProperty({ nullable: true })
   subtitle: string | null;
 
+  @ApiProperty({ nullable: true, example: 'Sonata ao Luar' })
+  popularName: string | null;
+
+  @ApiProperty({ nullable: true, example: 'Moonlight Sonata' })
+  popularNameEn: string | null;
+
+  @ApiProperty({ type: [String] })
+  famousParts: string[];
+
+  @ApiProperty({ type: [String] })
+  famousPartsEn: string[];
+
   @ApiProperty({ example: 'Op. 35', nullable: true })
   opOrCatalog: string | null;
 

@@ -1,0 +1,1362 @@
+[
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.8, Op\\.13\\b",
+  "pt": "Sonata Patética",
+  "en": "Pathétique Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.14, Op\\.27 No\\.2\\b",
+  "pt": "Sonata ao Luar",
+  "en": "Moonlight Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.15, Op\\.28\\b",
+  "pt": "Sonata Pastoral",
+  "en": "Pastoral Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.17, Op\\.31 No\\.2\\b",
+  "pt": "A Tempestade",
+  "en": "The Tempest"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.21, Op\\.53\\b",
+  "pt": "Sonata Waldstein",
+  "en": "Waldstein Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.23, Op\\.57\\b",
+  "pt": "Appassionata",
+  "en": "Appassionata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.26, Op\\.81a\\b",
+  "pt": "Les Adieux",
+  "en": "Les Adieux"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Sonata No\\.29, Op\\.106\\b",
+  "pt": "Hammerklavier",
+  "en": "Hammerklavier"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Symphony No\\.3, Op\\.55\\b",
+  "pt": "Sinfonia Heroica (Eroica)",
+  "en": "Eroica Symphony"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Symphony No\\.5, Op\\.67\\b",
+  "pt": "Sinfonia do Destino",
+  "en": "Fate Symphony"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Symphony No\\.6, Op\\.68\\b",
+  "pt": "Sinfonia Pastoral",
+  "en": "Pastoral Symphony"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Symphony No\\.9, Op\\.125\\b",
+  "pt": "Sinfonia Coral",
+  "en": "Choral Symphony",
+  "partes": {
+   "pt": [
+    "Ode à Alegria (4º movimento)"
+   ],
+   "en": [
+    "Ode to Joy (4th movement)"
+   ]
+  }
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Concerto No\\.5, Op\\.73\\b",
+  "pt": "Concerto Imperador",
+  "en": "Emperor Concerto"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Violin Sonata No\\.5, Op\\.24\\b",
+  "pt": "Sonata Primavera",
+  "en": "Spring Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Violin Sonata No\\.9, Op\\.47\\b",
+  "pt": "Sonata a Kreutzer",
+  "en": "Kreutzer Sonata"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Trio in B-flat major, Op\\.97\\b",
+  "pt": "Trio Arquiduque",
+  "en": "Archduke Trio"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Piano Trio in D major, Op\\.70 No\\.1\\b",
+  "pt": "Trio dos Fantasmas",
+  "en": "Ghost Trio"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^(3 String Quartets, Op\\.59|String Quartet No\\.[789], Op\\.59)\\b",
+  "pt": "Quartetos Razumovsky",
+  "en": "Razumovsky Quartets"
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Rondo a capriccio, Op\\.129\\b",
+  "pt": "Fúria pelo Vintém Perdido",
+  "en": "Rage over a Lost Penny"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.525\\b",
+  "pt": "Pequena Serenata Noturna",
+  "en": "Eine kleine Nachtmusik"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Piano Sonata No\\.11.*K\\.331\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Marcha Turca (Rondo alla turca, 3º movimento)"
+   ],
+   "en": [
+    "Turkish March (Rondo alla turca, 3rd movement)"
+   ]
+  }
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Piano Sonata No\\.16.*K\\.545\\b",
+  "pt": "Sonata Facile",
+  "en": "Sonata facile"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Symphony No\\.35.*K\\.385\\b",
+  "pt": "Sinfonia Haffner",
+  "en": "Haffner Symphony"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Symphony No\\.36.*K\\.425\\b",
+  "pt": "Sinfonia Linz",
+  "en": "Linz Symphony"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Symphony No\\.38.*K\\.504\\b",
+  "pt": "Sinfonia Praga",
+  "en": "Prague Symphony"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Symphony No\\.41.*K\\.551\\b",
+  "pt": "Sinfonia Júpiter",
+  "en": "Jupiter Symphony"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "^Piano Concerto No\\.21.*K\\.467\\b",
+  "pt": "Elvira Madigan",
+  "en": "Elvira Madigan"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.265\\b",
+  "pt": "Variações sobre Brilha, Brilha, Estrelinha",
+  "en": "Twinkle, Twinkle, Little Star Variations"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.317\\b",
+  "pt": "Missa da Coroação",
+  "en": "Coronation Mass"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.620\\b",
+  "pt": "A Flauta Mágica",
+  "en": "The Magic Flute"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.492\\b",
+  "pt": "As Bodas de Fígaro",
+  "en": "The Marriage of Figaro"
+ },
+ {
+  "c": "Mozart,_Wolfgang_Amadeus",
+  "t": "K\\.384\\b",
+  "pt": "O Rapto do Serralho",
+  "en": "The Abduction from the Seraglio"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 1068\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Ária na Corda Sol"
+   ],
+   "en": [
+    "Air on the G String"
+   ]
+  }
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 565\\b",
+  "pt": "Tocata e Fuga em Ré menor",
+  "en": "Toccata and Fugue in D minor"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 104[6-9]\\b|BWV 105[01]\\b",
+  "pt": "Concertos de Brandemburgo",
+  "en": "Brandenburg Concertos"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 988\\b",
+  "pt": "Variações Goldberg",
+  "en": "Goldberg Variations"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 147\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Jesus, Alegria dos Homens (coral)"
+   ],
+   "en": [
+    "Jesu, Joy of Man's Desiring (chorale)"
+   ]
+  }
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 846-869|BWV 870-893|^Das wohltemperierte Klavier|^The Well-Tempered",
+  "pt": "O Cravo Bem Temperado",
+  "en": "The Well-Tempered Clavier"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 244\\b",
+  "pt": "Paixão segundo São Mateus",
+  "en": "St Matthew Passion"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 245\\b",
+  "pt": "Paixão segundo São João",
+  "en": "St John Passion"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 232\\b",
+  "pt": "Missa em Si menor",
+  "en": "Mass in B minor"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 1007-1012|^6 Cello Suites|^Cello Suites",
+  "pt": "Suítes para Violoncelo",
+  "en": "Cello Suites"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 1080\\b",
+  "pt": "A Arte da Fuga",
+  "en": "The Art of Fugue"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 1079\\b",
+  "pt": "Oferenda Musical",
+  "en": "The Musical Offering"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 211\\b",
+  "pt": "Cantata do Café",
+  "en": "Coffee Cantata"
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 248\\b",
+  "pt": "Oratório de Natal",
+  "en": "Christmas Oratorio"
+ },
+ {
+  "c": "Vivaldi,_Antonio",
+  "t": "^Le quattro stagioni|^The Four Seasons|^Il cimento dell'armonia",
+  "pt": "As Quatro Estações",
+  "en": "The Four Seasons"
+ },
+ {
+  "c": "Vivaldi,_Antonio",
+  "t": "RV 269\\b",
+  "pt": "A Primavera (As Quatro Estações)",
+  "en": "Spring (The Four Seasons)"
+ },
+ {
+  "c": "Vivaldi,_Antonio",
+  "t": "RV 315\\b",
+  "pt": "O Verão (As Quatro Estações)",
+  "en": "Summer (The Four Seasons)"
+ },
+ {
+  "c": "Vivaldi,_Antonio",
+  "t": "RV 293\\b",
+  "pt": "O Outono (As Quatro Estações)",
+  "en": "Autumn (The Four Seasons)"
+ },
+ {
+  "c": "Vivaldi,_Antonio",
+  "t": "RV 297\\b",
+  "pt": "O Inverno (As Quatro Estações)",
+  "en": "Winter (The Four Seasons)"
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "Op\\.53\\b",
+  "pt": "Polonaise Heroica",
+  "en": "Heroic Polonaise"
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Piano Sonata No\\.2, Op\\.35\\b",
+  "pt": "Sonata Fúnebre (Marcha Fúnebre)",
+  "en": "Funeral March Sonata"
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Fantaisie-Impromptu|Op\\.66\\b",
+  "pt": "Fantasia-Improviso",
+  "en": "Fantaisie-Impromptu"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "^Symphony No\\.6, Op\\.74\\b",
+  "pt": "Sinfonia Patética",
+  "en": "Pathétique Symphony"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "^Symphony No\\.2, Op\\.17\\b",
+  "pt": "Pequena Rússia",
+  "en": "Little Russian"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.71\\b",
+  "pt": "O Quebra-Nozes",
+  "en": "The Nutcracker",
+  "partes": {
+   "pt": [
+    "Dança da Fada Açucarada",
+    "Valsa das Flores"
+   ],
+   "en": [
+    "Dance of the Sugar Plum Fairy",
+    "Waltz of the Flowers"
+   ]
+  }
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.71a\\b",
+  "pt": "Suíte do Quebra-Nozes",
+  "en": "The Nutcracker Suite",
+  "partes": {
+   "pt": [
+    "Dança da Fada Açucarada",
+    "Valsa das Flores"
+   ],
+   "en": [
+    "Dance of the Sugar Plum Fairy",
+    "Waltz of the Flowers"
+   ]
+  }
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.20\\b",
+  "pt": "O Lago dos Cisnes",
+  "en": "Swan Lake"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.66\\b",
+  "pt": "A Bela Adormecida",
+  "en": "The Sleeping Beauty"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.49\\b",
+  "pt": "Abertura 1812",
+  "en": "1812 Overture"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "Op\\.37a\\b",
+  "pt": "As Estações",
+  "en": "The Seasons"
+ },
+ {
+  "c": "Tchaikovsky,_Pyotr",
+  "t": "^Romeo and Juliet \\(overture",
+  "pt": "Romeu e Julieta",
+  "en": "Romeo and Juliet"
+ },
+ {
+  "c": "Dvořák,_Antonín",
+  "t": "^Symphony No\\.9, Op\\.95\\b",
+  "pt": "Sinfonia do Novo Mundo",
+  "en": "New World Symphony"
+ },
+ {
+  "c": "Dvořák,_Antonín",
+  "t": "^String Quartet No\\.12, Op\\.96\\b",
+  "pt": "Quarteto Americano",
+  "en": "American Quartet"
+ },
+ {
+  "c": "Dvořák,_Antonín",
+  "t": "^Slavonic Dances|Op\\.46\\b|Op\\.72\\b",
+  "pt": "Danças Eslavas",
+  "en": "Slavonic Dances"
+ },
+ {
+  "c": "Dvořák,_Antonín",
+  "t": "Op\\.90\\b",
+  "pt": "Trio Dumky",
+  "en": "Dumky Trio"
+ },
+ {
+  "c": "Stravinsky,_Igor",
+  "t": "^The Firebird",
+  "pt": "O Pássaro de Fogo",
+  "en": "The Firebird"
+ },
+ {
+  "c": "Stravinsky,_Igor",
+  "t": "^The Rite of Spring|^Le sacre du printemps",
+  "pt": "A Sagração da Primavera",
+  "en": "The Rite of Spring"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "^Symphony No\\.8.*D\\.759\\b",
+  "pt": "Sinfonia Inacabada",
+  "en": "Unfinished Symphony"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "^Symphony No\\.9.*D\\.944\\b",
+  "pt": "A Grande",
+  "en": "The Great"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.667\\b",
+  "pt": "A Truta (Quinteto)",
+  "en": "Trout Quintet"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.810\\b",
+  "pt": "A Morte e a Donzela",
+  "en": "Death and the Maiden"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.839\\b",
+  "pt": "Ave Maria",
+  "en": "Ave Maria"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.328\\b",
+  "pt": "O Rei dos Elfos",
+  "en": "The Erl-King"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.911\\b",
+  "pt": "Viagem de Inverno",
+  "en": "Winter Journey"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.795\\b",
+  "pt": "A Bela Moleira",
+  "en": "The Fair Maid of the Mill"
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.957\\b",
+  "pt": "Canto do Cisne",
+  "en": "Swan Song",
+  "partes": {
+   "pt": [
+    "Serenata (Ständchen, nº 4)"
+   ],
+   "en": [
+    "Serenade (Ständchen, No.4)"
+   ]
+  }
+ },
+ {
+  "c": "Schubert,_Franz",
+  "t": "D\\.550\\b",
+  "pt": "A Truta (canção)",
+  "en": "The Trout (song)"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.94\\b",
+  "pt": "Sinfonia Surpresa",
+  "en": "Surprise Symphony"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.101\\b",
+  "pt": "O Relógio",
+  "en": "The Clock"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.45\\b",
+  "pt": "Sinfonia dos Adeuses",
+  "en": "Farewell Symphony"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.100\\b",
+  "pt": "Sinfonia Militar",
+  "en": "Military Symphony"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.103\\b",
+  "pt": "Rufar de Tímpanos",
+  "en": "Drumroll"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.104\\b",
+  "pt": "Sinfonia Londres",
+  "en": "London Symphony"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Symphony No\\.92\\b",
+  "pt": "Sinfonia Oxford",
+  "en": "Oxford Symphony"
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^Die Schöpfung|^The Creation",
+  "pt": "A Criação",
+  "en": "The Creation"
+ },
+ {
+  "c": "Handel,_George_Frideric",
+  "t": "HWV 56\\b",
+  "pt": "O Messias",
+  "en": "Messiah",
+  "partes": {
+   "pt": [
+    "Aleluia (coro)"
+   ],
+   "en": [
+    "Hallelujah Chorus"
+   ]
+  }
+ },
+ {
+  "c": "Handel,_George_Frideric",
+  "t": "HWV 348\\b|HWV 349\\b|HWV 350\\b|^Water Music",
+  "pt": "Música Aquática",
+  "en": "Water Music"
+ },
+ {
+  "c": "Handel,_George_Frideric",
+  "t": "HWV 351\\b",
+  "pt": "Música para os Reais Fogos de Artifício",
+  "en": "Music for the Royal Fireworks"
+ },
+ {
+  "c": "Handel,_George_Frideric",
+  "t": "HWV 430\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "O Ferreiro Harmonioso (ária com variações)"
+   ],
+   "en": [
+    "The Harmonious Blacksmith (air and variations)"
+   ]
+  }
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "^Symphony No\\.4, Op\\.90\\b",
+  "pt": "Sinfonia Italiana",
+  "en": "Italian Symphony"
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "^Symphony No\\.3, Op\\.56\\b",
+  "pt": "Sinfonia Escocesa",
+  "en": "Scottish Symphony"
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "^Symphony No\\.5, Op\\.107\\b",
+  "pt": "Sinfonia da Reforma",
+  "en": "Reformation Symphony"
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "Op\\.61\\b",
+  "pt": "Sonho de uma Noite de Verão",
+  "en": "A Midsummer Night's Dream",
+  "partes": {
+   "pt": [
+    "Marcha Nupcial"
+   ],
+   "en": [
+    "Wedding March"
+   ]
+  }
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "Op\\.21\\b",
+  "pt": "Abertura Sonho de uma Noite de Verão",
+  "en": "A Midsummer Night's Dream Overture"
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "Op\\.26\\b",
+  "pt": "As Hébridas (A Gruta de Fingal)",
+  "en": "The Hebrides (Fingal's Cave)"
+ },
+ {
+  "c": "Mendelssohn,_Felix",
+  "t": "^Lieder ohne Worte|^Songs without Words",
+  "pt": "Canções sem Palavras",
+  "en": "Songs without Words"
+ },
+ {
+  "c": "Schumann,_Robert",
+  "t": "Op\\.15\\b",
+  "pt": "Cenas Infantis",
+  "en": "Scenes from Childhood"
+ },
+ {
+  "c": "Schumann,_Robert",
+  "t": "^Album für die Jugend",
+  "pt": "Álbum para a Juventude",
+  "en": "Album for the Young"
+ },
+ {
+  "c": "Schumann,_Robert",
+  "t": "^Symphony No\\.1, Op\\.38\\b",
+  "pt": "Sinfonia Primavera",
+  "en": "Spring Symphony"
+ },
+ {
+  "c": "Schumann,_Robert",
+  "t": "^Symphony No\\.3, Op\\.97\\b",
+  "pt": "Sinfonia Renana",
+  "en": "Rhenish Symphony"
+ },
+ {
+  "c": "Schumann,_Robert",
+  "t": "Op\\.48\\b",
+  "pt": "Amor de Poeta",
+  "en": "A Poet's Love"
+ },
+ {
+  "c": "Brahms,_Johannes",
+  "t": "WoO 1\\b|^Hungarian Dances|^21 Hungarian Dances|^Ungarische Tänze",
+  "pt": "Danças Húngaras",
+  "en": "Hungarian Dances"
+ },
+ {
+  "c": "Brahms,_Johannes",
+  "t": "Op\\.45\\b",
+  "pt": "Um Réquiem Alemão",
+  "en": "A German Requiem"
+ },
+ {
+  "c": "Liszt,_Franz",
+  "t": "S\\.541\\b|^Liebesträume|^Liebestraum",
+  "pt": "Sonhos de Amor",
+  "en": "Dreams of Love"
+ },
+ {
+  "c": "Liszt,_Franz",
+  "t": "^Années de pèlerinage",
+  "pt": "Anos de Peregrinação",
+  "en": "Years of Pilgrimage"
+ },
+ {
+  "c": "Liszt,_Franz",
+  "t": "^Totentanz",
+  "pt": "Dança da Morte",
+  "en": "Dance of Death"
+ },
+ {
+  "c": "Grieg,_Edvard",
+  "t": "Op\\.40\\b",
+  "pt": "Suíte Holberg",
+  "en": "Holberg Suite"
+ },
+ {
+  "c": "Grieg,_Edvard",
+  "t": "^Lyric Pieces|^Lyriske stykker",
+  "pt": "Peças Líricas",
+  "en": "Lyric Pieces"
+ },
+ {
+  "c": "Saint-Saëns,_Camille",
+  "t": "^Le carnaval des animaux|^Carnival of the Animals",
+  "pt": "O Carnaval dos Animais",
+  "en": "The Carnival of the Animals",
+  "partes": {
+   "pt": [
+    "O Cisne"
+   ],
+   "en": [
+    "The Swan"
+   ]
+  }
+ },
+ {
+  "c": "Saint-Saëns,_Camille",
+  "t": "Op\\.40\\b",
+  "pt": "Dança Macabra",
+  "en": "Danse macabre"
+ },
+ {
+  "c": "Saint-Saëns,_Camille",
+  "t": "^Symphony No\\.3, Op\\.78\\b",
+  "pt": "Sinfonia com Órgão",
+  "en": "Organ Symphony"
+ },
+ {
+  "c": "Ravel,_Maurice",
+  "t": "^Pavane pour une infante défunte",
+  "pt": "Pavana para uma Infanta Defunta",
+  "en": "Pavane for a Dead Princess"
+ },
+ {
+  "c": "Ravel,_Maurice",
+  "t": "^Ma mère l'oye",
+  "pt": "Mamãe Gansa",
+  "en": "Mother Goose"
+ },
+ {
+  "c": "Debussy,_Claude",
+  "t": "^Prélude à l'après-midi d'un faune",
+  "pt": "Prelúdio à Tarde de um Fauno",
+  "en": "Prelude to the Afternoon of a Faun"
+ },
+ {
+  "c": "Debussy,_Claude",
+  "t": "^La mer\\b",
+  "pt": "O Mar",
+  "en": "The Sea"
+ },
+ {
+  "c": "Pachelbel,_Johann",
+  "t": "^Canon( and Gigue)? in D",
+  "pt": "Cânone em Ré",
+  "en": "Canon in D"
+ },
+ {
+  "c": "Mussorgsky,_Modest",
+  "t": "^Pictures at an Exhibition|^Kartinki",
+  "pt": "Quadros de uma Exposição",
+  "en": "Pictures at an Exhibition"
+ },
+ {
+  "c": "Mussorgsky,_Modest",
+  "t": "^Night on Bald Mountain|^St\\. John's Night on the Bald Mountain",
+  "pt": "Uma Noite no Monte Calvo",
+  "en": "Night on Bald Mountain"
+ },
+ {
+  "c": "Rimsky-Korsakov,_Nikolay",
+  "t": "^Capriccio espagnol",
+  "pt": "Capricho Espanhol",
+  "en": "Spanish Caprice"
+ },
+ {
+  "c": "Bizet,_Georges",
+  "t": "^L'Arlésienne",
+  "pt": "A Arlesiana",
+  "en": "The Girl from Arles"
+ },
+ {
+  "c": "Rossini,_Gioacchino",
+  "t": "^Il barbiere di Siviglia",
+  "pt": "O Barbeiro de Sevilha",
+  "en": "The Barber of Seville"
+ },
+ {
+  "c": "Rossini,_Gioacchino",
+  "t": "^Guillaume Tell",
+  "pt": "Guilherme Tell",
+  "en": "William Tell"
+ },
+ {
+  "c": "Wagner,_Richard",
+  "t": "^Die Walküre",
+  "pt": "A Valquíria",
+  "en": "The Valkyrie",
+  "partes": {
+   "pt": [
+    "A Cavalgada das Valquírias"
+   ],
+   "en": [
+    "Ride of the Valkyries"
+   ]
+  }
+ },
+ {
+  "c": "Wagner,_Richard",
+  "t": "^Der fliegende Holländer",
+  "pt": "O Navio Fantasma",
+  "en": "The Flying Dutchman"
+ },
+ {
+  "c": "Wagner,_Richard",
+  "t": "^Der Ring des Nibelungen",
+  "pt": "O Anel do Nibelungo",
+  "en": "The Ring of the Nibelung"
+ },
+ {
+  "c": "Elgar,_Edward",
+  "t": "Op\\.39\\b",
+  "pt": "Pompa e Circunstância",
+  "en": "Pomp and Circumstance"
+ },
+ {
+  "c": "Elgar,_Edward",
+  "t": "Op\\.36\\b",
+  "pt": "Variações Enigma",
+  "en": "Enigma Variations"
+ },
+ {
+  "c": "Holst,_Gustav",
+  "t": "Op\\.32\\b|^The Planets",
+  "pt": "Os Planetas",
+  "en": "The Planets"
+ },
+ {
+  "c": "Mahler,_Gustav",
+  "t": "^Symphony No\\.1\\b",
+  "pt": "Sinfonia Titã",
+  "en": "Titan Symphony"
+ },
+ {
+  "c": "Mahler,_Gustav",
+  "t": "^Symphony No\\.2\\b",
+  "pt": "Sinfonia Ressurreição",
+  "en": "Resurrection Symphony"
+ },
+ {
+  "c": "Mahler,_Gustav",
+  "t": "^Symphony No\\.6\\b",
+  "pt": "Sinfonia Trágica",
+  "en": "Tragic Symphony"
+ },
+ {
+  "c": "Mahler,_Gustav",
+  "t": "^Symphony No\\.8\\b",
+  "pt": "Sinfonia dos Mil",
+  "en": "Symphony of a Thousand"
+ },
+ {
+  "c": "Offenbach,_Jacques",
+  "t": "^Orphée aux enfers",
+  "pt": "Orfeu no Inferno",
+  "en": "Orpheus in the Underworld",
+  "partes": {
+   "pt": [
+    "Cancan (Galope Infernal)"
+   ],
+   "en": [
+    "Can-can (Infernal Galop)"
+   ]
+  }
+ },
+ {
+  "c": "Offenbach,_Jacques",
+  "t": "^Les contes d'Hoffmann",
+  "pt": "Os Contos de Hoffmann",
+  "en": "The Tales of Hoffmann"
+ },
+ {
+  "c": "Smetana,_Bedřich",
+  "t": "^Má vlast",
+  "pt": "Minha Pátria",
+  "en": "My Homeland",
+  "partes": {
+   "pt": [
+    "O Moldava (Vltava)"
+   ],
+   "en": [
+    "The Moldau (Vltava)"
+   ]
+  }
+ },
+ {
+  "c": "Gershwin,_George",
+  "t": "^Rhapsody in Blue",
+  "pt": "Rapsódia em Azul",
+  "en": "Rhapsody in Blue"
+ },
+ {
+  "c": "Gomes,_Carlos",
+  "t": "^Il Guarany",
+  "pt": "O Guarani",
+  "en": "Il Guarany",
+  "partes": {
+   "pt": [
+    "Protofonia (abertura)"
+   ],
+   "en": [
+    "Overture (Protofonia)"
+   ]
+  }
+ },
+ {
+  "c": "Borodin,_Aleksandr",
+  "t": "^Prince Igor",
+  "pt": "Príncipe Igor",
+  "en": "Prince Igor",
+  "partes": {
+   "pt": [
+    "Danças Polovtsianas"
+   ],
+   "en": [
+    "Polovtsian Dances"
+   ]
+  }
+ },
+ {
+  "c": "Paganini,_Niccolò",
+  "t": "^24 Caprices",
+  "pt": "24 Caprichos",
+  "en": "24 Caprices"
+ },
+ {
+  "c": "Berlioz,_Hector",
+  "t": "^Symphonie fantastique",
+  "pt": "Sinfonia Fantástica",
+  "en": "Fantastic Symphony"
+ },
+ {
+  "c": "Weber,_Carl_Maria_von",
+  "t": "^Der Freischütz",
+  "pt": "O Franco-Atirador",
+  "en": "The Marksman"
+ },
+ {
+  "c": "Weber,_Carl_Maria_von",
+  "t": "^Aufforderung zum Tanz|Op\\.65\\b",
+  "pt": "Convite à Dança",
+  "en": "Invitation to the Dance"
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Études, Op\\.10\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Estudo Revolucionário (nº 12)",
+    "Tristesse (nº 3)",
+    "Estudo das Teclas Pretas (nº 5)"
+   ],
+   "en": [
+    "Revolutionary Étude (No.12)",
+    "Tristesse (No.3)",
+    "Black Key Étude (No.5)"
+   ]
+  }
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Études, Op\\.25\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Vento de Inverno (nº 11)",
+    "Harpa Eólia (nº 1)",
+    "Borboleta (nº 9)"
+   ],
+   "en": [
+    "Winter Wind (No.11)",
+    "Aeolian Harp (No.1)",
+    "Butterfly (No.9)"
+   ]
+  }
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Preludes, Op\\.28\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Gota d'Água (nº 15)"
+   ],
+   "en": [
+    "Raindrop (No.15)"
+   ]
+  }
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Waltzes, Op\\.64\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Valsa do Minuto (nº 1)"
+   ],
+   "en": [
+    "Minute Waltz (No.1)"
+   ]
+  }
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Polonaises, Op\\.40\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Polonaise Militar (nº 1)"
+   ],
+   "en": [
+    "Military Polonaise (No.1)"
+   ]
+  }
+ },
+ {
+  "c": "Chopin,_Frédéric",
+  "t": "^Waltzes, Op\\.69\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Valsa do Adeus (nº 1)"
+   ],
+   "en": [
+    "Farewell Waltz (No.1)"
+   ]
+  }
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^String Quartets, Op\\.76\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Imperador (nº 3)",
+    "O Nascer do Sol (nº 4)",
+    "Quintas (nº 2)"
+   ],
+   "en": [
+    "Emperor (No.3)",
+    "Sunrise (No.4)",
+    "Fifths (No.2)"
+   ]
+  }
+ },
+ {
+  "c": "Haydn,_Joseph",
+  "t": "^String Quartets, Op\\.64\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "A Cotovia (nº 5)"
+   ],
+   "en": [
+    "The Lark (No.5)"
+   ]
+  }
+ },
+ {
+  "c": "Debussy,_Claude",
+  "t": "^Suite bergamasque",
+  "pt": "Suíte Bergamasca",
+  "en": null,
+  "partes": {
+   "pt": [
+    "Clair de Lune (3º movimento)"
+   ],
+   "en": [
+    "Clair de Lune (3rd movement)"
+   ]
+  }
+ },
+ {
+  "c": "Grieg,_Edvard",
+  "t": "^Peer Gynt, Op\\.23\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Na Gruta do Rei da Montanha",
+    "A Manhã",
+    "A Morte de Åse",
+    "Canção de Solveig"
+   ],
+   "en": [
+    "In the Hall of the Mountain King",
+    "Morning Mood",
+    "Åse's Death",
+    "Solveig's Song"
+   ]
+  }
+ },
+ {
+  "c": "Rimsky-Korsakov,_Nikolay",
+  "t": "^The Tale of Tsar Saltan",
+  "pt": "O Conto do Czar Saltan",
+  "en": null,
+  "partes": {
+   "pt": [
+    "O Voo do Besouro"
+   ],
+   "en": [
+    "Flight of the Bumblebee"
+   ]
+  }
+ },
+ {
+  "c": "Liszt,_Franz",
+  "t": "^Grandes études de Paganini, S\\.141\\b",
+  "pt": "Grandes Estudos de Paganini",
+  "en": "Grand Paganini Études",
+  "partes": {
+   "pt": [
+    "La Campanella (nº 3)"
+   ],
+   "en": [
+    "La Campanella (No.3)"
+   ]
+  }
+ },
+ {
+  "c": "Brahms,_Johannes",
+  "t": "^5 Lieder, Op\\.49\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Canção de Ninar de Brahms (Wiegenlied, nº 4)"
+   ],
+   "en": [
+    "Brahms' Lullaby (Wiegenlied, No.4)"
+   ]
+  }
+ },
+ {
+  "c": "Rachmaninoff,_Sergei",
+  "t": "^Morceaux de fantaisie, Op\\.3\\b",
+  "pt": "Peças de Fantasia",
+  "en": "Fantasy Pieces",
+  "partes": {
+   "pt": [
+    "Prelúdio em Dó sustenido menor, Os Sinos de Moscou (nº 2)"
+   ],
+   "en": [
+    "Prelude in C-sharp minor, The Bells of Moscow (No.2)"
+   ]
+  }
+ },
+ {
+  "c": "Bizet,_Georges",
+  "t": "^Carmen( Suite No\\.[12])?$",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Habanera",
+    "Canção do Toureador"
+   ],
+   "en": [
+    "Habanera",
+    "Toreador Song"
+   ]
+  }
+ },
+ {
+  "c": "Verdi,_Giuseppe",
+  "t": "^Rigoletto",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "La donna è mobile"
+   ],
+   "en": [
+    "La donna è mobile"
+   ]
+  }
+ },
+ {
+  "c": "Verdi,_Giuseppe",
+  "t": "^La traviata",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Brinde (Libiamo ne' lieti calici)"
+   ],
+   "en": [
+    "Drinking Song (Libiamo ne' lieti calici)"
+   ]
+  }
+ },
+ {
+  "c": "Puccini,_Giacomo",
+  "t": "^Turandot",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Nessun dorma"
+   ],
+   "en": [
+    "Nessun dorma"
+   ]
+  }
+ },
+ {
+  "c": "Puccini,_Giacomo",
+  "t": "^Gianni Schicchi",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "O mio babbino caro"
+   ],
+   "en": [
+    "O mio babbino caro"
+   ]
+  }
+ },
+ {
+  "c": "Wagner,_Richard",
+  "t": "^Lohengrin",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Coro Nupcial (Marcha Nupcial)"
+   ],
+   "en": [
+    "Bridal Chorus (Here Comes the Bride)"
+   ]
+  }
+ },
+ {
+  "c": "Massenet,_Jules",
+  "t": "^Thaïs$",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Meditação"
+   ],
+   "en": [
+    "Méditation"
+   ]
+  }
+ },
+ {
+  "c": "Bach,_Johann_Sebastian",
+  "t": "BWV 1067\\b",
+  "pt": null,
+  "en": null,
+  "partes": {
+   "pt": [
+    "Badinerie"
+   ],
+   "en": [
+    "Badinerie"
+   ]
+  }
+ },
+ {
+  "c": "Beethoven,_Ludwig_van",
+  "t": "^Für Elise, WoO 59\\b",
+  "pt": "Para Elisa",
+  "en": null
+ },
+ {
+  "c": "Ravel,_Maurice",
+  "t": "^Boléro\\b",
+  "pt": "Bolero",
+  "en": null
+ },
+ {
+  "c": "Gounod,_Charles",
+  "t": "^Ave Maria, CG 89\\b",
+  "pt": "Ave Maria de Bach-Gounod",
+  "en": "Bach–Gounod Ave Maria"
+ },
+ {
+  "c": "Satie,_Erik",
+  "t": "^3 Gymnopédies\\b",
+  "pt": "Gimnopédias",
+  "en": null
+ },
+ {
+  "c": "Liszt,_Franz",
+  "t": "^Hungarian Rhapsody No\\.2, S\\.244/2\\b",
+  "pt": "Rapsódia Húngara nº 2",
+  "en": null
+ },
+ {
+  "c": "Joplin,_Scott",
+  "t": "^The Entertainer\\b",
+  "pt": "O Animador (The Entertainer)",
+  "en": null
+ }
+]

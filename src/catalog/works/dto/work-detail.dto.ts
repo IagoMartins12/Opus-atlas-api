@@ -76,6 +76,29 @@ export class WorkDetailDto {
   @ApiPropertyOptional({ nullable: true })
   subtitle?: string | null;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Sonata ao Luar',
+    description: 'O nome por que a obra é conhecida, quando não é o título.',
+  })
+  popularName?: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Moonlight Sonata' })
+  popularNameEn?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Estudo Revolucionário (nº 12)'],
+    description: 'As partes famosas da obra, pelo nome que se procura.',
+  })
+  famousParts?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Revolutionary Étude (No.12)'],
+  })
+  famousPartsEn?: string[];
+
   @ApiPropertyOptional({ nullable: true })
   opOrCatalog?: string;
 

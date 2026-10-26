@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { WorkType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsInt,
@@ -46,6 +47,45 @@ export class CreateWorkContributionDto {
   @IsString()
   @MaxLength(300)
   subtitle?: string;
+
+  @ApiPropertyOptional({
+    example: 'Sonata ao Luar',
+    description:
+      'O nome por que a obra é conhecida em português, quando não é o título.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  popularName?: string;
+
+  @ApiPropertyOptional({ example: 'Moonlight Sonata' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  popularNameEn?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Estudo Revolucionário (nº 12)'],
+    description: 'As partes famosas, pelo nome que se procura (português).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(12)
+  @IsString({ each: true })
+  @MaxLength(150, { each: true })
+  famousParts?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Revolutionary Étude (No.12)'],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(12)
+  @IsString({ each: true })
+  @MaxLength(150, { each: true })
+  famousPartsEn?: string[];
 
   @ApiPropertyOptional({ example: 'Op. 27 No. 2' })
   @IsOptional()

@@ -18,6 +18,25 @@ export class ComposerWorkItemDto {
   @ApiPropertyOptional({ example: 'Quasi una fantasia', nullable: true })
   subtitle?: string;
 
+  @ApiPropertyOptional({ example: 'Sonata ao Luar', nullable: true })
+  popularName?: string;
+
+  @ApiPropertyOptional({ example: 'Moonlight Sonata', nullable: true })
+  popularNameEn?: string;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Estudo Revolucionário (nº 12)'],
+    description: 'As partes famosas da obra, pelo nome que se procura.',
+  })
+  famousParts?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Revolutionary Étude (No.12)'],
+  })
+  famousPartsEn?: string[];
+
   @ApiPropertyOptional({ example: 'Op. 27 No. 2', nullable: true })
   opOrCatalog?: string;
 

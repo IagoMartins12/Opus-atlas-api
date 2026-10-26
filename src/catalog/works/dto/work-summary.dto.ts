@@ -15,6 +15,22 @@ export class WorkSummaryDto {
   @ApiProperty({ example: 'Sonata No. 2 em Si bemol menor' })
   title: string;
 
+  @ApiProperty({ example: 'Sonata ao Luar', nullable: true })
+  popularName: string | null;
+
+  @ApiProperty({ example: 'Moonlight Sonata', nullable: true })
+  popularNameEn: string | null;
+
+  @ApiProperty({
+    type: [String],
+    example: ['Estudo Revolucionário (nº 12)'],
+    description: 'As partes famosas da obra, pelo nome que se procura.',
+  })
+  famousParts?: string[];
+
+  @ApiProperty({ type: [String], example: ['Revolutionary Étude (No.12)'] })
+  famousPartsEn?: string[];
+
   @ApiProperty({ example: 'Op. 35', nullable: true })
   opOrCatalog: string | null;
 

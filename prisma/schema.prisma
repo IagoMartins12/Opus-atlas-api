@@ -1087,6 +1087,18 @@ model Work {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// The name people know the work by, when it is not its title: "Sonata ao
+  /// Luar" for Piano Sonata No.14, Op.27 No.2 ("Moonlight Sonata" in
+  /// `popularNameEn`). Written by the team (`scripts/import-popular-names`) or
+  /// edited by curators; searched, shown above the title and sent to search
+  /// engines as the name people type.
+  popularName   String?
+  popularNameEn String?
+  /// The famous parts of a work people search by name: "Estudo
+  /// Revolucionário (nº 12)" in Études, Op.10, "Clair de Lune" in the Suite
+  /// bergamasque. Shown as "Inclui …" and searched like the title.
+  famousParts   String[] @default([])
+  famousPartsEn String[] @default([])
   subtitle  String?
   imslpTags String[] @default([])
 

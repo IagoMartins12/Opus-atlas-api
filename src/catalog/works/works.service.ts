@@ -49,6 +49,10 @@ import { TextIndexService } from '../../common/search/text-index.service';
 const WORK_SUMMARY_SELECT = {
   id: true,
   title: true,
+  popularName: true,
+  popularNameEn: true,
+  famousParts: true,
+  famousPartsEn: true,
   opOrCatalog: true,
   composer: {
     select: {
@@ -134,6 +138,10 @@ const WORK_DEFAULT_ORDER_BY = [
 type RawWork = {
   id: string;
   title: string;
+  popularName: string | null;
+  popularNameEn: string | null;
+  famousParts: string[];
+  famousPartsEn: string[];
   opOrCatalog: string | null;
   composer: { name: string; fullName: string | null };
   instrument: { name: string };
@@ -180,10 +188,17 @@ const SEARCH_MAX_TIME_MS = 8_000;
  */
 const SEARCH_COMPOSER_CAP = 200;
 
+/** Relevance added to a famous work (one with a popular name or famous parts). */
+const FAMOUS_BOOST = 5;
+
 const WORK_CATALOG_BASE_SELECT = {
   id: true,
   title: true,
   subtitle: true,
+  popularName: true,
+  popularNameEn: true,
+  famousParts: true,
+  famousPartsEn: true,
   opOrCatalog: true,
   compositionYear: true,
   tone: true,
@@ -203,6 +218,10 @@ const WORK_CATALOG_FALLBACK_SELECT = {
   id: true,
   title: true,
   subtitle: true,
+  popularName: true,
+  popularNameEn: true,
+  famousParts: true,
+  famousPartsEn: true,
   opOrCatalog: true,
   compositionYear: true,
   tone: true,
@@ -240,6 +259,10 @@ const WORK_DETAIL_SELECT = {
   title: true,
   opOrCatalog: true,
   subtitle: true,
+  popularName: true,
+  popularNameEn: true,
+  famousParts: true,
+  famousPartsEn: true,
   compositionYear: true,
   firstPublishDate: true,
   tone: true,
@@ -355,6 +378,10 @@ export class WorksService {
     return {
       id: work.id,
       title: work.title,
+      popularName: this.normalizeOptionalString(work.popularName) ?? null,
+      popularNameEn: this.normalizeOptionalString(work.popularNameEn) ?? null,
+      famousParts: work.famousParts ?? [],
+      famousPartsEn: work.famousPartsEn ?? [],
       opOrCatalog: this.normalizeOptionalString(work.opOrCatalog) ?? null,
       composer: work.composer,
       instrumentName: work.instrument.name,
@@ -454,7 +481,35 @@ export class WorksService {
         const result = await this.prisma.work.aggregateRaw({
           pipeline: [
             { $match: { $text: { $search: term } } },
-            { $addFields: { _score: { $meta: 'textScore' } } },
+            {
+              $addFields: {
+                // A work with a popular name or famous parts is a famous one:
+                // "clair de lune" brings Debussy's before the dozens of
+                // lesser pieces with that very title.
+                _score: {
+                  $add: [
+                    { $meta: 'textScore' },
+                    {
+                      $cond: [
+                        {
+                          $or: [
+                            { $gt: ['$popularName', null] },
+                            {
+                              $gt: [
+                                { $size: { $ifNull: ['$famousParts', []] } },
+                                0,
+                              ],
+                            },
+                          ],
+                        },
+                        FAMOUS_BOOST,
+                        0,
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
             { $sort: { _score: -1 } },
             { $limit: limit },
             { $project: { _id: 1 } },
@@ -484,6 +539,15 @@ export class WorksService {
       where: {
         OR: [
           { title: { contains: escapeRegex(term), mode: 'insensitive' } },
+          {
+            popularName: { contains: escapeRegex(term), mode: 'insensitive' },
+          },
+          {
+            popularNameEn: {
+              contains: escapeRegex(term),
+              mode: 'insensitive',
+            },
+          },
           {
             composer: {
               OR: [
@@ -593,6 +657,10 @@ export class WorksService {
           id: true,
           title: true,
           subtitle: true,
+          popularName: true,
+          popularNameEn: true,
+          famousParts: true,
+          famousPartsEn: true,
         },
         orderBy: {
           title: 'asc',
@@ -668,6 +736,10 @@ export class WorksService {
       title: work.title,
       opOrCatalog: this.normalizeOptionalString(work.opOrCatalog),
       subtitle: this.normalizeOptionalString(work.subtitle) ?? null,
+      popularName: this.normalizeOptionalString(work.popularName) ?? null,
+      popularNameEn: this.normalizeOptionalString(work.popularNameEn) ?? null,
+      famousParts: work.famousParts ?? [],
+      famousPartsEn: work.famousPartsEn ?? [],
       compositionYear: this.normalizeOptionalString(work.compositionYear),
       firstPublishDate: this.normalizeOptionalString(work.firstPublishDate),
       tone: this.normalizeOptionalString(work.tone),
@@ -1376,6 +1448,8 @@ export class WorksService {
       const searchConditions = [
         { title: contains },
         { subtitle: contains },
+        { popularName: contains },
+        { popularNameEn: contains },
         { opOrCatalog: contains },
         ...(composerIds.length > 0
           ? [{ composerId: { in: composerIds } }]
@@ -1398,6 +1472,10 @@ export class WorksService {
     id: string;
     title: string;
     subtitle: string | null;
+    popularName: string | null;
+    popularNameEn: string | null;
+    famousParts: string[];
+    famousPartsEn: string[];
     opOrCatalog: string | null;
     compositionYear: string | null;
     tone: string | null;
@@ -1422,6 +1500,10 @@ export class WorksService {
       id: work.id,
       title: work.title,
       subtitle: this.normalizeOptionalString(work.subtitle),
+      popularName: this.normalizeOptionalString(work.popularName),
+      popularNameEn: this.normalizeOptionalString(work.popularNameEn),
+      famousParts: work.famousParts ?? [],
+      famousPartsEn: work.famousPartsEn ?? [],
       opOrCatalog: this.normalizeOptionalString(work.opOrCatalog),
       compositionYear: this.normalizeOptionalString(work.compositionYear),
       tone: this.normalizeOptionalString(work.tone),
