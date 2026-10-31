@@ -134,11 +134,13 @@ export class InstrumentsService {
     // Antes eram todas as obras do instrumento trazidas para a memória e
     // contadas aqui — no piano, dezenas de milhares de documentos por acesso.
     const [worksCount, usersCount, topGroups] = await Promise.all([
-      this.prisma.work.count({ where: { instrumentId } }),
+      this.prisma.work.count({
+        where: { instrumentIds: { has: instrumentId } },
+      }),
       this.prisma.userInstrument.count({ where: { instrumentId } }),
       this.prisma.work.groupBy({
         by: ['composerId'],
-        where: { instrumentId },
+        where: { instrumentIds: { has: instrumentId } },
         _count: { composerId: true },
         orderBy: { _count: { composerId: 'desc' } },
         take: 5,
@@ -228,7 +230,9 @@ export class InstrumentsService {
 
     const [works, totalWorks, totalUsers, topComposers] = await Promise.all([
       this.selectShowcaseWorks(instrument, preference),
-      this.prisma.work.count({ where: { instrumentId: instrument.id } }),
+      this.prisma.work.count({
+        where: { instrumentIds: { has: instrument.id } },
+      }),
       this.prisma.userInstrument.count({
         where: { instrumentId: instrument.id },
       }),
@@ -257,7 +261,7 @@ export class InstrumentsService {
   ): Promise<ShowcaseWorkDto[]> {
     const findWorks = (where: Prisma.WorkWhereInput, take?: number) =>
       this.prisma.work.findMany({
-        where: { instrumentId: instrument.id, ...where },
+        where: { instrumentIds: { has: instrument.id }, ...where },
         select: SHOWCASE_WORK_SELECT,
         orderBy: SHOWCASE_WORK_ORDER,
         take,
@@ -348,7 +352,10 @@ export class InstrumentsService {
           select: SHOWCASE_COMPOSER_SELECT,
         }),
         this.prisma.work.count({
-          where: { instrumentId, composerId: preference.preferredComposerId },
+          where: {
+            instrumentIds: { has: instrumentId },
+            composerId: preference.preferredComposerId,
+          },
         }),
       ]);
 
@@ -360,7 +367,7 @@ export class InstrumentsService {
     const groups = await this.prisma.work.groupBy({
       by: ['composerId'],
       where: {
-        instrumentId,
+        instrumentIds: { has: instrumentId },
         ...(preference.excludedComposerIds?.length
           ? { composerId: { notIn: preference.excludedComposerIds } }
           : {}),

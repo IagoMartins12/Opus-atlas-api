@@ -70,7 +70,7 @@ describe('InstrumentsService', () => {
 
     expect(prisma.work.groupBy).toHaveBeenCalledWith({
       by: ['composerId'],
-      where: { instrumentId: 'i1' },
+      where: { instrumentIds: { has: 'i1' } },
       _count: { composerId: true },
       orderBy: { _count: { composerId: 'desc' } },
       take: 5,
@@ -182,7 +182,7 @@ describe('InstrumentsService', () => {
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            instrumentId: 'vln',
+            instrumentIds: { has: 'vln' },
             composerId: '685f0770c6bd886c5b4982af',
           },
           take: 20,
@@ -199,7 +199,7 @@ describe('InstrumentsService', () => {
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            instrumentId: 'piano',
+            instrumentIds: { has: 'piano' },
             composerId: '683bb049320ed96f5ac321a8',
             id: { notIn: [] },
           },
@@ -208,7 +208,10 @@ describe('InstrumentsService', () => {
       );
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'piano', id: { notIn: ['w0', 'w1', 'w2'] } },
+          where: {
+            instrumentIds: { has: 'piano' },
+            id: { notIn: ['w0', 'w1', 'w2'] },
+          },
           take: 17,
         }),
       );
@@ -221,13 +224,13 @@ describe('InstrumentsService', () => {
       const excluded = { notIn: ['683a7e9af8ced962eff7c0d8'] };
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'orq', composerId: excluded },
+          where: { instrumentIds: { has: 'orq' }, composerId: excluded },
           take: 20,
         }),
       );
       expect(prisma.work.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'orq', composerId: excluded },
+          where: { instrumentIds: { has: 'orq' }, composerId: excluded },
           take: 5,
         }),
       );

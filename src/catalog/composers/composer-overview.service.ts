@@ -67,13 +67,21 @@ export class ComposerOverviewService {
   }
 
   private async writtenFor(composerId: string): Promise<WrittenForDto[]> {
-    const groups = await this.prisma.work.groupBy({
-      by: ['instrumentId'],
-      where: { composerId, parentWorkId: null },
-      _count: { _all: true },
-      orderBy: { _count: { instrumentId: 'desc' } },
-      take: WRITTEN_FOR_LIMIT,
-    });
+    // Each work counts for every instrument it has: Schubert's songs are for
+    // voice and also for piano.
+    const rows = (await this.prisma.work.aggregateRaw({
+      pipeline: [
+        { $match: { composerId: { $oid: composerId }, parentWorkId: null } },
+        { $unwind: '$instrumentIds' },
+        { $group: { _id: '$instrumentIds', works: { $sum: 1 } } },
+        { $sort: { works: -1 } },
+        { $limit: WRITTEN_FOR_LIMIT },
+      ],
+    })) as unknown as { _id: { $oid: string }; works: number }[];
+    const groups = rows.map((r) => ({
+      instrumentId: r._id.$oid,
+      works: r.works,
+    }));
     if (!groups.length) return [];
     const instruments = await this.prisma.instrument.findMany({
       where: { id: { in: groups.map((g) => g.instrumentId) } },
@@ -85,7 +93,7 @@ export class ComposerOverviewService {
       .map((g) => ({
         instrumentId: g.instrumentId,
         name: names.get(g.instrumentId)!,
-        works: g._count._all,
+        works: g.works,
       }));
   }
 

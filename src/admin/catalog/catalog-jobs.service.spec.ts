@@ -8,6 +8,7 @@ import { AppCacheService } from '../../common/cache/cache.service';
 import { QueueService } from '../../common/queue/queue.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CatalogJobsService } from './catalog-jobs.service';
+import { CATALOG_JOBS } from '../../catalog/jobs/catalog-jobs';
 
 const work = jest.fn();
 jest.mock('../../catalog/jobs/catalog-jobs', () => {
@@ -197,14 +198,16 @@ describe('CatalogJobsService', () => {
     it('devolve todas as rotinas, com a ativa e a última', async () => {
       prisma.catalogJobRun.findMany.mockResolvedValue([
         run({ id: 'a', job: 'fix-epochs', status: 'running' }),
-        run({ id: 'b', job: 'fix-difficulty', status: 'ok' }),
+        run({ id: 'b', job: 'import-imslp-difficulty', status: 'ok' }),
       ]);
 
       const list = await service.list();
 
       expect(list.find((j) => j.id === 'fix-epochs')?.active?.id).toBe('a');
-      expect(list.find((j) => j.id === 'fix-difficulty')?.last?.id).toBe('b');
-      expect(list.length).toBe(15);
+      expect(
+        list.find((j) => j.id === 'import-imslp-difficulty')?.last?.id,
+      ).toBe('b');
+      expect(list.length).toBe(CATALOG_JOBS.length);
     });
   });
 

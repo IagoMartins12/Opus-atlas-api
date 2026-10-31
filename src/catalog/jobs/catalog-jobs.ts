@@ -1,7 +1,7 @@
 import type { CatalogJobWork } from './job-types';
 import { work as auditLimits } from './audit-limits.job';
 import { work as cleanPortraits } from './clean-placeholder-portraits.job';
-import { work as fixDifficulty } from './fix-work-difficulty.job';
+import { work as importDifficulty } from './import-imslp-difficulty.job';
 import { work as fixEditions } from './fix-imslp-editions.job';
 import { work as fixEpochs } from './fix-composer-epochs.job';
 import { work as fixInstruments } from './fix-work-instruments.job';
@@ -14,6 +14,7 @@ import { work as seedBlogCategories } from './seed-blog-categories.job';
 import { work as seedCollections } from './seed-collections.job';
 import { work as syncTeacherCounters } from './sync-teacher-counters.job';
 import { work as syncAnnotations } from './sync-annotation-counts.job';
+import { work as rankWorks } from './rank-works.job';
 
 /**
  * As rotinas do acervo que o painel executa. **A lista é fechada**: nada de
@@ -25,12 +26,13 @@ import { work as syncAnnotations } from './sync-annotation-counts.job';
 export const CATALOG_JOB_IDS = [
   'fix-epochs',
   'fix-instruments',
-  'fix-difficulty',
+  'import-imslp-difficulty',
   'fix-nationalities',
   'fix-editions',
   'clean-portraits',
   'fix-thumbnails',
   'sync-annotation-counts',
+  'rank-works',
   'merge-duplicate-composers',
   'seed-collections',
   'seed-blog-categories',
@@ -137,7 +139,7 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     id: 'fix-instruments',
     name: 'Corrigir instrumento principal das obras',
     description:
-      'Reatribui o instrumento principal pelas regras corrigidas (baixo contínuo não é contrabaixo, flauta não é flauta doce, orquestra, coro, voz).',
+      'Reatribui o instrumento principal pela ficha da obra: instrumento único, solista com acompanhamento, coro sem orquestra. Corrige órgão, violão e vozes gravados como piano e cravo como harpa, além de contrabaixo e flauta doce. Obra verificada ou editada por pessoa não é tocada.',
     group: 'obras',
     destructive: false,
     slow: false,
@@ -146,16 +148,16 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     work: fixInstruments,
   },
   {
-    id: 'fix-difficulty',
-    name: 'Corrigir dificuldade das obras',
+    id: 'import-imslp-difficulty',
+    name: 'Dificuldade pelo IMSLP',
     description:
-      'Estudos de virtuose sobem para avançado; "iniciante" sem sinal no título fica sem dificuldade. Obra verificada ou editada por pessoa não é tocada.',
+      'Lê as listas de nível por instrumento do Difficulty Project do IMSLP (níveis 1 a 15, equivalentes ao RCM) e grava o nível das obras avaliadas, com os trechos. Toda dificuldade que não veio de lá nem foi curada no painel é removida: o acervo não chuta nível.',
     group: 'obras',
-    destructive: false,
-    slow: false,
-    external: false,
-    params: [],
-    work: fixDifficulty,
+    destructive: true,
+    slow: true,
+    external: true,
+    params: [PAUSE],
+    work: importDifficulty,
   },
   {
     id: 'sync-annotation-counts',
@@ -168,6 +170,18 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     external: false,
     params: [],
     work: syncAnnotations,
+  },
+  {
+    id: 'rank-works',
+    name: 'Recalcular o destaque das obras',
+    description:
+      'Dá a cada obra uma nota de fama pelos downloads das partituras no IMSLP, pelo nome popular, pelas gravações e por quem a estuda, favorita ou anota. É a ordem "em destaque" do catálogo e das páginas de instrumento, época e compositor. Não altera a data de atualização da obra.',
+    group: 'obras',
+    destructive: false,
+    slow: false,
+    external: false,
+    params: [],
+    work: rankWorks,
   },
   {
     id: 'fix-editions',

@@ -474,61 +474,35 @@ describe('WorksService', () => {
     });
 
     describe('em destaque', () => {
-      /** A contagem dos famosos (a única com `AND`) e a total correm em paralelo. */
-      const famousCount = (n: number) =>
-        prisma.work.count.mockImplementation(
-          (args?: { where?: { AND?: unknown } }) =>
-            Promise.resolve(args?.where?.AND ? n : 500),
-        );
-
       beforeEach(() => {
-        prisma.composer.findMany.mockResolvedValue([
-          { id: 'c1' },
-          { id: 'c2' },
-        ]);
+        prisma.work.count.mockResolvedValue(500);
       });
 
-      it('começa pelas obras dos compositores famosos, mais estudadas primeiro', async () => {
-        famousCount(100);
-
+      it('ordena pela nota de fama, depois de A a Z, numa consulta só', async () => {
         await service.getCatalog({ sort: 'featured', limit: 10 });
-
-        const [head] = prisma.work.findMany.mock.calls[0];
-        expect(head.where.AND[1]).toEqual({ composerId: { in: ['c1', 'c2'] } });
-        expect(head.orderBy[0]).toEqual({ annotationsCount: 'desc' });
-        expect(head.skip).toBe(0);
-      });
-
-      it('quando os famosos acabam no meio da página, completa com o resto de A a Z', async () => {
-        // 3 obras de famosos; página de 10 → 3 vêm do primeiro grupo, 7 do resto.
-        famousCount(3);
-        prisma.work.findMany
-          .mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
-          .mockResolvedValueOnce([]);
-
-        await service.getCatalog({ sort: 'featured', limit: 10 });
-
-        const calls = prisma.work.findMany.mock.calls;
-        const tail = calls[1][0];
-        expect(tail.where.AND[1]).toEqual({
-          composerId: { notIn: ['c1', 'c2'] },
-        });
-        expect(tail.take).toBe(7);
-        expect(tail.skip).toBe(0);
-      });
-
-      it('página além dos famosos pula só o que sobrou do resto', async () => {
-        famousCount(3);
-
-        await service.getCatalog({ sort: 'featured', limit: 10, page: 2 });
 
         const calls = prisma.work.findMany.mock.calls;
         expect(calls).toHaveLength(1);
-        expect(calls[0][0].where.AND[1]).toEqual({
-          composerId: { notIn: ['c1', 'c2'] },
+        expect(calls[0][0].orderBy).toEqual([
+          { prominence: 'desc' },
+          { title: 'asc' },
+          { id: 'asc' },
+        ]);
+        expect(calls[0][0].skip).toBe(0);
+      });
+
+      it('com filtro, a mesma ordem e a página cortada pelo skip', async () => {
+        await service.getCatalog({
+          sort: 'featured',
+          instrumentId: 'i1',
+          limit: 10,
+          page: 3,
         });
-        // Página 2 começa na obra 10; as 3 primeiras eram dos famosos.
-        expect(calls[0][0].skip).toBe(7);
+
+        const [args] = prisma.work.findMany.mock.calls[0];
+        expect(args.orderBy[0]).toEqual({ prominence: 'desc' });
+        expect(args.skip).toBe(20);
+        expect(args.take).toBe(10);
       });
     });
 
@@ -749,7 +723,7 @@ describe('WorksService', () => {
       const [{ where }] = prisma.work.findMany.mock.calls[0];
       expect(where.AND[1].OR).toEqual([
         { composerId: 'c1' },
-        { instrumentId: 'i1' },
+        { instrumentIds: { has: 'i1' } },
       ]);
       expect(related[0].opOrCatalog).toBeNull();
     });

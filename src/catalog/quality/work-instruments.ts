@@ -157,3 +157,162 @@ export function isFluteNotRecorder(work: {
     /^\s*flauta(?![a-z])/.test(instrumentation)
   );
 }
+
+/** Como a ficha chama cada instrumento (já sem acento e em minúsculas). */
+const FICHA_NAMES: Record<string, string> = {
+  piano: 'Piano',
+  teclado: 'Teclado',
+  keyboard: 'Teclado',
+  orgao: 'Órgão',
+  harmonio: 'Harmônio',
+  cravo: 'Cravo',
+  clavicordio: 'Clavicórdio',
+  harpa: 'Harpa',
+  violao: 'Violão',
+  guitars: 'Violão',
+  alaude: 'Alaúde',
+  bandolim: 'Bandolim',
+  violino: 'Violino',
+  violins: 'Violino',
+  viola: 'Viola',
+  violas: 'Viola',
+  violoncelo: 'Violoncelo',
+  cellos: 'Violoncelo',
+  contrabaixo: 'Contrabaixo',
+  flauta: 'Flauta',
+  flutes: 'Flauta',
+  'flauta doce': 'Flauta Doce',
+  recorders: 'Flauta Doce',
+  flautim: 'Flautim',
+  oboe: 'Oboé',
+  oboes: 'Oboé',
+  'corne ingles': 'Corne Inglês',
+  clarinete: 'Clarinete',
+  clarinets: 'Clarinete',
+  fagote: 'Fagote',
+  bassoons: 'Fagote',
+  saxofone: 'Saxofone',
+  trompa: 'Trompa',
+  horns: 'Trompa',
+  trompete: 'Trompete',
+  trumpets: 'Trompete',
+  corneta: 'Corneta',
+  trombone: 'Trombone',
+  trombones: 'Trombone',
+  tuba: 'Tuba',
+  acordeao: 'Acordeão',
+  voz: 'Voz',
+  vozes: 'Voz',
+  soprano: 'Soprano',
+  contralto: 'Contralto',
+  tenor: 'Tenor',
+  baritono: 'Barítono',
+  orquestra: 'Orquestra',
+  'orquestra de cordas': 'Orquestra de Cordas',
+  cordas: 'Cordas',
+  coro: 'Coro',
+};
+
+/** O que acompanha na ficha "solista, acompanhamento". */
+const ACCOMPANIMENT = new Set([
+  'piano',
+  'teclado',
+  'orgao',
+  'cravo',
+  'violao',
+  'orquestra',
+  'orquestra de cordas',
+  'cordas',
+  'baixo continuo',
+]);
+
+/** Um pedaço da ficha sem o que não diz o instrumento ("2 Violins", "Piano Solo"). */
+const segmentOf = (text: string) =>
+  text
+    .replace(/\(.*?\)/g, ' ')
+    .replace(
+      /\b(solo|satb|ssa|ttbb|4-maos|hands|original|revised|mixed|male|female)\b/g,
+      ' ',
+    )
+    .replace(/^\s*\d+\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** O instrumento principal de uma combinação da ficha, ou nada. */
+function fromCombination(combination: string): string | null {
+  const parts = combination.split(',').map(segmentOf).filter(Boolean);
+  if (!parts.length) return null;
+  if (parts.includes('coro'))
+    return parts.includes('orquestra') ? null : 'Coro';
+  if (parts.length > 2) return null;
+  if (parts.length === 1) return FICHA_NAMES[parts[0]] ?? null;
+  return ACCOMPANIMENT.has(parts[1]) ? (FICHA_NAMES[parts[0]] ?? null) : null;
+}
+
+/**
+ * Os instrumentos que a ficha do IMSLP dá à obra, o principal primeiro. A
+ * ficha é a evidência mais forte que o acervo tem: quem escolheu o instrumento
+ * pelo título e pelas categorias gravou órgão, violão e vozes como piano (o
+ * padrão), cravo como harpa ("harpsichord"), trompete como trompa ("hornpipe")
+ * e a Tocata BWV 565 como quarteto (um arranjo para quatro).
+ *
+ * Cada alternativa conta (`;` separa versões, "ou" separa escolhas). Vale:
+ * um instrumento só; solista com acompanhamento ("Voz, Piano" é voz); coro sem
+ * orquestra. Combinação maior (trio, ópera) não decide: lista vazia.
+ */
+export function instrumentsFromFicha(
+  instrumentation: string | null | undefined,
+): string[] {
+  if (!instrumentation?.trim()) return [];
+  const found = strip(instrumentation)
+    .split(/;|\sou\s/)
+    .map(fromCombination)
+    .filter((name): name is string => !!name);
+  return [...new Set(found)];
+}
+
+/**
+ * Para onde a obra vai segundo a ficha: o primeiro instrumento dela, a menos
+ * que o atual já seja um dos que a ficha aceita. "Contrabaixo" só com o título
+ * confirmando: na ficha, "Bass" tanto é o instrumento quanto a voz de baixo
+ * ("12 Sacred Songs for Bass").
+ */
+export function instrumentMove(
+  work: { title: string; instrumentation: string | null | undefined },
+  current: string,
+): string | null {
+  const found = instrumentsFromFicha(work.instrumentation);
+  if (!found.length || found.includes(current)) return null;
+  if (found[0] === 'Contrabaixo' && !DOUBLE_BASS_TITLE.test(work.title))
+    return null;
+  return found[0];
+}
+
+/**
+ * Todos os instrumentos da obra, o principal primeiro: uma canção é de voz e
+ * também de piano, e a obra aparece nos dois. Aqui toda parte citada conta,
+ * inclusive em combinação que não decide o principal (trio, ópera); de quem
+ * só acompanha, o baixo contínuo fica de fora, porque não é instrumento.
+ */
+export function workInstruments(
+  work: { title: string; instrumentation: string | null | undefined },
+  main: string | null,
+): string[] {
+  const named = strip(work.instrumentation ?? '')
+    .split(/;|,|\sou\s/)
+    .map(segmentOf)
+    .map((part) => FICHA_NAMES[part])
+    .filter((name): name is string => !!name)
+    .filter(
+      (name) => name !== 'Contrabaixo' || DOUBLE_BASS_TITLE.test(work.title),
+    );
+  // "Teclado" na ficha é quem se toca ao piano também (Invenções de Bach).
+  const keyboard = named.includes('Teclado') || main === 'Teclado';
+  return [
+    ...new Set([
+      ...(main ? [main] : []),
+      ...named,
+      ...(keyboard ? ['Piano'] : []),
+    ]),
+  ];
+}

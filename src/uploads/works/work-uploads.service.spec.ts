@@ -202,6 +202,7 @@ describe('WorkUploadsService', () => {
         title: 'Novo',
         composerId: 'c1',
         instrumentId: 'i1',
+        instrumentIds: ['i1'],
         epochId: 'e1',
         parentWorkId: null,
         movementNumber: 2,

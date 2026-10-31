@@ -27,6 +27,7 @@ export const MAINTENANCE_TASK_IDS = [
   'audit.prune',
   'mail.events.prune',
   'search.reindex',
+  'catalog.rank-works',
   'database.backup',
 ] as const;
 
@@ -165,6 +166,19 @@ export const MAINTENANCE_CATALOG: readonly MaintenanceTask[] = [
     impact: 'high',
     destructive: false,
     suggestedCron: null,
+  },
+  {
+    id: 'catalog.rank-works',
+    name: 'Recalcular o destaque das obras',
+    description:
+      'A mesma rotina de `/admin/rotinas`, gravando: a nota de fama de cada ' +
+      'obra (downloads no IMSLP, nome popular, gravação, quem estuda). As ' +
+      'partituras lidas do IMSLP trazem downloads novos a cada dia; sem ' +
+      'recalcular, a ordem "em destaque" fica para trás.',
+    category: 'search',
+    impact: 'medium',
+    destructive: false,
+    suggestedCron: '0 5 * * 1',
   },
 ];
 

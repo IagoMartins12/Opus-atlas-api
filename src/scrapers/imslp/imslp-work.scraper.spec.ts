@@ -162,12 +162,11 @@ describe('ImslpWorkScraper', () => {
       expect(work.imslpTags).toContain('Beethoven, Ludwig van');
     });
 
-    it('classifica a dificuldade na escala do catálogo', async () => {
+    // O nível vem só de fonte curada (`import-imslp-difficulty`).
+    it('não chuta a dificuldade', async () => {
       const work = await scraper.scrape('https://imslp.org/wiki/X');
 
-      expect(['BEGINNER', 'INTERMEDIATE', 'ADVANCED']).toContain(
-        work.difficultyLevel,
-      );
+      expect(work).not.toHaveProperty('difficultyLevel');
     });
 
     // Sem estilo na página, a época vem do compositor.

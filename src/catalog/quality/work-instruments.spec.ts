@@ -1,4 +1,10 @@
-import { classifyBassWork, isFluteNotRecorder } from './work-instruments';
+import {
+  classifyBassWork,
+  instrumentMove,
+  instrumentsFromFicha,
+  isFluteNotRecorder,
+  workInstruments,
+} from './work-instruments';
 
 const NAMES = [
   'Orquestra',
@@ -117,5 +123,113 @@ describe('isFluteNotRecorder', () => {
     expect(
       isFluteNotRecorder({ title: 'Miniature', instrumentation: 'Oboé' }),
     ).toBe(false);
+  });
+});
+
+describe('instrumentsFromFicha', () => {
+  it.each([
+    ['Órgão', 'Órgão'],
+    ['Piano Solo', 'Piano'],
+    ['Piano 4-mãos', 'Piano'],
+    ['Vozes satb', 'Voz'],
+    ['Trumpets', 'Trompete'],
+    ['Voz, Piano', 'Voz'],
+    ['Violoncelo, Piano', 'Violoncelo'],
+    ['Trompa, Orquestra', 'Trompa'],
+    ['Soprano, Baixo Contínuo', 'Soprano'],
+    ['Mixed Coro satb, Órgão', 'Coro'],
+    ['Voz, Mixed Coro satb, Piano', 'Coro'],
+  ])('%s → %s', (ficha, instrument) => {
+    expect(instrumentsFromFicha(ficha)[0]).toBe(instrument);
+  });
+
+  it('todas as alternativas contam', () => {
+    expect(instrumentsFromFicha('Órgão ou Harmônio')).toEqual([
+      'Órgão',
+      'Harmônio',
+    ]);
+    expect(
+      instrumentsFromFicha('Voz, Orquestra de Câmara original ; Voz, Piano'),
+    ).toEqual(['Voz']);
+  });
+
+  it('combinação maior não decide', () => {
+    for (const ficha of [
+      'Violino, Violoncelo, Piano',
+      'Vozes, Coro, Orquestra',
+      'Instruments',
+      '',
+      null,
+    ])
+      expect(instrumentsFromFicha(ficha)).toEqual([]);
+  });
+});
+
+describe('instrumentMove', () => {
+  const ficha = (instrumentation: string, title = 'Obra') => ({
+    title,
+    instrumentation,
+  });
+
+  it('corrige o que a ficha desmente', () => {
+    expect(instrumentMove(ficha('Órgão'), 'Quarteto')).toBe('Órgão');
+    expect(instrumentMove(ficha('Cravo'), 'Harpa')).toBe('Cravo');
+    expect(instrumentMove(ficha('Trompete'), 'Trompa')).toBe('Trompete');
+  });
+
+  it('mantém o que a ficha aceita, e o que ela não decide', () => {
+    expect(instrumentMove(ficha('Órgão ou Harmônio'), 'Harmônio')).toBeNull();
+    expect(
+      instrumentMove(ficha('Violino, Violoncelo, Piano'), 'Piano'),
+    ).toBeNull();
+    expect(instrumentMove(ficha('Coro, Orquestra'), 'Orquestra')).toBeNull();
+  });
+
+  it('contrabaixo só com o título confirmando', () => {
+    expect(
+      instrumentMove(ficha('Contrabaixo, Piano', 'Songs for Bass'), 'Piano'),
+    ).toBeNull();
+    expect(
+      instrumentMove(
+        ficha('Contrabaixo, Piano', 'Double Bass Sonata'),
+        'Piano',
+      ),
+    ).toBe('Contrabaixo');
+  });
+});
+
+describe('workInstruments', () => {
+  const de = (instrumentation: string | null, main: string | null) =>
+    workInstruments({ title: 'Obra', instrumentation }, main);
+
+  it('a canção é de voz e de piano, o principal primeiro', () => {
+    expect(de('Voz, Piano', 'Voz')).toEqual(['Voz', 'Piano']);
+  });
+
+  it('combinação maior também conta', () => {
+    expect(de('Violino, Violoncelo, Piano', 'Violino')).toEqual([
+      'Violino',
+      'Violoncelo',
+      'Piano',
+    ]);
+    expect(de('Mixed Coro satb, Órgão ou Harmônio', 'Coro')).toEqual([
+      'Coro',
+      'Órgão',
+      'Harmônio',
+    ]);
+  });
+
+  it('baixo contínuo não é instrumento, e sem ficha fica o principal', () => {
+    expect(de('Soprano, Baixo Contínuo', 'Soprano')).toEqual(['Soprano']);
+    expect(de(null, 'Piano')).toEqual(['Piano']);
+  });
+
+  it('obra de teclado também é de piano; cravo, não', () => {
+    expect(de('Teclado', 'Teclado')).toEqual(['Teclado', 'Piano']);
+    expect(de('Cravo', 'Cravo')).toEqual(['Cravo']);
+  });
+
+  it('"Bass" só é contrabaixo com o título confirmando', () => {
+    expect(de('Contrabaixo, Piano', 'Voz')).toEqual(['Voz', 'Piano']);
   });
 });

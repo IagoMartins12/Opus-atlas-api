@@ -42,6 +42,7 @@ import {
 import { errorMessage } from '../../common/utils/error.util';
 import { instrumentKind } from '../instruments/instrument-kind';
 import { TextIndexService } from '../../common/search/text-index.service';
+import { FAMOUS_COMPOSERS } from './famous-composers';
 
 /** Select Prisma reaproveitado em toda query de listagem/detalhe de obra —
  * mantém o payload BSON enxuto (seção 3.7 e 10.4 do SPEC.md: nunca buscar
@@ -73,27 +74,17 @@ const WORK_SUMMARY_SELECT = {
 } as const;
 
 /**
- * Ordenação padrão: obras com mais anotações primeiro, depois alfabético — a
- * mesma regra de negócio de sempre, por outro caminho.
+ * Ordenação padrão: as obras mais conhecidas primeiro (`prominence`, a nota
+ * gravada pela rotina `rank-works`), depois alfabético.
  *
- * **O que mudou e por quê.** Ordenar por `workAnnotations: { _count: 'desc' }`
- * obriga o Prisma a contar as anotações de **cada uma das 207 mil obras** antes
- * de escolher as dez primeiras: um `$lookup` na coleção inteira, medido em
- * 3,7 s com a coleção de anotações vazia e em 15,4 s com dado real. Como não há
- * teto de tempo no banco, sob carga essas consultas ocupavam o pool do Prisma e
- * as rápidas morriam na fila — foi assim que o processo parou de responder no
- * teste de carga.
- *
- * `annotationsCount` é o mesmo número, já gravado na obra e mantido a cada
- * anotação criada ou apagada, e é coberto pelo índice
- * `[annotationsCount(sort: Desc), title]`: 10 documentos examinados no lugar de
- * 207.892, 1 ms no lugar de 3,7 s.
- *
- * **Sem desempate por `id`, de propósito.** Acrescentar um terceiro critério
- * que o índice não cobre faz o MongoDB descartar o índice e ordenar a coleção
- * inteira em memória — medido aqui: 344 ms com o desempate, 30 ms sem ele. Esta
- * ordenação só alimenta listas com teto (as N mais anotadas), nunca uma
- * paginação, então a instabilidade entre empates não tem onde aparecer.
+ * **Uma nota gravada, não uma contagem.** Ordenar por
+ * `workAnnotations: { _count: 'desc' }` obrigava o Prisma a contar as
+ * anotações de cada uma das 207 mil obras antes de escolher as dez primeiras
+ * (3,7 s a 15,4 s, e o pool parado sob carga). A ordem passou a ler o contador
+ * `annotationsCount`, e depois a nota de fama, que inclui as anotações e
+ * acrescenta os downloads do IMSLP, o nome popular e quem estuda a obra. É
+ * coberta pelo índice `[prominence(sort: Desc), title, id]`: o Mongo lê
+ * `limit` chaves e para.
  */
 /** Genres offered as list filters, most used first. */
 const FILTER_GENRES = 40;
@@ -102,21 +93,14 @@ const CATALOG_ORDER: Record<
   WorkCatalogSort,
   Prisma.WorkOrderByWithRelationInput[]
 > = {
-  // `featured` is two queries, not one order (see `findFeaturedPage`): this is
-  // the order of the rest, after the famous composers' works.
-  featured: [{ title: 'asc' }, { id: 'asc' }],
+  // The best-known first (see `quality/work-prominence.ts`); the indexes
+  // `[<filter>, prominence desc, title, id]` keep each filtered page indexed.
+  featured: [{ prominence: 'desc' }, { title: 'asc' }, { id: 'asc' }],
   title: [{ title: 'asc' }, { id: 'asc' }],
   'title-desc': [{ title: 'desc' }, { id: 'desc' }],
   oldest: [{ createdAt: 'asc' }, { id: 'asc' }],
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
 };
-
-/** The order of the famous composers' works in `featured`: the most studied first. */
-const FEATURED_HEAD_ORDER: Prisma.WorkOrderByWithRelationInput[] = [
-  { annotationsCount: 'desc' },
-  { title: 'asc' },
-  { id: 'asc' },
-];
 
 /**
  * The same orders for the text-search pipeline (`_id` follows creation). In a
@@ -131,8 +115,9 @@ const CATALOG_RAW_ORDER: Record<WorkCatalogSort, Record<string, 1 | -1>> = {
 };
 
 const WORK_DEFAULT_ORDER_BY = [
-  { annotationsCount: 'desc' as const },
+  { prominence: 'desc' as const },
   { title: 'asc' as const },
+  { id: 'asc' as const },
 ];
 
 type RawWork = {
@@ -191,8 +176,12 @@ const SEARCH_COMPOSER_CAP = 200;
 /** Relevance added to a famous work (one with a popular name or famous parts). */
 const FAMOUS_BOOST = 5;
 
+/** Search relevance per prominence point: 1000 points add 3. */
+const PROMINENCE_WEIGHT = 0.003;
+
 const WORK_CATALOG_BASE_SELECT = {
   id: true,
+  instrumentIds: true,
   title: true,
   subtitle: true,
   popularName: true,
@@ -216,6 +205,7 @@ const WORK_CATALOG_BASE_SELECT = {
 
 const WORK_CATALOG_FALLBACK_SELECT = {
   id: true,
+  instrumentIds: true,
   title: true,
   subtitle: true,
   popularName: true,
@@ -328,19 +318,6 @@ const DIFFICULTY_LEVELS: DifficultyLevelDto[] = [
   { value: 'BEGINNER', label: 'Iniciante' },
   { value: 'INTERMEDIATE', label: 'Intermediário' },
   { value: 'ADVANCED', label: 'Avançado' },
-];
-
-const FAMOUS_COMPOSERS = [
-  'Ludwig van Beethoven',
-  'Wolfgang Amadeus Mozart',
-  'Johann Sebastian Bach',
-  'Frédéric Chopin',
-  'Franz Liszt',
-  'Pyotr Ilyich Tchaikovsky',
-  'Claude Debussy',
-  'Johannes Brahms',
-  'Antonio Vivaldi',
-  'Franz Schubert',
 ];
 
 const WORK_RELATED_TTL_MS = 15 * 60 * 1000;
@@ -485,10 +462,17 @@ export class WorksService {
               $addFields: {
                 // A work with a popular name or famous parts is a famous one:
                 // "clair de lune" brings Debussy's before the dozens of
-                // lesser pieces with that very title.
+                // lesser pieces with that very title. The prominence breaks
+                // the ties among the rest (up to +3 for the best known).
                 _score: {
                   $add: [
                     { $meta: 'textScore' },
+                    {
+                      $multiply: [
+                        { $ifNull: ['$prominence', 0] },
+                        PROMINENCE_WEIGHT,
+                      ],
+                    },
                     {
                       $cond: [
                         {
@@ -582,7 +566,7 @@ export class WorksService {
   }
 
   /**
-   * As obras mais anotadas — o que `GET /works` devolve sem termo de busca.
+   * As obras mais conhecidas — o que `GET /works` devolve sem termo de busca.
    *
    * É uma consulta indexada de ponta a ponta (ver `WORK_DEFAULT_ORDER_BY`): o
    * Mongo lê `limit` chaves do índice e busca `limit` documentos, sem tocar no
@@ -1005,16 +989,15 @@ export class WorksService {
     sort: WorkCatalogSort,
   ): Promise<WorksCatalogResponseDto> {
     const skip = (page - 1) * limit;
+    const names = await this.instrumentNames();
 
     const [works, totalCount] = await Promise.all([
-      sort === 'featured'
-        ? this.findFeaturedPage({}, WORK_CATALOG_BASE_SELECT, skip, limit)
-        : this.prisma.work.findMany({
-            select: WORK_CATALOG_BASE_SELECT,
-            orderBy: CATALOG_ORDER[sort],
-            skip,
-            take: limit,
-          }),
+      this.prisma.work.findMany({
+        select: WORK_CATALOG_BASE_SELECT,
+        orderBy: CATALOG_ORDER[sort],
+        skip,
+        take: limit,
+      }),
       this.getCachedTotalWorkCount(),
     ]);
 
@@ -1059,23 +1042,27 @@ export class WorksService {
 
     return {
       works: works.map((work) =>
-        this.toCatalogItemDto({
-          ...work,
-          composer: composerMap.get(work.composerId) ?? {
-            id: '',
-            name: 'Desconhecido',
-            fullName: null,
-            epochName: null,
-            portraitUrl: null,
+        this.toCatalogItemDto(
+          {
+            ...work,
+            composer: composerMap.get(work.composerId) ?? {
+              id: '',
+              name: 'Desconhecido',
+              fullName: null,
+              epochName: null,
+              portraitUrl: null,
+            },
+            instrument: work.instrumentId
+              ? {
+                  name:
+                    instrumentMap.get(work.instrumentId)?.name ??
+                    'Desconhecido',
+                }
+              : null,
+            epoch: epochMap.get(work.epochId) ?? null,
           },
-          instrument: work.instrumentId
-            ? {
-                name:
-                  instrumentMap.get(work.instrumentId)?.name ?? 'Desconhecido',
-              }
-            : null,
-          epoch: epochMap.get(work.epochId) ?? null,
-        }),
+          names,
+        ),
       ),
       totalCount,
       hasMore: skip + works.length < totalCount,
@@ -1097,109 +1084,26 @@ export class WorksService {
     }
 
     const whereClause = await this.buildCatalogWhereClause(query);
+    const names = await this.instrumentNames();
 
     const [works, totalCount] = await Promise.all([
-      query.sort === 'featured'
-        ? this.findFeaturedPage(
-            whereClause,
-            WORK_CATALOG_FALLBACK_SELECT,
-            skip,
-            limit,
-          )
-        : this.prisma.work.findMany({
-            where: whereClause,
-            select: WORK_CATALOG_FALLBACK_SELECT,
-            // Every order ends on `id`: with `title` alone two works sharing a
-            // title swap places between pages and one of them disappears.
-            orderBy: CATALOG_ORDER[query.sort ?? 'title'],
-            skip,
-            take: limit,
-          }),
+      this.prisma.work.findMany({
+        where: whereClause,
+        select: WORK_CATALOG_FALLBACK_SELECT,
+        // Every order ends on `id`: with `title` alone two works sharing a
+        // title swap places between pages and one of them disappears.
+        orderBy: CATALOG_ORDER[query.sort ?? 'title'],
+        skip,
+        take: limit,
+      }),
       this.prisma.work.count({ where: whereClause }),
     ]);
 
     return {
-      works: works.map((work) => this.toCatalogItemDto(work)),
+      works: works.map((work) => this.toCatalogItemDto(work, names)),
       totalCount,
       hasMore: skip + works.length < totalCount,
     };
-  }
-
-  /**
-   * The ids of the curated famous composers (the same list the filters use),
-   * kept for six hours: it only changes when the list changes in the code.
-   */
-  private famousComposerIds(): Promise<string[]> {
-    return this.appCache.remember(
-      `${CacheNamespace.WORKS}:famous-composer-ids`,
-      {
-        ttlMs: 6 * 60 * 60 * 1000,
-        hotTtlMs: WORK_HOT_CACHE_TTL_MS,
-        metricRoute: 'works/famous-composers',
-      },
-      async () => {
-        const rows = await this.prisma.composer.findMany({
-          where: {
-            OR: [
-              { fullName: { in: FAMOUS_COMPOSERS } },
-              { name: { in: FAMOUS_COMPOSERS } },
-            ],
-          },
-          select: { id: true },
-        });
-        return rows.map((row) => row.id);
-      },
-    );
-  }
-
-  /**
-   * The "featured" order: the famous composers' works first (the most studied
-   * ahead), then every other work from A to Z.
-   *
-   * Two queries, not one order, because "is by a famous composer" is not a
-   * column: sorting 200 thousand works by a computed rank would scan them all
-   * on every page. The first set is small and counted once; a page is cut from
-   * it and, if it falls short, filled from the rest.
-   */
-  private async findFeaturedPage<S extends Prisma.WorkSelect>(
-    where: Prisma.WorkWhereInput,
-    select: S,
-    skip: number,
-    take: number,
-  ): Promise<Prisma.WorkGetPayload<{ select: S }>[]> {
-    const famous = await this.famousComposerIds();
-    const head: Prisma.WorkWhereInput = {
-      AND: [where, { composerId: { in: famous } }],
-    };
-    const tail: Prisma.WorkWhereInput = {
-      AND: [where, { composerId: { notIn: famous } }],
-    };
-    const headCount = await this.prisma.work.count({ where: head });
-
-    const rows: Prisma.WorkGetPayload<{ select: S }>[] = [];
-    if (skip < headCount) {
-      rows.push(
-        ...(await this.prisma.work.findMany({
-          where: head,
-          select,
-          orderBy: FEATURED_HEAD_ORDER,
-          skip,
-          take,
-        })),
-      );
-    }
-    if (rows.length < take) {
-      rows.push(
-        ...(await this.prisma.work.findMany({
-          where: tail,
-          select,
-          orderBy: CATALOG_ORDER.featured,
-          skip: Math.max(0, skip - headCount),
-          take: take - rows.length,
-        })),
-      );
-    }
-    return rows;
   }
 
   /**
@@ -1326,17 +1230,20 @@ export class WorksService {
       return [];
     }
 
-    const works = await this.prisma.work.findMany({
-      where: { id: { in: ids } },
-      select: WORK_CATALOG_FALLBACK_SELECT,
-    });
+    const [works, names] = await Promise.all([
+      this.prisma.work.findMany({
+        where: { id: { in: ids } },
+        select: WORK_CATALOG_FALLBACK_SELECT,
+      }),
+      this.instrumentNames(),
+    ]);
 
     const byId = new Map(works.map((work) => [work.id, work]));
 
     return ids
       .map((id) => byId.get(id))
       .filter((work): work is (typeof works)[number] => work !== undefined)
-      .map((work) => this.toCatalogItemDto(work));
+      .map((work) => this.toCatalogItemDto(work, names));
   }
 
   /**
@@ -1403,7 +1310,7 @@ export class WorksService {
     const filter: Record<string, unknown> = {};
 
     if (query.composerId) filter.composerId = { $oid: query.composerId };
-    if (query.instrumentId) filter.instrumentId = { $oid: query.instrumentId };
+    if (query.instrumentId) filter.instrumentIds = { $oid: query.instrumentId };
     if (query.epochId) filter.epochId = { $oid: query.epochId };
     if (query.difficultyLevel) filter.difficultyLevel = query.difficultyLevel;
     if (query.categoryNames) filter.categoryNames = query.categoryNames;
@@ -1428,7 +1335,8 @@ export class WorksService {
     const whereClause: Record<string, unknown> = {};
 
     if (query.composerId) whereClause.composerId = query.composerId;
-    if (query.instrumentId) whereClause.instrumentId = query.instrumentId;
+    if (query.instrumentId)
+      whereClause.instrumentIds = { has: query.instrumentId };
     if (query.epochId) whereClause.epochId = query.epochId;
     if (query.difficultyLevel)
       whereClause.difficultyLevel = query.difficultyLevel;
@@ -1468,34 +1376,54 @@ export class WorksService {
     return whereClause;
   }
 
-  private toCatalogItemDto(work: {
-    id: string;
-    title: string;
-    subtitle: string | null;
-    popularName: string | null;
-    popularNameEn: string | null;
-    famousParts: string[];
-    famousPartsEn: string[];
-    opOrCatalog: string | null;
-    compositionYear: string | null;
-    tone: string | null;
-    mediaDuration: string | null;
-    workType: string;
-    isVerified: boolean;
-    spotifyTrackId: string | null;
-    youtubeVideoId: string | null;
-    customAudioUrl: string | null;
-    difficultyLevel: string | null;
-    composer: {
+  /** Id → name of every instrument, for the catalog cards (a short list). */
+  private instrumentNames(): Promise<Record<string, string>> {
+    return this.appCache.remember(
+      `${CacheNamespace.WORKS}:instrument-names`,
+      { ttlMs: 6 * 60 * 60 * 1000, metricRoute: 'works/instrument-names' },
+      async () => {
+        const rows = await this.prisma.instrument.findMany({
+          select: { id: true, name: true },
+        });
+        return Object.fromEntries(
+          (rows ?? []).map((row) => [row.id, row.name]),
+        );
+      },
+    );
+  }
+
+  private toCatalogItemDto(
+    work: {
       id: string;
-      name: string;
-      fullName: string | null;
-      epochName: string | null;
-      portraitUrl: string | null;
-    };
-    instrument: { name: string } | null;
-    epoch: { id: string; name: string } | null;
-  }): WorkCatalogItemDto {
+      title: string;
+      subtitle: string | null;
+      popularName: string | null;
+      popularNameEn: string | null;
+      famousParts: string[];
+      famousPartsEn: string[];
+      opOrCatalog: string | null;
+      compositionYear: string | null;
+      tone: string | null;
+      mediaDuration: string | null;
+      workType: string;
+      isVerified: boolean;
+      spotifyTrackId: string | null;
+      youtubeVideoId: string | null;
+      customAudioUrl: string | null;
+      difficultyLevel: string | null;
+      composer: {
+        id: string;
+        name: string;
+        fullName: string | null;
+        epochName: string | null;
+        portraitUrl: string | null;
+      };
+      instrument: { name: string } | null;
+      instrumentIds?: string[];
+      epoch: { id: string; name: string } | null;
+    },
+    names: Record<string, string>,
+  ): WorkCatalogItemDto {
     return {
       id: work.id,
       title: work.title,
@@ -1524,6 +1452,9 @@ export class WorksService {
         portraitUrl: this.normalizeOptionalString(work.composer.portraitUrl),
       },
       instrument: work.instrument,
+      instrumentNames: (work.instrumentIds ?? [])
+        .map((id) => names[id])
+        .filter(Boolean),
       epoch: work.epoch ?? { id: '', name: 'Desconhecida' },
     };
   }
@@ -1635,7 +1566,7 @@ export class WorksService {
             OR: [
               { composerId: work.composerId },
               ...(work.instrumentId
-                ? [{ instrumentId: work.instrumentId }]
+                ? [{ instrumentIds: { has: work.instrumentId } }]
                 : []),
             ],
           },

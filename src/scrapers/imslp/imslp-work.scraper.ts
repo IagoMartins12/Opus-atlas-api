@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { instrumentsFromFicha } from '../../catalog/quality/work-instruments';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExternalPageFetcher } from './external-page.fetcher';
@@ -14,8 +15,6 @@ import {
   extractImslpWorkId,
   extractSubtitle,
   extractWorkDetails,
-  determineDifficultyLevel,
-  DifficultyLevel,
   extractImslpTags,
   extractMovementNumber,
   extractWorkGenres,
@@ -63,8 +62,6 @@ export interface ScrapedWork {
   movementNumber: number | null;
   /** As categorias da página, cruas — sem passar pelo vocabulário. */
   imslpTags: string[];
-  /** Nível na escala do catálogo. Palpite grosseiro; veja o parser. */
-  difficultyLevel: DifficultyLevel;
   /** Época **sugerida**: pelo estilo da página, ou pela do compositor. */
   epochName: string | null;
   /** 0 a 100 — quanto da ficha veio preenchido. */
@@ -139,18 +136,17 @@ export class ImslpWorkScraper {
       categoryNames,
       workGenresArr,
       workType: determineWorkType(title, $),
-      primaryInstrument: determinePrimaryInstrument(
-        title,
-        details.instrumentation,
-        categoryNames,
-      ),
+      primaryInstrument:
+        instrumentsFromFicha(
+          translateInstrumentation(details.instrumentation),
+        )[0] ??
+        determinePrimaryInstrument(
+          title,
+          details.instrumentation,
+          categoryNames,
+        ),
       movementNumber: extractMovementNumber(details.moviment),
       imslpTags: extractImslpTags($),
-      difficultyLevel: determineDifficultyLevel(
-        title,
-        details.opOrCatalog,
-        workGenresArr,
-      ),
       epochName: null,
       dataCompleteness: 0,
       pageQuality: 'low',

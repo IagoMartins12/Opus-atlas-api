@@ -1,0 +1,44 @@
+{
+  "instrument": "Piano",
+  "status": "rascunho: aguarda a revisão do dono; ainda não aparece no site",
+  "levels": [
+    {
+      "tier": "BEGINNER",
+      "items": [
+        { "imslpId": "648794", "why": "Escrito para as primeiras aulas: mãos perto do teclado e frases curtas." },
+        { "imslpId": "116890", "why": "Mozart escreveu este minueto aos seis anos. Cabe nas mãos de quem começa." },
+        { "imslpId": "9922", "why": "Uma dança de poucos compassos, escrita por Beethoven no fim da vida." },
+        { "imslpId": "6107", "why": "Música da casa de Bach, feita para a família: danças e canções curtas." },
+        { "imslpId": "357193", "why": "O minueto que quase todo aluno toca. Foi atribuído a Bach por muito tempo; é de Christian Pezold." },
+        { "imslpId": "301429", "why": "Alegre, com saltos de oitava na mão esquerda: o primeiro desafio de deslocamento." },
+        { "imslpId": "7798", "why": "Danças de Schubert, curtas e com caráter, para treinar ritmo e leveza." },
+        { "imslpId": "7983", "why": "Cada estudo tem título e caráter: a técnica já chega como música." },
+        { "imslpId": "3084", "why": "Canções folclóricas húngaras e eslovacas, numa escrita simples e cheia de cor." }
+      ]
+    },
+    {
+      "tier": "INTERMEDIATE",
+      "items": [
+        { "imslpId": "2707", "why": "Schumann escreveu para as filhas. Começa em peças simples e cresce com quem estuda." },
+        { "imslpId": "6617", "why": "A forma sonata em tamanho pequeno: a porta de entrada para Mozart e Beethoven." },
+        { "imslpId": "3267", "why": "Bach as escreveu para ensinar a ouvir e tocar duas vozes independentes." },
+        { "imslpId": "113759", "why": "Uma valsa curta e uma boa primeira peça de Chopin." },
+        { "imslpId": "14377", "why": "O tema é conhecido; as seções do meio pedem mais do que ele sugere." },
+        { "imslpId": "3338", "why": "Peças breves de Beethoven, cada uma com uma ideia própria." },
+        { "imslpId": "1855", "why": "Mozart a anotou como sonata para principiantes, mas a clareza que ela pede é difícil de alcançar." },
+        { "imslpId": "3_Gymnop%C3%A9dies_(Satie,_Erik)", "why": "Poucas notas e muito tempo: o estudo aqui é o som e o pedal." }
+      ]
+    },
+    {
+      "tier": "ADVANCED",
+      "items": [
+        { "imslpId": "3268", "why": "A continuação das Invenções, agora a três vozes." },
+        { "imslpId": "2312", "why": "Os noturnos mais conhecidos de Chopin: canto na mão direita e rubato." },
+        { "imslpId": "4642", "why": "Brahms tardio: pede som e fraseado mais do que velocidade." },
+        { "imslpId": "1458", "why": "A Sonata ao Luar: o primeiro movimento é o mais tocado, o último é o que exige o nível." },
+        { "imslpId": "1969", "why": "Estudos que são obras de concerto: cada um resolve um problema técnico." },
+        { "imslpId": "1646", "why": "Uma das grandes obras do repertório romântico, narrativa e virtuosística." }
+      ]
+    }
+  ]
+}

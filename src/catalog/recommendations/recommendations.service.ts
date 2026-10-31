@@ -273,7 +273,7 @@ export class RecommendationsService {
         this.prisma.work.findMany({
           where: {
             composerId: seed.composerId,
-            instrumentId: seed.instrumentId,
+            instrumentIds: { has: seed.instrumentId },
           },
           select: FEATURES,
           take: 60,
@@ -281,7 +281,7 @@ export class RecommendationsService {
         seed.genres.length
           ? this.prisma.work.findMany({
               where: {
-                instrumentId: seed.instrumentId,
+                instrumentIds: { has: seed.instrumentId },
                 workGenresArr: { hasSome: seed.genres.slice(0, 3) },
               },
               select: FEATURES,
