@@ -243,4 +243,42 @@ describe('InstrumentsService', () => {
       expect(prisma.instrument.findMany).not.toHaveBeenCalled();
     });
   });
+
+  describe('por onde começar', () => {
+    let work: { findMany: jest.Mock };
+
+    beforeEach(() => {
+      work = prisma.work as unknown as { findMany: jest.Mock };
+      work.findMany = jest.fn();
+    });
+
+    it('monta os níveis com as obras do acervo e pula a que falta', async () => {
+      work.findMany.mockResolvedValue([
+        {
+          id: 'w1',
+          imslpId: '648794',
+          title: 'Anfangs-Stunden',
+          popularName: null,
+          popularNameEn: null,
+          composer: { fullName: 'Cornelius Gurlitt', name: 'Gurlitt' },
+        },
+      ]);
+
+      const levels = await service.getStarting('piano');
+
+      expect(levels).toHaveLength(1);
+      expect(levels[0].tier).toBe('BEGINNER');
+      expect(levels[0].pieces[0]).toMatchObject({
+        id: 'w1',
+        composer: 'Cornelius Gurlitt',
+      });
+    });
+
+    it('instrumento sem lista devolve vazio, sem ir ao banco', async () => {
+      work.findMany.mockClear();
+      await expect(service.getStarting('oboe')).resolves.toEqual([]);
+      await expect(service.getStarting('constructor')).resolves.toEqual([]);
+      expect(work.findMany).not.toHaveBeenCalled();
+    });
+  });
 });
