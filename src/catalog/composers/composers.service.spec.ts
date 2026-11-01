@@ -372,7 +372,7 @@ describe('ComposersService', () => {
       const [{ where }] = prisma.work.findMany.mock.calls[0];
       expect(where).toMatchObject({
         composerId: ID,
-        instrumentId: 'i1',
+        instrumentIds: { has: 'i1' },
         workGenresArr: { has: 'Noturno' },
         categoryNames: { has: 'Piano' },
         workType: 'SINGLE',

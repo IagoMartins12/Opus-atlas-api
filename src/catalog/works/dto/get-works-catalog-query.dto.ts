@@ -12,8 +12,8 @@ import {
 } from 'class-validator';
 
 /**
- * - `featured`: the works of the curated famous composers first (the most
- *   studied ahead), then the rest from A to Z.
+ * - `featured`: the best-known works first (`Work.prominence`: IMSLP
+ *   downloads, popular name, recordings, people studying it), then A to Z.
  * - `oldest` / `newest`: by the record, when the work entered the library.
  */
 export const WORK_CATALOG_SORTS = [

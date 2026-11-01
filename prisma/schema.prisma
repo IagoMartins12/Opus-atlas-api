@@ -1185,7 +1185,20 @@ model Work {
   helpfulAnnotationsCount Int       @default(0)
   lastAnnotationAt        DateTime?
 
+  /// Every instrument of the work, the main one (`instrumentId`) first: "Voz,
+  /// Piano" is `Voz` and `Piano`, and the song is listed under both.
+  instrumentIds String[] @default([]) @db.ObjectId
+
+  /// How well known the work is, 0–1000: IMSLP downloads, popular name,
+  /// recordings and the people who study it. Orders "featured"; recomputed by
+  /// the `rank-works` routine (`catalog/quality/work-prominence.ts`).
+  /// Optional on purpose: the works written before it have no field, and a
+  /// required one would fail to read until the routine ran (missing = 0).
+  prominence Int?
+
   cachedScores WorkScore[]
+  /// IMSLP Difficulty Project ratings (`catalog/quality/imslp-difficulty.ts`).
+  difficulties WorkDifficulty[]
   // ÍNDICES PARA VERIFICAÇÃO DE PARTITURAS
   // REMOVIDO (SPEC §10.2): @@index([id, createdAt]) — _id ja e a chave primaria indexada
 
@@ -1240,6 +1253,45 @@ model Work {
   @@index([annotationsCount(sort: Desc), title])
   // Pagina sem filtro de GET /works/catalog, ordenada por data de entrada.
   @@index([createdAt(sort: Desc)])
+  // "featured": the whole catalog, and filtered by instrument, era and
+  // composer, each ending on `id` so a page cut is stable and the sort never
+  // leaves the index.
+  @@index([prominence(sort: Desc), title, id])
+  @@index([instrumentIds, prominence(sort: Desc), title, id])
+  @@index([instrumentIds, difficultyLevel])
+  @@index([epochId, prominence(sort: Desc), title, id])
+  @@index([composerId, prominence(sort: Desc), title, id])
+}
+
+/// One rating of the IMSLP Difficulty Project: a work, or an excerpt of it,
+/// at a level 1–15 in one instrument's list. Replaced as a whole by the
+/// `import-imslp-difficulty` routine; the work's own level is drawn from these.
+model WorkDifficulty {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  workId     String   @db.ObjectId
+  /// The project's entry number, unique across all the lists (one entry can
+  /// rate two catalog records of the same work, hence the pair below).
+  entryId    Int
+  /// The list's instrument, as the catalog names it ("Piano", "Violino").
+  instrument String
+  /// 1 = RCM preparatory, 2–11 = RCM 1–10, 12 = ARCT, 15 = hardest written.
+  level      Int
+  /// The rated excerpt ("7. On the River Bank"); absent = the whole work.
+  excerpt    String?
+  /// The excerpt's pages in the file ("p.9").
+  pages      String?
+  /// The IMSLP file (`#633235`) the rating was made on.
+  fileId     String?
+  /// The reference the entry cites ("RCM (2008) Preparatory B").
+  reference  String?
+  importedAt DateTime @default(now())
+
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@unique([entryId, workId])
+  @@index([workId])
+  @@index([instrument, level])
+  @@map("work_difficulties")
 }
 
 model UserInstrument {

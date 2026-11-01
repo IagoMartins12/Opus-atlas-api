@@ -100,6 +100,7 @@ export class WorkUploadsService {
         title: dto.title,
         composerId: dto.composerId,
         instrumentId: dto.instrumentId,
+        instrumentIds: [dto.instrumentId],
         epochId: dto.epochId,
         subtitle: dto.subtitle ?? null,
         opOrCatalog: dto.opOrCatalog ?? null,
@@ -200,6 +201,19 @@ export class WorkUploadsService {
     if (dto.instrumentId) {
       data.instrumentId = dto.instrumentId;
       changed.instrumentId = dto.instrumentId;
+      // The new main one replaces the old; the work's other instruments stay.
+      const current = await this.prisma.work.findUnique({
+        where: { id: workId },
+        select: { instrumentId: true, instrumentIds: true },
+      });
+      data.instrumentIds = [
+        ...new Set([
+          dto.instrumentId,
+          ...(current?.instrumentIds ?? []).filter(
+            (id) => id !== current?.instrumentId,
+          ),
+        ]),
+      ];
     }
     if (dto.epochId) {
       data.epochId = dto.epochId;

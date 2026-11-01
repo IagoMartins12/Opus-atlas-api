@@ -11,6 +11,7 @@ import {
   ShowcaseWorkDto,
 } from './dto/instrument-showcase.dto';
 import { InstrumentItemDto } from './dto/instrument-item.dto';
+import { StartingLevelDto } from './dto/instrument-starting.dto';
 import { InstrumentStatsResponseDto } from './dto/instrument-stats-response.dto';
 import {
   SHOWCASE_COMPOSER_PREFERENCES,
@@ -20,12 +21,15 @@ import {
   SHOWCASE_WORKS_PREFERENCES,
 } from './instrument-showcase.config';
 import type { ShowcaseComposerPreference } from './instrument-showcase.config';
+import { STARTING_LISTS } from './starting-lists';
 
 const INSTRUMENTS_CACHE_KEY = `${CacheNamespace.INSTRUMENTS}:list`;
 const INSTRUMENTS_TTL_MS = 6 * 60 * 60 * 1000;
 const INSTRUMENT_STATS_TTL_MS = 15 * 60 * 1000;
 const INSTRUMENTS_SHOWCASE_CACHE_KEY = `${CacheNamespace.INSTRUMENTS}:showcase:v1`;
 const INSTRUMENTS_SHOWCASE_TTL_MS = 6 * 60 * 60 * 1000;
+const STARTING_TTL_MS = 60 * 60 * 1000;
+const TIERS = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'] as const;
 
 const SHOWCASE_COMPOSER_SELECT = {
   id: true,
@@ -111,6 +115,59 @@ export class InstrumentsService {
    * estudam e os 5 compositores com mais obras para ele. Usado pela página
    * de história do instrumento (o texto histórico descritivo permanece
    * estático no frontend, igual à decisão tomada para épocas). */
+  /**
+   * "Por onde começar a tocar": a lista da casa com as obras do acervo. Peça
+   * que este banco não tem some da lista, sem derrubar a seção.
+   */
+  async getStarting(key: string): Promise<StartingLevelDto[]> {
+    const list = Object.prototype.hasOwnProperty.call(STARTING_LISTS, key)
+      ? STARTING_LISTS[key]
+      : undefined;
+    if (!list) return [];
+    const cacheKey = `${CacheNamespace.INSTRUMENTS}:starting:${key}`;
+    const cached = await this.cacheManager.get<StartingLevelDto[]>(cacheKey);
+    if (cached) return cached;
+
+    const works = await this.prisma.work.findMany({
+      where: {
+        imslpId: {
+          in: Object.values(list).flatMap((pieces) =>
+            pieces.map((piece) => piece.imslpId),
+          ),
+        },
+      },
+      select: {
+        id: true,
+        imslpId: true,
+        title: true,
+        popularName: true,
+        popularNameEn: true,
+        composer: { select: { fullName: true, name: true } },
+      },
+    });
+    const byImslp = new Map(works.map((work) => [work.imslpId, work]));
+    const levels = TIERS.flatMap((tier) => {
+      const pieces = (list[tier] ?? []).flatMap((piece) => {
+        const work = byImslp.get(piece.imslpId);
+        if (!work) return [];
+        return [
+          {
+            id: work.id,
+            title: work.title,
+            popularName: work.popularName,
+            popularNameEn: work.popularNameEn,
+            composer: work.composer.fullName || work.composer.name,
+            why: piece.why.pt,
+            whyEn: piece.why.en,
+          },
+        ];
+      });
+      return pieces.length ? [{ tier, pieces }] : [];
+    });
+    await this.cacheManager.set(cacheKey, levels, STARTING_TTL_MS);
+    return levels;
+  }
+
   async getStats(instrumentId: string): Promise<InstrumentStatsResponseDto> {
     const cacheKey = `${CacheNamespace.INSTRUMENTS}:${instrumentId}:stats`;
     const cached =
@@ -134,11 +191,13 @@ export class InstrumentsService {
     // Antes eram todas as obras do instrumento trazidas para a memória e
     // contadas aqui — no piano, dezenas de milhares de documentos por acesso.
     const [worksCount, usersCount, topGroups] = await Promise.all([
-      this.prisma.work.count({ where: { instrumentId } }),
+      this.prisma.work.count({
+        where: { instrumentIds: { has: instrumentId } },
+      }),
       this.prisma.userInstrument.count({ where: { instrumentId } }),
       this.prisma.work.groupBy({
         by: ['composerId'],
-        where: { instrumentId },
+        where: { instrumentIds: { has: instrumentId } },
         _count: { composerId: true },
         orderBy: { _count: { composerId: 'desc' } },
         take: 5,
@@ -228,7 +287,9 @@ export class InstrumentsService {
 
     const [works, totalWorks, totalUsers, topComposers] = await Promise.all([
       this.selectShowcaseWorks(instrument, preference),
-      this.prisma.work.count({ where: { instrumentId: instrument.id } }),
+      this.prisma.work.count({
+        where: { instrumentIds: { has: instrument.id } },
+      }),
       this.prisma.userInstrument.count({
         where: { instrumentId: instrument.id },
       }),
@@ -257,7 +318,7 @@ export class InstrumentsService {
   ): Promise<ShowcaseWorkDto[]> {
     const findWorks = (where: Prisma.WorkWhereInput, take?: number) =>
       this.prisma.work.findMany({
-        where: { instrumentId: instrument.id, ...where },
+        where: { instrumentIds: { has: instrument.id }, ...where },
         select: SHOWCASE_WORK_SELECT,
         orderBy: SHOWCASE_WORK_ORDER,
         take,
@@ -348,7 +409,10 @@ export class InstrumentsService {
           select: SHOWCASE_COMPOSER_SELECT,
         }),
         this.prisma.work.count({
-          where: { instrumentId, composerId: preference.preferredComposerId },
+          where: {
+            instrumentIds: { has: instrumentId },
+            composerId: preference.preferredComposerId,
+          },
         }),
       ]);
 
@@ -360,7 +424,7 @@ export class InstrumentsService {
     const groups = await this.prisma.work.groupBy({
       by: ['composerId'],
       where: {
-        instrumentId,
+        instrumentIds: { has: instrumentId },
         ...(preference.excludedComposerIds?.length
           ? { composerId: { notIn: preference.excludedComposerIds } }
           : {}),

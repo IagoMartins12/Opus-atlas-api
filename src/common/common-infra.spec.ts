@@ -344,7 +344,15 @@ describe('TextIndexService', () => {
         indexes: [
           expect.objectContaining({
             default_language: 'portuguese',
-            weights: { title: 10, opOrCatalog: 4, subtitle: 2 },
+            weights: {
+              title: 10,
+              popularName: 10,
+              popularNameEn: 10,
+              famousParts: 6,
+              famousPartsEn: 5,
+              opOrCatalog: 4,
+              subtitle: 2,
+            },
           }),
         ],
       }),

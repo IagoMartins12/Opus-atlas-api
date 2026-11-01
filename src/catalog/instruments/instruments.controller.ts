@@ -10,6 +10,7 @@ import { Public } from '../../common/decorators/api-key.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { InstrumentItemDto } from './dto/instrument-item.dto';
 import { InstrumentShowcaseItemDto } from './dto/instrument-showcase.dto';
+import { StartingLevelDto } from './dto/instrument-starting.dto';
 import { InstrumentStatsResponseDto } from './dto/instrument-stats-response.dto';
 import { InstrumentsService } from './instruments.service';
 
@@ -49,6 +50,19 @@ export class InstrumentsController {
   @ApiOkResponse({ type: [InstrumentShowcaseItemDto] })
   async getShowcase(): Promise<InstrumentShowcaseItemDto[]> {
     return this.instrumentsService.getShowcase();
+  }
+
+  @Public()
+  @Get('starting/:key')
+  @ApiOperation({
+    summary: 'Por onde começar a tocar um instrumento',
+    description:
+      'A curadoria da casa, por nível. `key` é a chave do site (`piano`, `violin`). ' +
+      'Instrumento sem lista devolve vazio.',
+  })
+  @ApiOkResponse({ type: [StartingLevelDto] })
+  async getStarting(@Param('key') key: string): Promise<StartingLevelDto[]> {
+    return this.instrumentsService.getStarting(key);
   }
 
   @Public()

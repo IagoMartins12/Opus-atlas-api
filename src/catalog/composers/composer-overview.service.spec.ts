@@ -55,7 +55,7 @@ describe('ComposerOverviewService', () => {
         }),
       },
       work: {
-        groupBy: jest.fn().mockResolvedValue([]),
+        aggregateRaw: jest.fn().mockResolvedValue([]),
         findMany: jest.fn().mockResolvedValue(works),
       },
       instrument: { findMany: jest.fn() },
@@ -99,7 +99,7 @@ describe('ComposerOverviewService', () => {
         }),
       },
       work: {
-        groupBy: jest.fn().mockResolvedValue([]),
+        aggregateRaw: jest.fn().mockResolvedValue([]),
         findMany: jest.fn().mockResolvedValue(works),
       },
       instrument: { findMany: jest.fn() },
@@ -129,9 +129,9 @@ describe('ComposerOverviewService', () => {
         }),
       },
       work: {
-        groupBy: jest.fn().mockResolvedValue([
-          { instrumentId: 'i1', _count: { _all: 158 } },
-          { instrumentId: 'i2', _count: { _all: 19 } },
+        aggregateRaw: jest.fn().mockResolvedValue([
+          { _id: { $oid: 'i1' }, works: 158 },
+          { _id: { $oid: 'i2' }, works: 19 },
         ]),
         findMany: jest.fn().mockResolvedValue([]),
       },

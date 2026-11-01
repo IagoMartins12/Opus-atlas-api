@@ -122,6 +122,21 @@ export const EMAIL_SAMPLES: EmailSample[] = [
       ),
   },
   {
+    id: 'student-invitation',
+    group: 'portal',
+    name: 'Convite para ser aluno',
+    build: (c) =>
+      t.studentInvitation(
+        {
+          firstName: 'Ana',
+          teacherName: 'Clara Mendes',
+          acceptUrl: `${c.site}/confirm-student-invite/exemplo`,
+          declineUrl: `${c.site}/decline-student-invite/exemplo`,
+        },
+        c,
+      ),
+  },
+  {
     id: 'portal-notice',
     group: 'portal',
     name: 'Aviso do portal',

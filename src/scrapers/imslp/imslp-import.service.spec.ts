@@ -36,7 +36,7 @@ describe('ImslpImportService', () => {
   let service: ImslpImportService;
   let prisma: {
     composer: { findUnique: jest.Mock };
-    instrument: { findFirst: jest.Mock };
+    instrument: { findFirst: jest.Mock; findMany: jest.Mock };
     work: { findFirst: jest.Mock; create: jest.Mock };
   };
   let scraper: { scrape: jest.Mock };
@@ -54,7 +54,10 @@ describe('ImslpImportService', () => {
           dataSource: 'imslp',
         }),
       },
-      instrument: { findFirst: jest.fn().mockResolvedValue({ id: 'inst-1' }) },
+      instrument: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+        findMany: jest.fn().mockResolvedValue([{ id: 'inst-1' }]),
+      },
       work: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'obra-nova' }),
@@ -147,7 +150,7 @@ describe('ImslpImportService', () => {
 
       expect(prisma.instrument.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { name: { contains: 'piano', mode: 'insensitive' } },
+          where: { name: { equals: 'piano', mode: 'insensitive' } },
           select: { id: true },
         }),
       );

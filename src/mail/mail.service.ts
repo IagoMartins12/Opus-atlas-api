@@ -265,6 +265,20 @@ export class MailService {
     );
   }
 
+  async sendStudentInvitationEmail(
+    to: string,
+    data: {
+      firstName: string;
+      teacherName: string;
+      acceptUrl: string;
+      declineUrl: string;
+    },
+  ): Promise<void> {
+    await this.send(
+      await this.compose(to, (ctx) => templates.studentInvitation(data, ctx)),
+    );
+  }
+
   async sendPortalNotice(
     to: string,
     data: {

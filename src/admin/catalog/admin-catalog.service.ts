@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { CURATED_SYSTEM } from '../../catalog/quality/imslp-difficulty';
 import {
   BadRequestException,
   ConflictException,
@@ -991,7 +992,9 @@ export class AdminCatalogService {
       ...(and.length ? { AND: and } : {}),
       ...(query.composerId ? { composerId: query.composerId } : {}),
       ...(query.epochId ? { epochId: query.epochId } : {}),
-      ...(query.instrumentId ? { instrumentId: query.instrumentId } : {}),
+      ...(query.instrumentId
+        ? { instrumentIds: { has: query.instrumentId } }
+        : {}),
       ...(query.workType ? { workType: query.workType } : {}),
       ...(query.difficultyLevel
         ? { difficultyLevel: query.difficultyLevel }
@@ -1060,6 +1063,12 @@ export class AdminCatalogService {
       data: {
         title: dto.title,
         difficultyLevel: dto.difficultyLevel,
+        // A level set here is curated: the IMSLP import keeps it.
+        ...(dto.difficultyLevel !== undefined && {
+          difficultySystem: dto.difficultyLevel ? CURATED_SYSTEM : null,
+          difficultyRating: null,
+          difficultySourceId: null,
+        }),
         workType: dto.workType,
         videoUrl: dto.videoUrl,
         instrumentation: dto.instrumentation,

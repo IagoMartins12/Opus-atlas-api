@@ -1,7 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import {
+  NotificationPriority,
+  NotificationType,
+  PlanType,
+} from '@prisma/client';
 import { errorMessage } from '../../common/utils/error.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
+import { NotificationsService } from '../../portal/notifications/notifications.service';
+import { PLAN_LABEL } from '../constants/plan-features.constants';
 import { MrrService } from './mrr.service';
 import { StripeService } from './stripe.service';
 import { SubscriptionsService } from './subscriptions.service';
@@ -43,7 +51,44 @@ export class SubscriptionsCronService {
     private readonly mailService: MailService,
     private readonly stripeService: StripeService,
     private readonly mrr: MrrService,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /**
+   * Avisa que o plano acabou, no sino e na tela de avisos. Só quando acabou
+   * mesmo: quem trocou de plano tem outra assinatura valendo. A chave leva a
+   * assinatura, então cada uma avisa uma vez, por mais que o cron passe.
+   * `ModuleRef`: o portal depende da cobrança, e importar o módulo dele aqui
+   * seria um ciclo. Avisar não pode derrubar a expiração.
+   */
+  private async notifyExpired(
+    subscription: { id: string; userId: string | null; planType: PlanType },
+    message: string,
+  ): Promise<void> {
+    const { userId } = subscription;
+    if (!userId) return;
+    try {
+      const current =
+        await this.subscriptionsService.getCurrentSubscription(userId);
+      if (current) return;
+      await this.moduleRef.get(NotificationsService, { strict: false }).notify({
+        userId,
+        type: NotificationType.GENERAL_ANNOUNCEMENT,
+        priority: NotificationPriority.HIGH,
+        title: 'Seu plano expirou',
+        message,
+        actionText: 'Ver planos',
+        actionUrl: '/pricing',
+        relatedEntityType: 'subscription',
+        relatedEntityId: subscription.id,
+        uniqueHash: `plan-expired:${subscription.id}`,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Aviso de plano expirado ${subscription.id}: ${(error as Error).message}`,
+      );
+    }
+  }
 
   /**
    * `now` só muda na bateria de testes (homologação e local): o Stripe de
@@ -178,6 +223,11 @@ export class SubscriptionsCronService {
             reason: 'Trial expirado',
           },
         });
+
+        await this.notifyExpired(
+          subscription,
+          `Seu teste grátis do plano ${PLAN_LABEL[subscription.planType]} terminou e o plano não foi renovado. Sua conta voltou para o Free.`,
+        );
 
         result.trialsExpired++;
       } catch (error) {
@@ -327,6 +377,11 @@ export class SubscriptionsCronService {
             },
           );
         }
+
+        await this.notifyExpired(
+          subscription,
+          `Seu plano ${PLAN_LABEL[subscription.planType]} chegou ao fim e não foi renovado. Sua conta voltou para o Free.`,
+        );
 
         result.subscriptionsExpired++;
       } catch (error) {

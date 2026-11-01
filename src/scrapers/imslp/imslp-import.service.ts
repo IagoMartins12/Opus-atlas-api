@@ -1,4 +1,5 @@
 import { escapeRegex } from '../../common/utils/regex.util';
+import { workInstruments } from '../../catalog/quality/work-instruments';
 import {
   BadRequestException,
   Injectable,
@@ -169,15 +170,17 @@ export class ImslpImportService {
         };
       }
 
+      const instrumentId = await this.resolveInstrument(
+        scraped.primaryInstrument,
+        input.fallbackInstrumentId,
+      );
       const work = await this.prisma.work.create({
         data: {
           title: scraped.title,
           subtitle: scraped.subtitle,
           composerId: input.composer.id,
-          instrumentId: await this.resolveInstrument(
-            scraped.primaryInstrument,
-            input.fallbackInstrumentId,
-          ),
+          instrumentId,
+          instrumentIds: await this.allInstruments(instrumentId, scraped),
           epochId: input.composer.epochId,
           imslpId: scraped.imslpId,
           imslpPermlink: scraped.imslpPermlink,
@@ -198,14 +201,11 @@ export class ImslpImportService {
           categoryNames: scraped.categoryNames,
           workGenresArr: scraped.workGenresArr,
           workType: scraped.workType,
-          // Três colunas que `Work` tem e que a portabilidade não estava
-          // preenchendo. Medido no catálogo: `difficultyLevel` está em 207.887
-          // das 207.892 obras, `imslpTags` em 207.881 e `movementNumber` em
-          // 94.781. Deixá-las vazias poria a obra nova fora da convenção de
-          // todas as outras.
+          // Colunas que `Work` tem e que a portabilidade não estava
+          // preenchendo (`imslpTags` em 207.881 obras, `movementNumber` em
+          // 94.781). A dificuldade não vem daqui: só de fonte curada.
           movementNumber: scraped.movementNumber,
           imslpTags: scraped.imslpTags,
-          difficultyLevel: scraped.difficultyLevel,
           createdBy: input.userId,
           // **Obra importada nasce não verificada.** Ela veio de raspagem de
           // página, não de curadoria: quem confere é gente, pela rota de
@@ -260,6 +260,23 @@ export class ImslpImportService {
     });
   }
 
+  /** Every instrument of the work, the main one first. */
+  private async allInstruments(
+    main: string,
+    work: { title: string; instrumentation?: string | null },
+  ): Promise<string[]> {
+    const names = workInstruments(
+      { title: work.title, instrumentation: work.instrumentation },
+      null,
+    );
+    if (!names.length) return [main];
+    const rows = await this.prisma.instrument.findMany({
+      where: { name: { in: names } },
+      select: { id: true },
+    });
+    return [...new Set([main, ...rows.map((row) => row.id)])];
+  }
+
   private async resolveInstrument(
     primaryInstrument: string | null,
     fallbackId: string,
@@ -268,12 +285,21 @@ export class ImslpImportService {
       return fallbackId;
     }
 
-    const instrument = await this.prisma.instrument.findFirst({
-      where: {
-        name: { contains: escapeRegex(primaryInstrument), mode: 'insensitive' },
-      },
-      select: { id: true },
-    });
+    // The exact name first: `contains` alone takes "Flauta" for "Flauta Doce".
+    const instrument =
+      (await this.prisma.instrument.findFirst({
+        where: { name: { equals: primaryInstrument, mode: 'insensitive' } },
+        select: { id: true },
+      })) ??
+      (await this.prisma.instrument.findFirst({
+        where: {
+          name: {
+            contains: escapeRegex(primaryInstrument),
+            mode: 'insensitive',
+          },
+        },
+        select: { id: true },
+      }));
 
     return instrument?.id ?? fallbackId;
   }

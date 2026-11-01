@@ -247,7 +247,7 @@ describe('NotificationsService', () => {
     });
 
     // Evita avisar cinco vezes sobre a mesma aula.
-    it('não duplica quando já existe uma não lida com o mesmo hash', async () => {
+    it('não duplica quando já existe uma com o mesmo hash, lida ou não', async () => {
       prisma.notification.findFirst.mockResolvedValue({ id: 'existente' });
 
       await service.notify({
@@ -316,6 +316,7 @@ describe('NotificationsService — fora do portal', () => {
         findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn().mockResolvedValue({}),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       user: {
         findUnique: jest.fn().mockResolvedValue(user()),

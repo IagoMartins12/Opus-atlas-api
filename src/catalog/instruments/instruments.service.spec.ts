@@ -70,7 +70,7 @@ describe('InstrumentsService', () => {
 
     expect(prisma.work.groupBy).toHaveBeenCalledWith({
       by: ['composerId'],
-      where: { instrumentId: 'i1' },
+      where: { instrumentIds: { has: 'i1' } },
       _count: { composerId: true },
       orderBy: { _count: { composerId: 'desc' } },
       take: 5,
@@ -182,7 +182,7 @@ describe('InstrumentsService', () => {
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            instrumentId: 'vln',
+            instrumentIds: { has: 'vln' },
             composerId: '685f0770c6bd886c5b4982af',
           },
           take: 20,
@@ -199,7 +199,7 @@ describe('InstrumentsService', () => {
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            instrumentId: 'piano',
+            instrumentIds: { has: 'piano' },
             composerId: '683bb049320ed96f5ac321a8',
             id: { notIn: [] },
           },
@@ -208,7 +208,10 @@ describe('InstrumentsService', () => {
       );
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'piano', id: { notIn: ['w0', 'w1', 'w2'] } },
+          where: {
+            instrumentIds: { has: 'piano' },
+            id: { notIn: ['w0', 'w1', 'w2'] },
+          },
           take: 17,
         }),
       );
@@ -221,13 +224,13 @@ describe('InstrumentsService', () => {
       const excluded = { notIn: ['683a7e9af8ced962eff7c0d8'] };
       expect(findWorks).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'orq', composerId: excluded },
+          where: { instrumentIds: { has: 'orq' }, composerId: excluded },
           take: 20,
         }),
       );
       expect(prisma.work.groupBy).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { instrumentId: 'orq', composerId: excluded },
+          where: { instrumentIds: { has: 'orq' }, composerId: excluded },
           take: 5,
         }),
       );
@@ -238,6 +241,62 @@ describe('InstrumentsService', () => {
 
       await expect(service.getShowcase()).resolves.toEqual([{ id: 'x' }]);
       expect(prisma.instrument.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('por onde começar', () => {
+    let work: { findMany: jest.Mock };
+
+    beforeEach(() => {
+      work = prisma.work as unknown as { findMany: jest.Mock };
+      work.findMany = jest.fn();
+    });
+
+    it('monta os níveis com as obras do acervo e pula a que falta', async () => {
+      work.findMany.mockResolvedValue([
+        {
+          id: 'w1',
+          imslpId: '648794',
+          title: 'Anfangs-Stunden',
+          popularName: null,
+          popularNameEn: null,
+          composer: { fullName: 'Cornelius Gurlitt', name: 'Gurlitt' },
+        },
+      ]);
+
+      const levels = await service.getStarting('piano');
+
+      expect(levels).toHaveLength(1);
+      expect(levels[0].tier).toBe('BEGINNER');
+      expect(levels[0].pieces[0]).toMatchObject({
+        id: 'w1',
+        composer: 'Cornelius Gurlitt',
+      });
+    });
+
+    it('a lista da época usa o motivo escrito no instrumento', async () => {
+      work.findMany.mockResolvedValue([
+        {
+          id: 'w2',
+          imslpId: '3267',
+          title: '15 Inventions',
+          popularName: null,
+          popularNameEn: null,
+          composer: { fullName: 'Johann Sebastian Bach', name: 'Bach' },
+        },
+      ]);
+
+      const [level] = await service.getStarting('baroque');
+
+      expect(level.tier).toBe('INTERMEDIATE');
+      expect(level.pieces[0].why).toContain('duas vozes');
+    });
+
+    it('instrumento sem lista devolve vazio, sem ir ao banco', async () => {
+      work.findMany.mockClear();
+      await expect(service.getStarting('oboe')).resolves.toEqual([]);
+      await expect(service.getStarting('constructor')).resolves.toEqual([]);
+      expect(work.findMany).not.toHaveBeenCalled();
     });
   });
 });

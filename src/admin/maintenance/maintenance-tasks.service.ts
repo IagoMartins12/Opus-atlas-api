@@ -21,6 +21,7 @@ import { errorMessage } from '../../common/utils/error.util';
 import { TextIndexService } from '../../common/search/text-index.service';
 import { findTask, MaintenanceTaskId } from './maintenance-catalog';
 import { idsQueExistem, OWNER_TYPES } from './orphan-owners';
+import { work as rankWorks } from '../../catalog/jobs/rank-works.job';
 
 /** Assinantes por página na varredura de órfãos. */
 const SWEEP_PAGE = 500;
@@ -129,7 +130,22 @@ export class MaintenanceTasksService {
         return this.reindex();
       case 'database.backup':
         return this.backup();
+      case 'catalog.rank-works':
+        return this.rankWorks(dryRun);
     }
+  }
+
+  /** The catalog routine `rank-works`, run from the schedule. */
+  private async rankWorks(dryRun: boolean): Promise<MaintenanceTaskOutcome> {
+    const outcome = await rankWorks({
+      prisma: this.prisma,
+      apply: !dryRun,
+      logger: this.logger,
+      args: {},
+      progress: () => undefined,
+      shouldStop: () => false,
+    });
+    return { summary: outcome?.summary ?? {}, sample: outcome?.sample };
   }
 
   /**

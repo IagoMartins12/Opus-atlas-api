@@ -1,5 +1,4 @@
 import { escapeRegex } from '../../common/utils/regex.util';
-import { escapeHtml } from '../../common/utils/html.util';
 import {
   BadRequestException,
   ConflictException,
@@ -912,6 +911,22 @@ export class RelationshipsService {
       teacher.id,
     );
 
+    // A pending invite is withdrawn, not a bond ending: it leaves the pending
+    // state, so its link stops working and the student can be invited again.
+    // Nothing else to undo: no lessons, no Plus from the teacher.
+    if (relationship.inviteStatus === StudentInviteStatus.PENDING) {
+      await this.prisma.teacherStudent.update({
+        where: { id: relationshipId },
+        data: {
+          isActive: false,
+          endDate: new Date(),
+          inviteStatus: StudentInviteStatus.EXPIRED,
+        },
+      });
+      await this.cache.invalidateMany([CacheNamespace.TEACHERS]);
+      return;
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.teacherStudent.update({
         where: { id: relationshipId },
@@ -1030,15 +1045,11 @@ export class RelationshipsService {
     }
 
     try {
-      await this.mail.send({
-        to: studentUser.email,
-        subject: `${this.displayName(teacherUser)} convidou você para ser aluno`,
-        html: this.invitationEmail({
-          teacherName: this.displayName(teacherUser),
-          studentName: this.displayName(studentUser),
-          acceptUrl: `${baseUrl}/confirm-student-invite/${acceptToken}`,
-          declineUrl: `${baseUrl}/decline-student-invite/${declineToken}`,
-        }),
+      await this.mail.sendStudentInvitationEmail(studentUser.email, {
+        firstName: studentUser.firstName ?? this.displayName(studentUser),
+        teacherName: this.displayName(teacherUser),
+        acceptUrl: `${baseUrl}/confirm-student-invite/${acceptToken}`,
+        declineUrl: `${baseUrl}/decline-student-invite/${declineToken}`,
       });
     } catch (error: unknown) {
       // O vínculo pendente já existe e o convite pode ser reenviado; falhar o
@@ -1239,22 +1250,5 @@ export class RelationshipsService {
       [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
       'Usuário'
     );
-  }
-
-  private invitationEmail(params: {
-    teacherName: string;
-    studentName: string;
-    acceptUrl: string;
-    declineUrl: string;
-  }): string {
-    return `
-      <p>Olá, ${escapeHtml(params.studentName)}!</p>
-      <p><strong>${escapeHtml(params.teacherName)}</strong> convidou você para ser aluno no Opus Atlas.</p>
-      <p>
-        <a href="${params.acceptUrl}">Aceitar convite</a> &nbsp;|&nbsp;
-        <a href="${params.declineUrl}">Recusar</a>
-      </p>
-      <p>O convite vale por 30 dias.</p>
-    `;
   }
 }

@@ -1,3 +1,4 @@
+import type { ModuleRef } from '@nestjs/core';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MrrService } from './mrr.service';
@@ -8,6 +9,7 @@ import { SubscriptionsService } from './subscriptions.service';
 const DAY = 24 * 60 * 60 * 1000;
 
 describe('SubscriptionsCronService', () => {
+  let notifications: { notify: jest.Mock };
   let prisma: {
     subscription: {
       findMany: jest.Mock;
@@ -16,7 +18,10 @@ describe('SubscriptionsCronService', () => {
     };
     subscriptionHistory: { findFirst: jest.Mock; create: jest.Mock };
   };
-  let subscriptions: { updateUserPlanCache: jest.Mock };
+  let subscriptions: {
+    updateUserPlanCache: jest.Mock;
+    getCurrentSubscription: jest.Mock;
+  };
   let mail: {
     sendTrialExpiringEmail: jest.Mock;
     sendRenewalReminderEmail: jest.Mock;
@@ -57,7 +62,9 @@ describe('SubscriptionsCronService', () => {
     };
     subscriptions = {
       updateUserPlanCache: jest.fn().mockResolvedValue(undefined),
+      getCurrentSubscription: jest.fn().mockResolvedValue(null),
     };
+    notifications = { notify: jest.fn().mockResolvedValue(undefined) };
     mail = {
       sendTrialExpiringEmail: jest.fn().mockResolvedValue(undefined),
       sendRenewalReminderEmail: jest.fn().mockResolvedValue(undefined),
@@ -71,6 +78,7 @@ describe('SubscriptionsCronService', () => {
       mail as unknown as MailService,
       stripe as unknown as StripeService,
       mrr as unknown as MrrService,
+      { get: () => notifications } as unknown as ModuleRef,
     );
   });
 
@@ -162,6 +170,50 @@ describe('SubscriptionsCronService', () => {
     });
     expect(subscriptions.updateUserPlanCache).toHaveBeenCalledWith('u1');
     expect(result.trialsExpired).toBe(1);
+  });
+
+  describe('aviso de plano expirado', () => {
+    const vencido = {
+      id: 's1',
+      userId: 'u1',
+      planType: 'PLUS',
+      price: 10,
+      trialEndDate: new Date('2020-01-01'),
+    };
+
+    it('teste que acabou sem renovar avisa, uma vez por assinatura', async () => {
+      rowsFor({ expiredTrials: [vencido] });
+
+      await service.checkSubscriptions();
+
+      expect(notifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'u1',
+          title: 'Seu plano expirou',
+          actionUrl: '/pricing',
+          uniqueHash: 'plan-expired:s1',
+        }),
+      );
+    });
+
+    it('quem tem outro plano valendo não recebe o aviso', async () => {
+      subscriptions.getCurrentSubscription.mockResolvedValue({ id: 's2' });
+      rowsFor({ expiredTrials: [vencido] });
+
+      await service.checkSubscriptions();
+
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it('falhar ao avisar não desfaz a expiração', async () => {
+      notifications.notify.mockRejectedValue(new Error('fora'));
+      rowsFor({ expiredTrials: [vencido] });
+
+      const result = await service.checkSubscriptions();
+
+      expect(result.trialsExpired).toBe(1);
+      expect(result.errors).toEqual([]);
+    });
   });
 
   it('lembra a renovação uma vez por ciclo', async () => {

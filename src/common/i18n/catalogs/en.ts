@@ -447,4 +447,5 @@ export const en: Catalog = {
     'Visual history comes with Plus and above.',
   'Retrospectiva ainda não gerada': 'Year in review not generated yet',
   'Retrospectiva não encontrada': 'Year in review not found',
+  'Página de sitemap inválida': 'Invalid sitemap page',
 };

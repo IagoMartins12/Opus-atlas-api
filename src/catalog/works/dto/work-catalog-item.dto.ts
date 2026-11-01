@@ -97,4 +97,10 @@ export class WorkCatalogItemDto {
 
   @ApiProperty({ type: WorkCatalogInstrumentDto, nullable: true })
   instrument: WorkCatalogInstrumentDto | null;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Todos os instrumentos da obra, o principal primeiro.',
+  })
+  instrumentNames: string[];
 }

@@ -937,7 +937,7 @@ export class ComposersService {
     };
 
     if (query.instrumentId) {
-      where.instrumentId = query.instrumentId;
+      where.instrumentIds = { has: query.instrumentId };
     }
 
     if (query.workGenresArr) {
@@ -1064,7 +1064,7 @@ export class ComposersService {
       async () => {
         const rows = (await this.prisma.work.aggregateRaw({
           pipeline: [
-            { $match: { instrumentId: { $oid: instrumentId } } },
+            { $match: { instrumentIds: { $oid: instrumentId } } },
             { $group: { _id: '$composerId' } },
           ],
         })) as unknown as { _id: { $oid: string } }[];
