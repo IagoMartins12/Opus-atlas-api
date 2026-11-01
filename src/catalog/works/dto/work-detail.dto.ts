@@ -66,6 +66,23 @@ class WorkDetailEpochDto {
   name: string;
 }
 
+export class WorkDetailRatingDto {
+  @ApiProperty({ example: 'Piano' })
+  instrument: string;
+
+  @ApiProperty({ description: '1 a 15, equivalente ao RCM.' })
+  level: number;
+
+  @ApiProperty({ enum: ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'] })
+  tier: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'O trecho avaliado; vazio é a obra inteira.',
+  })
+  excerpt: string | null;
+}
+
 export class WorkDetailDto {
   @ApiProperty({ example: '685d591c1e3db0c5aaa893e4' })
   id: string;
@@ -233,6 +250,12 @@ export class WorkDetailDto {
 
   @ApiPropertyOptional({ nullable: true })
   difficultyLevel?: string | null;
+
+  @ApiProperty({
+    type: [WorkDetailRatingDto],
+    description: 'As avaliações do Difficulty Project do IMSLP.',
+  })
+  ratings: WorkDetailRatingDto[];
 
   @ApiProperty({ type: WorkDetailComposerDto })
   composer: WorkDetailComposerDto;

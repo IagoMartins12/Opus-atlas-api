@@ -20,7 +20,7 @@ const p = (imslpId: string, pt: string, en: string): StartingPiece => ({
  * Instrumento fica de fora enquanto o acervo não tiver peças avaliadas para
  * quem começa: oboé, trompete, saxofone e contrabaixo só têm repertório alto.
  */
-export const STARTING_LISTS: Readonly<Record<string, StartingList>> = {
+const BY_INSTRUMENT: Readonly<Record<string, StartingList>> = {
   piano: {
     BEGINNER: [
       p(
@@ -499,4 +499,48 @@ export const STARTING_LISTS: Readonly<Record<string, StartingList>> = {
       ),
     ],
   },
+};
+
+/** Uma peça das listas acima, com o mesmo motivo: a época não repete o texto. */
+const piece = (imslpId: string): StartingPiece => {
+  for (const list of Object.values(BY_INSTRUMENT))
+    for (const pieces of Object.values(list)) {
+      const found = pieces.find((item) => item.imslpId === imslpId);
+      if (found) return found;
+    }
+  throw new Error(`Peça fora das listas de instrumento: ${imslpId}`);
+};
+
+const era = (
+  beginner: string[],
+  intermediate: string[],
+  advanced: string[],
+): StartingList => ({
+  BEGINNER: beginner.map(piece),
+  INTERMEDIATE: intermediate.map(piece),
+  ADVANCED: advanced.map(piece),
+});
+
+/**
+ * Por instrumento e, nas épocas com repertório avaliado, por época (a chave de
+ * `/music-history/<key>`). Medieval, Renascimento e as épocas recentes ficam de
+ * fora: a lista do IMSLP quase não as cobre.
+ */
+export const STARTING_LISTS: Readonly<Record<string, StartingList>> = {
+  ...BY_INSTRUMENT,
+  baroque: era(
+    ['6107', '299351'],
+    ['3267', '28348', '164349', '54405', '153090'],
+    ['126433', '111725', '3268'],
+  ),
+  classical: era(
+    ['116890', '64414'],
+    ['6617', '1855', '3338', '4588', '14377'],
+    ['1458', '39820', '4595'],
+  ),
+  romantic: era(
+    ['7983', '648794'],
+    ['2707', '113759', '23794'],
+    ['2312', '4642', '52918', '14438', '1646'],
+  ),
 };

@@ -42,6 +42,7 @@ import {
 import { errorMessage } from '../../common/utils/error.util';
 import { instrumentKind } from '../instruments/instrument-kind';
 import { TextIndexService } from '../../common/search/text-index.service';
+import { tierOf } from '../quality/imslp-difficulty';
 import { FAMOUS_COMPOSERS } from './famous-composers';
 
 /** Select Prisma reaproveitado em toda query de listagem/detalhe de obra —
@@ -246,6 +247,10 @@ const WORK_CATALOG_FALLBACK_SELECT = {
 
 const WORK_DETAIL_SELECT = {
   id: true,
+  difficulties: {
+    select: { instrument: true, level: true, excerpt: true },
+    orderBy: { level: 'asc' },
+  },
   title: true,
   opOrCatalog: true,
   subtitle: true,
@@ -702,6 +707,23 @@ export class WorksService {
     );
   }
 
+  /** One row per instrument and excerpt: editions repeat the same rating. */
+  private toRatings(
+    rows: Array<{
+      instrument: string;
+      level: number;
+      excerpt: string | null;
+    }>,
+  ) {
+    const seen = new Set<string>();
+    return rows.flatMap((row) => {
+      const key = `${row.instrument}|${row.excerpt ?? ''}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ ...row, tier: tierOf(row.level) }];
+    });
+  }
+
   private toWorkDetailDto(
     work: RawWorkDetail,
     parentWork: {
@@ -792,6 +814,7 @@ export class WorksService {
         this.normalizeOptionalString(work.mediaSearchError) ?? null,
       difficultyLevel:
         this.normalizeOptionalString(work.difficultyLevel) ?? null,
+      ratings: this.toRatings(work.difficulties ?? []),
       composer: {
         id: work.composer.id,
         name: work.composer.name,

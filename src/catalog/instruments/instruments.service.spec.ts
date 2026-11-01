@@ -274,6 +274,24 @@ describe('InstrumentsService', () => {
       });
     });
 
+    it('a lista da época usa o motivo escrito no instrumento', async () => {
+      work.findMany.mockResolvedValue([
+        {
+          id: 'w2',
+          imslpId: '3267',
+          title: '15 Inventions',
+          popularName: null,
+          popularNameEn: null,
+          composer: { fullName: 'Johann Sebastian Bach', name: 'Bach' },
+        },
+      ]);
+
+      const [level] = await service.getStarting('baroque');
+
+      expect(level.tier).toBe('INTERMEDIATE');
+      expect(level.pieces[0].why).toContain('duas vozes');
+    });
+
     it('instrumento sem lista devolve vazio, sem ir ao banco', async () => {
       work.findMany.mockClear();
       await expect(service.getStarting('oboe')).resolves.toEqual([]);
