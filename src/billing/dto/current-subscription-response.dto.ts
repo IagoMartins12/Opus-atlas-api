@@ -14,6 +14,12 @@ class CurrentPlanDto {
   @ApiProperty({ example: 0 })
   trialDaysRemaining: number;
 
+  @ApiProperty({
+    example: false,
+    description: 'Já usou o teste grátis, que é um por pessoa.',
+  })
+  trialUsed: boolean;
+
   @ApiPropertyOptional({ nullable: true })
   expiresAt?: Date | null;
 

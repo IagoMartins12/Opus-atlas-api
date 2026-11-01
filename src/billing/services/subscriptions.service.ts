@@ -218,6 +218,23 @@ export class SubscriptionsService {
     return null;
   }
 
+  /**
+   * Teste grátis é um por pessoa: sem isto, deixar o teste expirar e assinar
+   * de novo dava outro teste, indefinidamente. Conta só o que chegou a valer:
+   * checkout abandonado (PENDING → EXPIRED sem Stripe) não gasta o teste de
+   * ninguém.
+   */
+  private async hasUsedTrial(userId: string): Promise<boolean> {
+    const count = await this.prisma.subscription.count({
+      where: {
+        userId,
+        planType: { not: 'FREE' },
+        stripeSubscriptionId: { not: null },
+      },
+    });
+    return count > 0;
+  }
+
   async getCurrent(userId: string): Promise<CurrentSubscriptionResponseDto> {
     const effective = await this.effectivePlan(userId);
     const subscription = effective.subscription;
@@ -263,6 +280,7 @@ export class SubscriptionsService {
         isValid: true,
         isTrialActive,
         trialDaysRemaining,
+        trialUsed: await this.hasUsedTrial(userId),
         expiresAt:
           effective.via === 'teacher' ? null : (subscription?.endDate ?? null),
         viaTeacher: effective.teacherName,
@@ -349,19 +367,9 @@ export class SubscriptionsService {
           : undefined,
       );
 
-    // Teste grátis é um por pessoa: sem isto, deixar o teste expirar e assinar
-    // de novo dava outro teste, indefinidamente. Conta só o que chegou a
-    // valer — checkout abandonado (PENDING → EXPIRED sem Stripe) não gasta o
-    // teste de ninguém.
-    const hadPaidPlan =
-      (await this.prisma.subscription.count({
-        where: {
-          userId,
-          planType: { not: 'FREE' },
-          stripeSubscriptionId: { not: null },
-        },
-      })) > 0;
-    const trialDays = hadPaidPlan ? 0 : TRIAL_PERIOD_DAYS[dto.planType];
+    const trialDays = (await this.hasUsedTrial(userId))
+      ? 0
+      : TRIAL_PERIOD_DAYS[dto.planType];
 
     const frontendBaseUrl = this.getFrontendBaseUrl();
     const checkoutSession = await this.stripeService.createCheckoutSession({
