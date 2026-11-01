@@ -73,6 +73,46 @@ export function teacherInvitation(
   };
 }
 
+/** Convite do professor para a pessoa ser aluno dele no portal. */
+export function studentInvitation(
+  data: {
+    firstName: string;
+    teacherName: string;
+    acceptUrl: string;
+    declineUrl: string;
+  },
+  { say }: TemplateContext,
+): EmailSpec {
+  return {
+    subject: say(
+      `${data.teacherName} convidou você para ser aluno`,
+      `${data.teacherName} invited you to be a student`,
+    ),
+    preheader: say(
+      'Aulas, tarefas e progresso num lugar só.',
+      'Lessons, assignments and progress in one place.',
+    ),
+    title: say('Um convite para estudar', 'An invitation to study'),
+    paragraphs: [
+      say(
+        `Olá, ${data.firstName}. ${data.teacherName} convidou você para ser aluno no Opus Atlas. Ao aceitar, as aulas, as tarefas e o seu progresso ficam num lugar só.`,
+        `Hi, ${data.firstName}. ${data.teacherName} invited you to be a student on Opus Atlas. When you accept, your lessons, assignments and progress are in one place.`,
+      ),
+    ],
+    emblem: 'turma',
+    action: {
+      label: say('Aceitar o convite', 'Accept the invitation'),
+      url: data.acceptUrl,
+    },
+    secondary: { label: say('Recusar', 'Decline'), url: data.declineUrl },
+    highlight: {
+      value: say('30 dias', '30 days'),
+      label: say('para aceitar o convite', 'to accept the invitation'),
+    },
+    footer: 'conta',
+  };
+}
+
 /**
  * Aviso do portal por e-mail (04/10/2026) — a mesma frase do aviso que a
  * pessoa vê no portal, com o botão para a tela. Devolve o resultado: a

@@ -39,7 +39,7 @@ describe('RelationshipsService', () => {
     validateToken: jest.Mock;
     markTokenAsUsed: jest.Mock;
   };
-  let mail: { send: jest.Mock };
+  let mail: { sendStudentInvitationEmail: jest.Mock };
   let notifications: { notify: jest.Mock };
 
   const context = { ipAddress: '203.0.113.10', userAgent: 'jest' };
@@ -129,7 +129,9 @@ describe('RelationshipsService', () => {
       validateToken: jest.fn(),
       markTokenAsUsed: jest.fn().mockResolvedValue(undefined),
     };
-    mail = { send: jest.fn().mockResolvedValue(undefined) };
+    mail = {
+      sendStudentInvitationEmail: jest.fn().mockResolvedValue(undefined),
+    };
     notifications = { notify: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -173,7 +175,7 @@ describe('RelationshipsService', () => {
       );
 
       expect(result.inviteStatus).toBe(StudentInviteStatus.ACCEPTED);
-      expect(mail.send).not.toHaveBeenCalled();
+      expect(mail.sendStudentInvitationEmail).not.toHaveBeenCalled();
       expect(tokens.createToken).not.toHaveBeenCalled();
       expect(notifications.notify).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -206,7 +208,7 @@ describe('RelationshipsService', () => {
       expect(
         prisma.teacherStudent.create.mock.calls[0][0].data.inviteStatus,
       ).toBe(StudentInviteStatus.PENDING);
-      expect(mail.send).toHaveBeenCalled();
+      expect(mail.sendStudentInvitationEmail).toHaveBeenCalled();
     });
 
     // O professor não pode se vincular a alguém sem que a pessoa aceite.
@@ -316,7 +318,7 @@ describe('RelationshipsService', () => {
     // O vínculo pendente já existe e pode ser reenviado; falhar o envio não
     // deve desfazer o convite nem devolver erro ao professor.
     it('não falha o convite quando o e-mail não sai', async () => {
-      mail.send.mockRejectedValue(new Error('smtp fora'));
+      mail.sendStudentInvitationEmail.mockRejectedValue(new Error('smtp fora'));
 
       await expect(
         service.inviteStudent('teacher-user', dto, context),
@@ -328,7 +330,7 @@ describe('RelationshipsService', () => {
 
       await service.inviteStudent('teacher-user', dto, context);
 
-      expect(mail.send).not.toHaveBeenCalled();
+      expect(mail.sendStudentInvitationEmail).not.toHaveBeenCalled();
     });
     // -----------------------------------------------------------------
     // Limite de alunos do plano (RN-1)
@@ -722,6 +724,27 @@ describe('RelationshipsService', () => {
       );
 
       expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    // O link para de valer e dá para convidar de novo; nada mais a desfazer.
+    it('cancelar convite pendente tira do estado pendente', async () => {
+      prisma.teacherStudent.findUnique.mockResolvedValue({
+        id: 'rel-1',
+        teacherId: 'teacher-1',
+        studentId: 'student-1',
+        inviteStatus: StudentInviteStatus.PENDING,
+        student: { id: 'student-1', userId: 'student-user', user: studentUser },
+      });
+      prisma.teacherStudent.update.mockClear();
+      prisma.$transaction.mockClear();
+
+      await service.endRelationship('teacher-user', 'rel-1');
+
+      expect(prisma.teacherStudent.update.mock.calls[0][0].data).toMatchObject({
+        isActive: false,
+        inviteStatus: StudentInviteStatus.EXPIRED,
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     // Sem vínculo não há aula: as futuras saem da agenda dos dois.

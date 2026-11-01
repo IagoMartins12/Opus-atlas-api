@@ -234,7 +234,6 @@ export class NotificationsService {
           where: {
             userId: input.userId,
             uniqueHash: input.uniqueHash,
-            status: NotificationStatus.UNREAD,
           },
           select: { id: true },
         });
@@ -360,6 +359,14 @@ export class NotificationsService {
     let failed = 0;
 
     for (const n of due) {
+      // Claimed first: two runs at once (a slow minute, two replicas) would
+      // both read it as pending and send the same e-mail twice.
+      const { count } = await this.prisma.notification.updateMany({
+        where: { id: n.id, emailStatus: 'pending' },
+        data: { emailStatus: 'sending' },
+      });
+      if (!count) continue;
+
       if (!n.user?.email) {
         await this.prisma.notification.update({
           where: { id: n.id },
@@ -400,6 +407,7 @@ export class NotificationsService {
                   metadata: { ...meta, emailAttempts: attempts },
                 }
               : {
+                  emailStatus: 'pending',
                   // Espera crescente: 2, 4, 8, 16 minutos.
                   emailAfter: new Date(now.getTime() + 2 ** attempts * 60_000),
                   metadata: { ...meta, emailAttempts: attempts },

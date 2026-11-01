@@ -42,9 +42,10 @@ export const NEEDS_STATUS_UNTIL_MS = 7 * 24 * 60 * 60 * 1000;
  * Chave de deduplicação.
  *
  * **É o que substitui a janela de cinco minutos.** Duas varreduras seguidas
- * produzem a mesma chave para o mesmo aviso, e `notify()` descarta a segunda
- * enquanto a primeira estiver por ler. Assim a varredura pode rodar de cinco em
- * cinco minutos sem transformar um aviso em vinte.
+ * produzem a mesma chave para o mesmo aviso, e `notify()` descarta a segunda,
+ * lida ou não. Assim a varredura pode rodar de cinco em cinco minutos sem
+ * transformar um aviso em vinte. Os lembretes de aula levam o horário na chave:
+ * a aula remarcada ganha um lembrete novo.
  */
 export function notificationHash(
   userId: string,
@@ -128,7 +129,7 @@ export function lessonStartingSoon(
       uniqueHash: notificationHash(
         lesson.teacherUserId,
         NotificationType.LESSON_STARTING_SOON,
-        lesson.id,
+        `${lesson.id}:${lesson.scheduledAt.getTime()}`,
       ),
     },
     {
@@ -140,7 +141,7 @@ export function lessonStartingSoon(
       uniqueHash: notificationHash(
         lesson.studentUserId,
         NotificationType.LESSON_STARTING_SOON,
-        lesson.id,
+        `${lesson.id}:${lesson.scheduledAt.getTime()}`,
       ),
     },
   ];
@@ -171,7 +172,7 @@ export function lessonTomorrow(
       uniqueHash: notificationHash(
         lesson.teacherUserId,
         NotificationType.LESSON_TOMORROW,
-        lesson.id,
+        `${lesson.id}:${lesson.scheduledAt.getTime()}`,
       ),
     },
     {
@@ -183,7 +184,7 @@ export function lessonTomorrow(
       uniqueHash: notificationHash(
         lesson.studentUserId,
         NotificationType.LESSON_TOMORROW,
-        lesson.id,
+        `${lesson.id}:${lesson.scheduledAt.getTime()}`,
       ),
     },
   ];

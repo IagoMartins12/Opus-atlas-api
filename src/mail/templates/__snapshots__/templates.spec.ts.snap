@@ -962,6 +962,48 @@ opusatlas.com.br · São Paulo, Brasil",
 }
 `;
 
+exports[`e-mails de portal student-invitation (en) 1`] = `
+{
+  "subject": "Clara Mendes invited you to be a student",
+  "text": "An invitation to study
+
+Hi, Ana. Clara Mendes invited you to be a student on Opus Atlas. When you accept, your lessons, assignments and progress are in one place.
+
+Accept the invitation: https://opusatlas.com.br/confirm-student-invite/exemplo
+Decline: https://opusatlas.com.br/decline-student-invite/exemplo
+
+30 days (to accept the invitation)
+
+Warmly,
+The Opus Atlas team
+
+---
+You're receiving this email because you have an Opus Atlas account. Choose which notices arrive by email in My profile.
+opusatlas.com.br · São Paulo, Brazil",
+}
+`;
+
+exports[`e-mails de portal student-invitation (pt) 1`] = `
+{
+  "subject": "Clara Mendes convidou você para ser aluno",
+  "text": "Um convite para estudar
+
+Olá, Ana. Clara Mendes convidou você para ser aluno no Opus Atlas. Ao aceitar, as aulas, as tarefas e o seu progresso ficam num lugar só.
+
+Aceitar o convite: https://opusatlas.com.br/confirm-student-invite/exemplo
+Recusar: https://opusatlas.com.br/decline-student-invite/exemplo
+
+30 dias (para aceitar o convite)
+
+Com carinho,
+Equipe Opus Atlas
+
+---
+Você recebeu este e-mail porque tem uma conta no Opus Atlas. Escolha quais avisos chegam por e-mail em Meu perfil.
+opusatlas.com.br · São Paulo, Brasil",
+}
+`;
+
 exports[`e-mails de portal teacher-invitation (en) 1`] = `
 {
   "subject": "Equipe Opus Atlas invited you to teach on Opus Atlas",
