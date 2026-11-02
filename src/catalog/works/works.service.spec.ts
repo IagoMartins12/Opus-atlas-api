@@ -246,9 +246,10 @@ describe('WorksService', () => {
     it('com índice de texto, ordena pela relevância devolvida', async () => {
       textIndex.hasTextIndex.mockReturnValue(true);
       prisma.work.aggregateRaw.mockResolvedValue([
-        { _id: { $oid: 'b' } },
-        { _id: 'a' },
-        { _id: {} },
+        {
+          rows: [{ _id: { $oid: 'b' } }, { _id: 'a' }, { _id: {} }],
+          total: [{ value: 3 }],
+        },
       ]);
       prisma.work.findMany.mockResolvedValue([summary('a'), summary('b')]);
 
@@ -529,6 +530,10 @@ describe('WorksService', () => {
         prisma.composer.aggregateRaw.mockResolvedValue([
           { _id: { $oid: 'c9' } },
         ]);
+        // A relevância lê o nome para contar quantas palavras ele cobre.
+        prisma.composer.findMany.mockResolvedValue([
+          { id: 'c9', name: 'Chopin', fullName: 'Frédéric Chopin' },
+        ]);
         prisma.work.aggregateRaw.mockResolvedValue([
           { rows: [{ _id: { $oid: 'w1' } }], total: [{ value: 252 }] },
         ]);
@@ -570,6 +575,25 @@ describe('WorksService', () => {
 
         // O regex não chega a rodar.
         expect(prisma.work.count).not.toHaveBeenCalled();
+      });
+
+      // "sonata ao luar" casava 9.728 obras por "sonata" e vinha de A a Z.
+      it('em destaque (ou sem ordem) é relevância; A–Z continua A–Z', async () => {
+        const ordem = (chamada: number) =>
+          JSON.stringify(
+            (
+              pipelineDe(chamada).find((estagio) => '$facet' in estagio) as {
+                $facet: { rows: Array<{ $sort?: unknown }> };
+              }
+            ).$facet.rows[0].$sort,
+          );
+
+        await service.getCatalog({ search: 'sonata ao luar' });
+        await service.getCatalog({ search: 'sonata ao luar', sort: 'title' });
+
+        expect(ordem(0)).toContain('_score');
+        expect(JSON.stringify(pipelineDe(0))).toContain('$regexMatch');
+        expect(ordem(1)).toBe(JSON.stringify({ title: 1, _id: 1 }));
       });
 
       it('o teto de tempo vai para o banco, não só para a resposta HTTP', async () => {

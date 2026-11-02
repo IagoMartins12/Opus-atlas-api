@@ -44,6 +44,13 @@ import { instrumentKind } from '../instruments/instrument-kind';
 import { TextIndexService } from '../../common/search/text-index.service';
 import { tierOf } from '../quality/imslp-difficulty';
 import { FAMOUS_COMPOSERS } from './famous-composers';
+import {
+  RELEVANCE_FIELDS,
+  composerCoverage,
+  phrasePattern,
+  relevanceStages,
+  searchTokens,
+} from './search-relevance';
 
 /** Select Prisma reaproveitado em toda query de listagem/detalhe de obra —
  * mantém o payload BSON enxuto (seção 3.7 e 10.4 do SPEC.md: nunca buscar
@@ -105,7 +112,7 @@ const CATALOG_ORDER: Record<
 
 /**
  * The same orders for the text-search pipeline (`_id` follows creation). In a
- * search, `featured` is A–Z: the text match is the ranking that matters.
+ * search, `featured` is the relevance (`search-relevance.ts`), sorted apart.
  */
 const CATALOG_RAW_ORDER: Record<WorkCatalogSort, Record<string, 1 | -1>> = {
   featured: { title: 1, _id: 1 },
@@ -173,12 +180,6 @@ const SEARCH_MAX_TIME_MS = 8_000;
  * genérico, e o casamento por título já cobre o resultado.
  */
 const SEARCH_COMPOSER_CAP = 200;
-
-/** Relevance added to a famous work (one with a popular name or famous parts). */
-const FAMOUS_BOOST = 5;
-
-/** Search relevance per prominence point: 1000 points add 3. */
-const PROMINENCE_WEIGHT = 0.003;
 
 const WORK_CATALOG_BASE_SELECT = {
   id: true,
@@ -390,7 +391,7 @@ export class WorksService {
   async search(query: SearchWorksQueryDto): Promise<WorkSummaryDto[]> {
     const limit = Math.min(query.limit ?? 10, 50);
     const term = query.q?.trim() ?? '';
-    const cacheKey = `${CacheNamespace.WORKS}:search:v2:${JSON.stringify({
+    const cacheKey = `${CacheNamespace.WORKS}:search:v3:${JSON.stringify({
       id: query.id ?? null,
       q: term.length >= 2 ? term.toLowerCase() : null,
       limit,
@@ -458,70 +459,13 @@ export class WorksService {
    * Ver seção 10.3 da SPEC e `TextIndexService`.
    */
   private async searchWorkIds(term: string, limit: number): Promise<string[]> {
-    if (this.textIndex.hasTextIndex('Work')) {
-      try {
-        const result = await this.prisma.work.aggregateRaw({
-          pipeline: [
-            { $match: { $text: { $search: term } } },
-            {
-              $addFields: {
-                // A work with a popular name or famous parts is a famous one:
-                // "clair de lune" brings Debussy's before the dozens of
-                // lesser pieces with that very title. The prominence breaks
-                // the ties among the rest (up to +3 for the best known).
-                _score: {
-                  $add: [
-                    { $meta: 'textScore' },
-                    {
-                      $multiply: [
-                        { $ifNull: ['$prominence', 0] },
-                        PROMINENCE_WEIGHT,
-                      ],
-                    },
-                    {
-                      $cond: [
-                        {
-                          $or: [
-                            { $gt: ['$popularName', null] },
-                            {
-                              $gt: [
-                                { $size: { $ifNull: ['$famousParts', []] } },
-                                0,
-                              ],
-                            },
-                          ],
-                        },
-                        FAMOUS_BOOST,
-                        0,
-                      ],
-                    },
-                  ],
-                },
-              },
-            },
-            { $sort: { _score: -1 } },
-            { $limit: limit },
-            { $project: { _id: 1 } },
-          ],
-          // Teto no banco, não só na resposta: sem ele uma busca patológica
-          // segura a conexão do pool depois de o cliente já ter desistido.
-          options: { maxTimeMS: SEARCH_MAX_TIME_MS },
-        });
-
-        const rows = result as unknown as Array<{
-          _id: { $oid?: string } | string;
-        }>;
-
-        return rows
-          .map((row) =>
-            typeof row._id === 'string' ? row._id : (row._id.$oid ?? ''),
-          )
-          .filter(Boolean);
-      } catch (error: unknown) {
-        this.logger.warn(
-          `Busca por índice de texto falhou, usando regex: ${errorMessage(error)}`,
-        );
-      }
+    try {
+      const ranked = await this.rankWorks(term, {}, 'featured', 0, limit);
+      if (ranked) return ranked.ids;
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Busca por relevância falhou, usando regex: ${errorMessage(error)}`,
+      );
     }
 
     const works = await this.prisma.work.findMany({
@@ -990,7 +934,7 @@ export class WorksService {
   }
 
   private buildCatalogCacheKey(query: GetWorksCatalogQueryDto): string {
-    return `${CacheNamespace.WORKS}:catalog:v2:${JSON.stringify({
+    return `${CacheNamespace.WORKS}:catalog:v3:${JSON.stringify({
       page: query.page,
       limit: query.limit,
       sort: query.sort ?? null,
@@ -1157,76 +1101,24 @@ export class WorksService {
   ): Promise<WorksCatalogResponseDto | null> {
     const term = query.search?.trim();
 
-    if (!term || !this.textIndex.hasTextIndex('Work')) {
+    if (!term) {
       return null;
     }
 
-    const baseFilter = this.toRawCatalogFilter(query);
-    const composerIds = await this.findComposerIdsByTerm(term);
-
     try {
-      const result = await this.prisma.work.aggregateRaw({
-        pipeline: [
-          // `$text` só é aceito no primeiro estágio do pipeline e nunca dentro
-          // de um `$or` com outras condições — daí o `$unionWith` para o ramo
-          // do compositor em vez de um `$or`.
-          { $match: { ...baseFilter, $text: { $search: term } } },
-          { $project: { title: 1 } },
-          ...(composerIds.length > 0
-            ? [
-                {
-                  $unionWith: {
-                    coll: 'Work',
-                    pipeline: [
-                      {
-                        $match: {
-                          ...baseFilter,
-                          composerId: {
-                            $in: composerIds.map((id) => ({ $oid: id })),
-                          },
-                        },
-                      },
-                      { $project: { title: 1 } },
-                    ],
-                  },
-                },
-              ]
-            : []),
-          // Uma obra pode vir pelos dois ramos (título com o nome do
-          // compositor): `$group` mantém uma ocorrência só.
-          { $group: { _id: '$_id', title: { $first: '$title' } } },
-          {
-            $facet: {
-              rows: [
-                { $sort: CATALOG_RAW_ORDER[query.sort ?? 'title'] },
-                { $skip: skip },
-                { $limit: limit },
-                { $project: { _id: 1 } },
-              ],
-              total: [{ $count: 'value' }],
-            },
-          },
-        ],
-        options: { allowDiskUse: true, maxTimeMS: SEARCH_MAX_TIME_MS },
-      });
+      const ranked = await this.rankWorks(
+        term,
+        this.toRawCatalogFilter(query),
+        query.sort ?? 'featured',
+        skip,
+        limit,
+      );
 
-      const [page] = result as unknown as Array<{
-        rows: Array<{ _id: { $oid?: string } | string }>;
-        total: Array<{ value: number }>;
-      }>;
-
-      const totalCount = page?.total?.[0]?.value ?? 0;
-
-      if (totalCount === 0) {
+      if (!ranked) {
         return null;
       }
 
-      const ids = (page?.rows ?? [])
-        .map((row) =>
-          typeof row._id === 'string' ? row._id : (row._id.$oid ?? ''),
-        )
-        .filter(Boolean);
-
+      const { ids, total: totalCount } = ranked;
       const works = await this.loadCatalogItemsByIds(ids);
 
       return {
@@ -1270,11 +1162,163 @@ export class WorksService {
   }
 
   /**
-   * Os ids dos compositores que casam com o termo, pelo índice de texto de
-   * `Composer` e, se ele não devolver nada, pelo regex de antes — a mesma
-   * regra de queda do catálogo de obras.
+   * Uma página de obras para o termo, pela relevância (`search-relevance.ts`)
+   * ou pela ordem pedida, e o total.
+   *
+   * Dois modos, o mesmo pipeline: o índice de texto (`$text`, rápido, casa
+   * palavras) e, quando ele não acha nada — "beeth", ou instância sem o
+   * índice —, a frase como expressão regular sobre os campos de texto (varre
+   * o acervo, mas acha pedaço de palavra). As obras do compositor que casa
+   * com o termo entram pelo `$unionWith`: `$text` só é aceito no primeiro
+   * estágio e nunca dentro de um `$or`. `null` quando nenhum modo acha nada.
    */
+  private async rankWorks(
+    term: string,
+    baseFilter: Record<string, unknown>,
+    sort: WorkCatalogSort,
+    skip: number,
+    limit: number,
+  ): Promise<{ ids: string[]; total: number } | null> {
+    const composers = await this.findComposersByTerm(term);
+    const coverage = composerCoverage(term, composers);
+    const byRelevance = sort === 'featured';
+    const phrase = phrasePattern(searchTokens(term));
+    const fields = Object.keys(RELEVANCE_FIELDS);
+
+    const modes: Array<'text' | 'regex'> = this.textIndex.hasTextIndex('Work')
+      ? ['text', 'regex']
+      : ['regex'];
+
+    for (const mode of modes) {
+      if (mode === 'regex' && !phrase) break;
+      const match =
+        mode === 'text'
+          ? { ...baseFilter, $text: { $search: term } }
+          : {
+              ...baseFilter,
+              $or: [
+                'title',
+                'subtitle',
+                'popularName',
+                'popularNameEn',
+                'opOrCatalog',
+                'famousParts',
+                'famousPartsEn',
+              ].map((name) => ({ [name]: { $regex: phrase, $options: 'i' } })),
+            };
+
+      const pipeline: Record<string, unknown>[] = [
+        { $match: match },
+        {
+          $project: {
+            ...RELEVANCE_FIELDS,
+            _ts: mode === 'text' ? { $meta: 'textScore' } : { $literal: 0 },
+          },
+        },
+        ...(composers.length > 0
+          ? [
+              {
+                $unionWith: {
+                  coll: 'Work',
+                  pipeline: [
+                    {
+                      $match: {
+                        ...baseFilter,
+                        composerId: {
+                          $in: composers.map(({ id }) => ({ $oid: id })),
+                        },
+                      },
+                    },
+                    { $project: { ...RELEVANCE_FIELDS, _ts: { $literal: 0 } } },
+                  ],
+                },
+              },
+            ]
+          : []),
+        // Uma obra pode vir pelos dois ramos (título com o nome do
+        // compositor): `$group` mantém uma ocorrência só, com o `textScore`.
+        {
+          $group: {
+            _id: '$_id',
+            ...Object.fromEntries(
+              fields.map((name) => [name, { $first: `$${name}` }]),
+            ),
+            _ts: { $max: '$_ts' },
+          },
+        },
+        ...(byRelevance
+          ? relevanceStages({ term, composerCoverage: coverage })
+          : []),
+        {
+          $facet: {
+            rows: [
+              {
+                $sort: byRelevance
+                  ? { _score: -1, prominence: -1, title: 1, _id: 1 }
+                  : CATALOG_RAW_ORDER[sort],
+              },
+              { $skip: skip },
+              { $limit: limit },
+              { $project: { _id: 1 } },
+            ],
+            total: [{ $count: 'value' }],
+          },
+        },
+      ];
+      const result = await this.prisma.work.aggregateRaw({
+        pipeline: pipeline as Prisma.InputJsonValue[],
+        // Teto no banco, não só na resposta: sem ele uma busca patológica
+        // segura a conexão do pool depois de o cliente já ter desistido.
+        options: { allowDiskUse: true, maxTimeMS: SEARCH_MAX_TIME_MS },
+      });
+
+      const [page] = result as unknown as Array<{
+        rows: Array<{ _id: { $oid?: string } | string }>;
+        total: Array<{ value: number }>;
+      }>;
+      const total = page?.total?.[0]?.value ?? 0;
+      if (total === 0) continue;
+
+      const ids = (page?.rows ?? [])
+        .map((row) =>
+          typeof row._id === 'string' ? row._id : (row._id.$oid ?? ''),
+        )
+        .filter(Boolean);
+      return { ids, total };
+    }
+
+    return null;
+  }
+
+  /** Os ids dos compositores que casam com o termo (ver abaixo). */
   private async findComposerIdsByTerm(term: string): Promise<string[]> {
+    return (await this.findComposersByTerm(term)).map(({ id }) => id);
+  }
+
+  /**
+   * Os compositores que casam com o termo, pelo índice de texto de
+   * `Composer` e, se ele não devolver nada, pelo regex de antes — a mesma
+   * regra de queda do catálogo de obras. Com o nome: a relevância conta
+   * quantas palavras do termo ele cobre.
+   */
+  private async findComposersByTerm(
+    term: string,
+  ): Promise<Array<{ id: string; name: string; fullName: string | null }>> {
+    const ids = await this.findComposerIdsByText(term);
+    const contains = {
+      contains: escapeRegex(term),
+      mode: 'insensitive' as const,
+    };
+    return this.prisma.composer.findMany({
+      where: ids.length
+        ? { id: { in: ids } }
+        : { OR: [{ name: contains }, { fullName: contains }] },
+      select: { id: true, name: true, fullName: true },
+      take: SEARCH_COMPOSER_CAP,
+    });
+  }
+
+  private async findComposerIdsByText(term: string): Promise<string[]> {
     if (this.textIndex.hasTextIndex('Composer')) {
       try {
         const result = await this.prisma.composer.aggregateRaw({
@@ -1296,28 +1340,14 @@ export class WorksService {
           )
           .filter(Boolean);
 
-        if (ids.length > 0) {
-          return ids;
-        }
+        return ids;
       } catch (error: unknown) {
         this.logger.warn(
           `Busca de compositor por índice de texto falhou, usando regex: ${errorMessage(error)}`,
         );
       }
     }
-
-    const contains = {
-      contains: escapeRegex(term),
-      mode: 'insensitive' as const,
-    };
-
-    const composers = await this.prisma.composer.findMany({
-      where: { OR: [{ name: contains }, { fullName: contains }] },
-      select: { id: true },
-      take: SEARCH_COMPOSER_CAP,
-    });
-
-    return composers.map((composer) => composer.id);
+    return [];
   }
 
   /**

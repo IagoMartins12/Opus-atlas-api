@@ -235,6 +235,43 @@ export class SubscriptionsService {
     return count > 0;
   }
 
+  /**
+   * O plano de professor que venceu sem renovação — o teste de 7 dias ou o
+   * plano pago —, quando a pessoa não tem outro valendo. É o que tranca o
+   * painel do professor (decisão do dono, 02/11): quem nunca assinou segue
+   * na RN-1 (professor é papel, não plano); quem assinou e deixou vencer vê
+   * "regularize para voltar". Plano que não inclui o painel (Plus) não conta.
+   */
+  async lapsedTeacherPlan(
+    userId: string,
+  ): Promise<{ plan: PlanType; endedAt: Date; trial: boolean } | null> {
+    if (await this.getCurrentSubscription(userId)) return null;
+    const last = await this.prisma.subscription.findFirst({
+      where: {
+        userId,
+        planType: { not: 'FREE' },
+        status: { in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        planType: true,
+        endDate: true,
+        trialEndDate: true,
+        updatedAt: true,
+      },
+    });
+    if (!last || !hasFeature(last.planType, 'teacherDashboard')) return null;
+    // Acabou junto com o teste: nunca chegou a ser paga.
+    const trial = Boolean(
+      last.trialEndDate && (!last.endDate || last.endDate <= last.trialEndDate),
+    );
+    return {
+      plan: last.planType,
+      endedAt: last.endDate ?? last.trialEndDate ?? last.updatedAt,
+      trial,
+    };
+  }
+
   async getCurrent(userId: string): Promise<CurrentSubscriptionResponseDto> {
     const effective = await this.effectivePlan(userId);
     const subscription = effective.subscription;

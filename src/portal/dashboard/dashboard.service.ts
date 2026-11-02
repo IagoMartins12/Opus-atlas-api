@@ -142,7 +142,7 @@ export class DashboardService {
    * aceito e ativo. `maxStudents: null` é ilimitado.
    */
   private async teacherPlan(userId: string, teacherId: string) {
-    const [access, activeStudents] = await Promise.all([
+    const [access, activeStudents, lapsed] = await Promise.all([
       this.subscriptions.checkFeatureAccess(userId, 'maxStudents'),
       this.prisma.teacherStudent.count({
         where: {
@@ -151,12 +151,15 @@ export class DashboardService {
           inviteStatus: StudentInviteStatus.ACCEPTED,
         },
       }),
+      this.subscriptions.lapsedTeacherPlan(userId),
     ]);
     const limit = access.limit;
     return {
       name: access.plan,
       maxStudents: typeof limit === 'number' && limit >= 0 ? limit : null,
       activeStudents,
+      // O plano de professor venceu sem renovação: o portal tranca o painel.
+      lapsed,
     };
   }
 

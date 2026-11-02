@@ -109,7 +109,10 @@ describe('DashboardService', () => {
 
   let availability: { computeFreeTime: jest.Mock };
   let practice: { list: jest.Mock; totalsFor: jest.Mock };
-  let subscriptions: { checkFeatureAccess: jest.Mock };
+  let subscriptions: {
+    checkFeatureAccess: jest.Mock;
+    lapsedTeacherPlan: jest.Mock;
+  };
 
   beforeEach(async () => {
     availability = {
@@ -170,6 +173,7 @@ describe('DashboardService', () => {
       checkFeatureAccess: jest
         .fn()
         .mockResolvedValue({ plan: 'MENTOR', hasAccess: true, limit: 7 }),
+      lapsedTeacherPlan: jest.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -483,9 +487,15 @@ describe('DashboardService', () => {
     it('o mês vai até o primeiro instante do mês seguinte', async () => {
       await teacher();
 
-      const chamadaDoMes = prisma.lesson.count.mock.calls.find(
-        (call) => call[0]?.where?.scheduledAt?.gte?.getDate() === 1,
-      );
+      // A janela que começa no dia 1 e termina em outro mês — a da semana
+      // também começa num dia 1 quando o mês abre num domingo.
+      const chamadaDoMes = prisma.lesson.count.mock.calls.find((call) => {
+        const janela = call[0]?.where?.scheduledAt;
+        return (
+          janela?.gte?.getDate() === 1 &&
+          janela.lt?.getMonth() !== janela.gte.getMonth()
+        );
+      });
 
       const fim = chamadaDoMes?.[0].where.scheduledAt.lt as Date;
 
@@ -504,6 +514,7 @@ describe('DashboardService', () => {
         name: 'MENTOR',
         maxStudents: 7,
         activeStudents: 3,
+        lapsed: null,
       });
     });
 
@@ -549,6 +560,24 @@ describe('DashboardService', () => {
       const result = await teacher();
 
       expect(result.plan.maxStudents).toBeNull();
+    });
+
+    // Venceu sem renovar: o portal tranca o painel com "regularize".
+    it('plano de professor vencido vem em `lapsed`', async () => {
+      const endedAt = new Date('2026-10-30T00:00:00Z');
+      subscriptions.lapsedTeacherPlan.mockResolvedValue({
+        plan: 'MENTOR',
+        endedAt,
+        trial: true,
+      });
+
+      const result = await teacher();
+
+      expect(result.plan.lapsed).toEqual({
+        plan: 'MENTOR',
+        endedAt,
+        trial: true,
+      });
     });
 
     it('"aluno com atividade recente" exclui aula futura', async () => {

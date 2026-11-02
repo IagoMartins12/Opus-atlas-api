@@ -265,6 +265,63 @@ describe('SubscriptionsService', () => {
     });
   });
 
+  // Tranca o painel do professor: venceu sem renovar (decisão de 02/11).
+  describe('plano de professor vencido', () => {
+    const ended = new Date('2026-10-30T00:00:00Z');
+
+    it('teste do Mentor que acabou sem pagamento', async () => {
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          planType: 'MENTOR',
+          endDate: ended,
+          trialEndDate: ended,
+          updatedAt: ended,
+        });
+
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toEqual({
+        plan: 'MENTOR',
+        endedAt: ended,
+        trial: true,
+      });
+      const [{ where }] = prisma.subscription.findFirst.mock.calls[1];
+      expect(where.status).toEqual({
+        in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'],
+      });
+    });
+
+    it('plano pago que venceu não é teste', async () => {
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          planType: 'MAESTRO',
+          endDate: ended,
+          trialEndDate: new Date('2026-09-07T00:00:00Z'),
+          updatedAt: ended,
+        });
+
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toMatchObject({
+        plan: 'MAESTRO',
+        trial: false,
+      });
+    });
+
+    it('com plano valendo, ou se o vencido não incluía o painel, não tranca', async () => {
+      prisma.subscription.findFirst.mockResolvedValueOnce(subscription());
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toBeNull();
+
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          planType: 'PLUS',
+          endDate: ended,
+          trialEndDate: null,
+          updatedAt: ended,
+        });
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toBeNull();
+    });
+  });
+
   describe('criar', () => {
     it('recusa quem já tem assinatura com acesso', async () => {
       prisma.subscription.findFirst.mockResolvedValue(subscription());

@@ -141,6 +141,10 @@ function editionField(
 export function parseImslpScores($: CheerioDocument): ParsedImslpScores {
   const totals: Record<string, number> = {};
   const scores: ParsedImslpScore[] = [];
+  // O mesmo arquivo pode aparecer em duas seções da página (o 2º caderno de
+  // Anna Magdalena Bach repete o manuscrito). Gravado duas vezes, batia no
+  // índice único e a obra inteira ficava sem partitura: vale a primeira.
+  const seen = new Set<string>();
 
   for (const [tabId, type] of IMSLP_SCORE_TABS) {
     totals[type.toLowerCase()] =
@@ -185,7 +189,10 @@ export function parseImslpScores($: CheerioDocument): ParsedImslpScores {
           .find('.we_file_info2 .hidden a')
           .attr('href');
 
-        if (!/^\d+$/.test(sourceId) || !hiddenLink) return;
+        if (!/^\d+$/.test(sourceId) || !hiddenLink || seen.has(sourceId)) {
+          return;
+        }
+        seen.add(sourceId);
 
         const info = clean($download.find('.we_file_info2').text());
         const size = /(\d+(?:\.\d+)?)\s*(MB|KB)/i.exec(info);

@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { Prisma } from '@prisma/client';
 import { Job, Queue } from 'bullmq';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -41,7 +42,7 @@ function fakeRedis() {
 
 describe('ImslpScoresService', () => {
   let prisma: {
-    workScore: { count: jest.Mock; createMany: jest.Mock };
+    workScore: { count: jest.Mock; createMany: jest.Mock; create: jest.Mock };
     work: { findUnique: jest.Mock };
   };
   let fetcher: { load: jest.Mock };
@@ -65,6 +66,7 @@ describe('ImslpScoresService', () => {
       workScore: {
         count: jest.fn().mockResolvedValue(0),
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        create: jest.fn().mockResolvedValue({}),
       },
       work: {
         findUnique: jest.fn().mockResolvedValue({
@@ -271,13 +273,15 @@ describe('ImslpScoresService', () => {
 
   describe('raspar (o worker)', () => {
     it('lê o IMSLP, grava tudo, marca o dia e solta a trava', async () => {
+      prisma.workScore.count.mockResolvedValueOnce(0).mockResolvedValue(40);
       const stored = await service.scrape(WORK);
 
-      // A fixture tem a aba de partituras inteira e 3 grupos de arranjos.
-      expect(stored).toBeGreaterThan(31);
+      expect(stored).toBe(40);
       const [{ data }] = prisma.workScore.createMany.mock.calls[0] as [
         { data: Array<Record<string, unknown>> },
       ];
+      // A fixture tem a aba de partituras inteira e 3 grupos de arranjos.
+      expect(data.length).toBeGreaterThan(31);
       expect(data[0]).toMatchObject({
         workId: WORK,
         sourceId: '86550',
@@ -292,6 +296,28 @@ describe('ImslpScoresService', () => {
       expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
       // A obra e o compositor mostram as partituras novas já na próxima página.
       expect(cache.invalidateMany).toHaveBeenCalledWith(['works', 'composers']);
+    });
+
+    // O lote batia no índice único por um arquivo repetido na própria página,
+    // o erro era tomado por "outra gravação chegou antes" e a obra ficava sem
+    // partitura nenhuma (Cadernos de Anna Magdalena Bach).
+    it('lote recusado por duplicata sem nada gravado: grava uma a uma', async () => {
+      const duplicate = new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prisma.workScore.createMany.mockRejectedValue(duplicate);
+      prisma.workScore.create
+        .mockRejectedValueOnce(duplicate)
+        .mockResolvedValue({});
+      prisma.workScore.count
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValue(39);
+
+      await expect(service.scrape(WORK)).resolves.toBe(39);
+      expect(prisma.workScore.create.mock.calls.length).toBeGreaterThan(31);
+      expect(cache.invalidateMany).toHaveBeenCalled();
     });
 
     it('com a trava tomada (o admin relendo), não raspa', async () => {

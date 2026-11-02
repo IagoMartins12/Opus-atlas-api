@@ -85,6 +85,18 @@ describe('parseImslpScores — página real', () => {
     expect(scores[0].groupIndex).toBe(0);
     expect(new Set(scores.map((score) => score.groupIndex)).size).toBe(29);
   });
+
+  // Os Cadernos de Anna Magdalena Bach repetem o manuscrito em duas seções;
+  // gravado duas vezes, o arquivo batia no índice único.
+  it('arquivo repetido na página entra uma vez só', () => {
+    const $ = cheerio.load(html);
+    const $tab = $('#tabScore1');
+    $tab.append($tab.children('.we').first().clone());
+
+    const ids = parseImslpScores($).scores.map((score) => score.sourceId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((id) => id === '86550')).toHaveLength(1);
+  });
 });
 
 describe('endereços', () => {

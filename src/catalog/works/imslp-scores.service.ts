@@ -82,6 +82,10 @@ const retryKey = (workId: string) => `imslp-scores:retry:${workId}`;
 const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
 const BREAKER_OPEN = 'imslp-scores:breaker:open';
 
+const isDuplicate = (error: unknown) =>
+  error instanceof Prisma.PrismaClientKnownRequestError &&
+  error.code === 'P2002';
+
 /** O que a marca de tentativa guarda: deu certo (com ou sem arquivo) ou falhou. */
 type TriedMark = 'done' | 'failed';
 
@@ -301,28 +305,36 @@ export class ImslpScoresService {
             })),
           });
         } catch (error: unknown) {
-          // Outra gravação chegou primeiro (índice único): o resultado é o mesmo.
-          if (
-            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-            error.code !== 'P2002'
-          ) {
-            throw error;
+          if (!isDuplicate(error)) throw error;
+          // Outra gravação chegou primeiro (índice único) e o resultado é o
+          // mesmo — a menos que nada tenha entrado: aí a duplicata era da
+          // própria página, e um arquivo repetido não pode deixar a obra
+          // inteira sem partitura. Uma a uma, pulando a que já existe.
+          if ((await this.storedCount(workId)) === 0) {
+            for (const score of parsed.scores) {
+              await this.prisma.workScore
+                .create({ data: { workId, ...this.fields(score, totals) } })
+                .catch((e: unknown) => {
+                  if (!isDuplicate(e)) throw e;
+                });
+            }
           }
         }
       }
 
+      const stored = await this.storedCount(workId);
       await this.mark(workId, 'done', TRIED_TTL_MS);
       // A página da obra (e a contagem no compositor) mostra as novas.
-      if (parsed.scores.length > 0) {
+      if (stored > 0) {
         await this.cache.invalidateMany([
           CacheNamespace.WORKS,
           CacheNamespace.COMPOSERS,
         ]);
       }
       this.logger.log(
-        `IMSLP: ${parsed.scores.length} partitura(s) gravadas para a obra ${workId}`,
+        `IMSLP: ${stored} partitura(s) gravadas para a obra ${workId}`,
       );
-      return parsed.scores.length;
+      return stored;
     } catch (error: unknown) {
       await this.mark(workId, 'failed', FAILED_TTL_MS);
       this.logger.warn(
