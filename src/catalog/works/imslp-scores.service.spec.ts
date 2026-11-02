@@ -320,6 +320,24 @@ describe('ImslpScoresService', () => {
       expect(cache.invalidateMany).toHaveBeenCalled();
     });
 
+    // Sem isso a obra ficava um dia como "sem partitura" sempre que a leitura
+    // ou a gravação falhasse em silêncio.
+    it('a página tem arquivos e nada foi gravado: é falha, tenta em uma hora', async () => {
+      prisma.workScore.count.mockResolvedValue(0);
+
+      await expect(service.scrape(WORK)).resolves.toBe(0);
+      expect(cache.set).toHaveBeenCalledWith(
+        `imslp-scores:tried:${WORK}`,
+        'failed',
+        60 * 60 * 1000,
+      );
+      expect(cache.set).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'done',
+        expect.anything(),
+      );
+    });
+
     it('com a trava tomada (o admin relendo), não raspa', async () => {
       redis.store.set(`imslp-scores:lock:${WORK}`, '1');
 

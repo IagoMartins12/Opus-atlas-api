@@ -323,6 +323,18 @@ export class ImslpScoresService {
       }
 
       const stored = await this.storedCount(workId);
+      // A página diz ter arquivos e nada ficou gravado: o problema é nosso
+      // (página que mudou de formato, gravação recusada), não do IMSLP.
+      // Marcar "lida" deixava a obra sem partitura por um dia inteiro; como
+      // falha, a próxima visita tenta de novo em uma hora.
+      const onPage = Object.values(parsed.totals).reduce((a, b) => a + b, 0);
+      if (stored === 0 && (onPage > 0 || parsed.scores.length > 0)) {
+        await this.mark(workId, 'failed', FAILED_TTL_MS);
+        this.logger.error(
+          `IMSLP: a página da obra ${workId} diz ter ${onPage} arquivo(s), ${parsed.scores.length} lidos, e nenhum foi gravado`,
+        );
+        return 0;
+      }
       await this.mark(workId, 'done', TRIED_TTL_MS);
       // A página da obra (e a contagem no compositor) mostra as novas.
       if (stored > 0) {

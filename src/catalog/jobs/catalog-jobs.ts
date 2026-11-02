@@ -15,6 +15,7 @@ import { work as seedCollections } from './seed-collections.job';
 import { work as syncTeacherCounters } from './sync-teacher-counters.job';
 import { work as syncAnnotations } from './sync-annotation-counts.job';
 import { work as rankWorks } from './rank-works.job';
+import { work as recheckScores } from './recheck-imslp-scores.job';
 
 /**
  * As rotinas do acervo que o painel executa. **A lista é fechada**: nada de
@@ -29,6 +30,7 @@ export const CATALOG_JOB_IDS = [
   'import-imslp-difficulty',
   'fix-nationalities',
   'fix-editions',
+  'recheck-imslp-scores',
   'clean-portraits',
   'fix-thumbnails',
   'sync-annotation-counts',
@@ -194,6 +196,18 @@ export const CATALOG_JOBS: readonly CatalogJobDef[] = [
     external: true,
     params: [LIMIT, PAUSE],
     work: fixEditions,
+  },
+  {
+    id: 'recheck-imslp-scores',
+    name: 'Conferir as partituras do IMSLP',
+    description:
+      'Relê no IMSLP as obras com arquivo faltando (a página dizia ter mais do que há guardado) ou com a ficha da edição suja (aviso do IMSLP no lugar da editora, linhas coladas). Grava o arquivo que falta e reescreve a ficha; não apaga nada. Das mais baixadas às menos; também roda agendada, em lotes.',
+    group: 'partituras',
+    destructive: false,
+    slow: true,
+    external: true,
+    params: [LIMIT, PAUSE],
+    work: recheckScores,
   },
   {
     id: 'fix-thumbnails',

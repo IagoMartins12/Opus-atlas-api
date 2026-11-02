@@ -115,7 +115,43 @@ function translateTitle(title: string, type: IMSLPScoreType): string {
   return GENERIC_TITLES[text.toLowerCase()] ?? text;
 }
 
-/** Campo da ficha da edição (`<th>Editor</th><td>…</td>`). */
+/**
+ * Campo da ficha da edição (`<th>Editor</th><td>…</td>`).
+ *
+ * A célula não é só o valor. Traz caixas de aviso dentro dela — "URTEXT
+ * EDITION", "In the USA this work is most likely in the public domain…", o
+ * aviso de copyright em vermelho — e quebra de linha entre editora e cidade.
+ * Lida com `.text()`, a caixa inteira virava a editora (um parágrafo jurídico
+ * no lugar de "Bärenreiter") e o `<br>` sumia: "(pp.45-138)Kassel". As caixas
+ * saem; cada linha vira um trecho separado por " · ".
+ *
+ * Não é toda `div`: o copyright vem dentro de `div.plainlinks`. Caixa de aviso
+ * é a `div` com borda (as duas do IMSLP), e o resto do que nunca é valor:
+ * tabela, `center`, parágrafo e o "[tag/del]" de quem administra.
+ */
+const EDITION_BOXES =
+  'div[style*="border"], table, center, p, .noanon, style, script';
+
+const LINE = '\u2029';
+
+export function editionText(
+  $: CheerioDocument,
+  $cell: ReturnType<CheerioDocument>,
+): string | null {
+  const $copy = $cell.clone();
+  $copy.find(EDITION_BOXES).remove();
+  // Um marcador, não `\n`: o próprio código da página quebra linha à toa.
+  $copy.find('br').replaceWith(LINE);
+  const value = $copy
+    .text()
+    .split(LINE)
+    .map(clean)
+    .filter(Boolean)
+    .join(' · ')
+    .replace(/\s*\[tag\/del\]$/, '');
+  return value || null;
+}
+
 function editionField(
   $: CheerioDocument,
   $group: ReturnType<CheerioDocument>,
@@ -126,16 +162,13 @@ function editionField(
   $group.find('tr').each((_, row) => {
     const $row = $(row);
     if (clean($row.children('th').first().text()) === label) {
-      value = clean($row.children('td').first().text()).replace(
-        /\s*\[tag\/del\]$/,
-        '',
-      );
+      value = editionText($, $row.children('td').first());
       return false;
     }
     return undefined;
   });
 
-  return value || null;
+  return value;
 }
 
 export function parseImslpScores($: CheerioDocument): ParsedImslpScores {
