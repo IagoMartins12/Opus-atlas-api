@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma, ScoreSource } from '@prisma/client';
 import { Queue } from 'bullmq';
@@ -366,12 +372,38 @@ export class ImslpScoresService {
   async refresh(
     workId: string,
   ): Promise<{ created: number; updated: number; total: number }> {
-    const permlink = await this.permlinkOf(workId);
+    const permlink = isMongoId(workId) ? await this.permlinkOf(workId) : null;
 
     if (!permlink) {
       throw new NotFoundException('Obra sem página no IMSLP');
     }
 
+    // A mesma trava da fila: a leitura do worker e o "atualizar" não gravam
+    // juntos. Pedido de uma pessoa, fura a pausa do disjuntor e a marca de
+    // "lida hoje" — é justamente o conserto de quando ela estava errada.
+    const redis = await this.redis();
+    if (!(await redis.set(lockKey(workId), '1', 'PX', LOCK_TTL_MS, 'NX'))) {
+      throw new ConflictException(
+        'As partituras desta obra estão sendo lidas agora. Tente em um minuto.',
+      );
+    }
+    try {
+      return await this.refreshLocked(workId, permlink);
+    } catch (error: unknown) {
+      if (error instanceof NotFoundException) throw error;
+      await this.mark(workId, 'failed', FAILED_TTL_MS);
+      throw new BadGatewayException(
+        'O IMSLP não respondeu agora. Tente de novo em alguns minutos.',
+      );
+    } finally {
+      await redis.del(lockKey(workId)).catch(() => undefined);
+    }
+  }
+
+  private async refreshLocked(
+    workId: string,
+    permlink: string,
+  ): Promise<{ created: number; updated: number; total: number }> {
     const parsed = await this.fetchScores(permlink);
     const totals = JSON.stringify(parsed.totals);
     let created = 0;

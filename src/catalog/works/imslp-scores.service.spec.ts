@@ -42,7 +42,13 @@ function fakeRedis() {
 
 describe('ImslpScoresService', () => {
   let prisma: {
-    workScore: { count: jest.Mock; createMany: jest.Mock; create: jest.Mock };
+    workScore: {
+      count: jest.Mock;
+      createMany: jest.Mock;
+      create: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
     work: { findUnique: jest.Mock };
   };
   let fetcher: { load: jest.Mock };
@@ -67,6 +73,8 @@ describe('ImslpScoresService', () => {
         count: jest.fn().mockResolvedValue(0),
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
       },
       work: {
         findUnique: jest.fn().mockResolvedValue({
@@ -268,6 +276,46 @@ describe('ImslpScoresService', () => {
       prisma.workScore.count.mockResolvedValue(3);
       await expect(service.status(WORK)).resolves.toBe('stored');
       expect(queue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  // O botão "Atualizar do IMSLP" de quem cuida do catálogo (02/11).
+  describe('atualizar na hora (curador)', () => {
+    it('lê mesmo com a obra marcada como lida e o IMSLP em pausa', async () => {
+      cache.get.mockResolvedValue('done');
+      redis.store.set('imslp-scores:breaker:open', '1');
+
+      const result = await service.refresh(WORK);
+
+      expect(fetcher.load).toHaveBeenCalled();
+      expect(result.created).toBeGreaterThan(31);
+      expect(cache.set).toHaveBeenCalledWith(
+        `imslp-scores:tried:${WORK}`,
+        'done',
+        24 * 60 * 60 * 1000,
+      );
+      expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
+    });
+
+    it('com a leitura da fila em curso, pede para esperar', async () => {
+      redis.store.set(`imslp-scores:lock:${WORK}`, '1');
+
+      await expect(service.refresh(WORK)).rejects.toThrow('sendo lidas agora');
+      expect(fetcher.load).not.toHaveBeenCalled();
+    });
+
+    it('IMSLP fora: erro claro, marca de falha e trava solta', async () => {
+      fetcher.load.mockRejectedValue(new Error('502'));
+
+      await expect(service.refresh(WORK)).rejects.toThrow(
+        'IMSLP não respondeu',
+      );
+      expect(cache.set).toHaveBeenCalledWith(
+        `imslp-scores:tried:${WORK}`,
+        'failed',
+        60 * 60 * 1000,
+      );
+      expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
     });
   });
 
