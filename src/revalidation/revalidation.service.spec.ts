@@ -51,6 +51,17 @@ describe('RevalidationService', () => {
     });
   });
 
+  // O "Atualizar do IMSLP" limpa uma obra só, sem a tag `works` inteira.
+  it('tag avulsa de uma obra vai como está', async () => {
+    const service = new RevalidationService(config(ON));
+
+    service.onCacheInvalidated({ namespaces: [], tags: ['work:abc123'] });
+    await jest.advanceTimersByTimeAsync(REVALIDATE_DEBOUNCE_MS);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).tags).toEqual(['work:abc123']);
+  });
+
   // Quem gravou espera o aviso: a promessa só resolve depois do POST.
   it('a promessa do aviso resolve quando o front já foi avisado', async () => {
     const service = new RevalidationService(config(ON));

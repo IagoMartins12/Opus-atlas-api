@@ -57,6 +57,7 @@ describe('ImslpScoresService', () => {
     set: jest.Mock;
     del: jest.Mock;
     invalidateMany: jest.Mock;
+    forget: jest.Mock;
   };
   let redis: ReturnType<typeof fakeRedis>;
   let queue: {
@@ -89,6 +90,7 @@ describe('ImslpScoresService', () => {
       set: jest.fn().mockResolvedValue(undefined),
       del: jest.fn().mockResolvedValue(undefined),
       invalidateMany: jest.fn().mockResolvedValue(undefined),
+      forget: jest.fn().mockResolvedValue(undefined),
     };
     redis = fakeRedis();
     queue = {
@@ -279,22 +281,39 @@ describe('ImslpScoresService', () => {
     });
   });
 
-  // O botão "Atualizar do IMSLP" de quem cuida do catálogo (02/11).
-  describe('atualizar na hora (curador)', () => {
-    it('lê mesmo com a obra marcada como lida e o IMSLP em pausa', async () => {
+  // O botão "Atualizar do IMSLP" da página da obra, aberto a todos (02/11).
+  describe('atualizar na hora (qualquer visitante)', () => {
+    it('lê mesmo com a obra marcada como lida e limpa só o cache desta obra', async () => {
       cache.get.mockResolvedValue('done');
-      redis.store.set('imslp-scores:breaker:open', '1');
 
       const result = await service.refresh(WORK);
 
       expect(fetcher.load).toHaveBeenCalled();
       expect(result.created).toBeGreaterThan(31);
-      expect(cache.set).toHaveBeenCalledWith(
-        `imslp-scores:tried:${WORK}`,
-        'done',
-        24 * 60 * 60 * 1000,
+      expect(cache.forget).toHaveBeenCalledWith(
+        [`works:detail:${WORK}`],
+        [`work:${WORK}`],
       );
+      // O cache de todas as obras fica: cada clique não esvazia o site.
+      expect(cache.invalidateMany).not.toHaveBeenCalled();
       expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
+    });
+
+    it('uma vez por obra a cada dois minutos', async () => {
+      await service.refresh(WORK);
+      await expect(service.refresh(WORK)).rejects.toThrow(
+        'acabou de ser atualizada',
+      );
+      expect(fetcher.load).toHaveBeenCalledTimes(1);
+    });
+
+    it('robô não atualiza; IMSLP em pausa segue em pausa', async () => {
+      await expect(service.refresh(WORK, { robot: true })).rejects.toThrow(
+        'pedido de uma pessoa',
+      );
+      redis.store.set('imslp-scores:breaker:open', '1');
+      await expect(service.refresh(WORK)).rejects.toThrow('fora do ar');
+      expect(fetcher.load).not.toHaveBeenCalled();
     });
 
     it('com a leitura da fila em curso, pede para esperar', async () => {

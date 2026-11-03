@@ -10,3 +10,12 @@ import { CacheNamespace } from '../../common/cache/cache-keys';
 export function workDetailCacheKey(workId: string): string {
   return `${CacheNamespace.WORKS}:detail:${workId}`;
 }
+
+/**
+ * A tag do front para a página de uma obra só — a mesma que as leituras da
+ * página (`work-page-details.ts`, `work-score-library.ts`) levam além de
+ * `works`. Permite limpar uma obra sem esvaziar todas.
+ */
+export function workTag(workId: string): string {
+  return `work:${workId}`;
+}

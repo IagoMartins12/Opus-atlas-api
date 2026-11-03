@@ -173,10 +173,15 @@ export class AppCacheService {
    * recarga logo depois pegava a cópia velha (24/10). Falha ou demora do
    * front nunca vira erro nem trava a escrita.
    */
-  private async announce(namespaces: CacheNamespaceValue[]): Promise<void> {
-    if (namespaces.length === 0 || !this.events) return;
+  private async announce(
+    namespaces: CacheNamespaceValue[],
+    tags: string[] = [],
+  ): Promise<void> {
+    if ((namespaces.length === 0 && tags.length === 0) || !this.events) return;
 
-    const payload: CacheInvalidatedEvent = { namespaces };
+    const payload: CacheInvalidatedEvent = tags.length
+      ? { namespaces, tags }
+      : { namespaces };
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([
       this.events.emitAsync(CACHE_INVALIDATED_EVENT, payload).catch(() => []),
@@ -275,6 +280,26 @@ export class AppCacheService {
       namespaces.map((namespace) => this.invalidateNamespace(namespace)),
     );
     await this.announce(namespaces);
+  }
+
+  /**
+   * Esquece chaves precisas e avisa o front só pelas tags dadas — sem o
+   * namespace inteiro. É a limpeza de uma obra só (o "Atualizar do IMSLP",
+   * aberto a qualquer visitante): `del` anunciaria `works`, e cada clique
+   * esvaziaria a página de todas as obras.
+   */
+  async forget(keys: string[], tags: string[]): Promise<void> {
+    for (const key of keys) {
+      this.hot.delete(key);
+      try {
+        await this.cache.del(key);
+      } catch (error: unknown) {
+        this.logger.warn(
+          `Falha ao remover cache "${key}": ${errorMessage(error)}`,
+        );
+      }
+    }
+    await this.announce([], tags);
   }
 
   async del(key: string): Promise<void> {

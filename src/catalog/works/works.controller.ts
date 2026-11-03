@@ -52,8 +52,6 @@ import { isRobotUserAgent } from '../../common/utils/robot.util';
 import { WorksCatalogResponseDto } from './dto/works-catalog-response.dto';
 import { WorkSummaryDto } from './dto/work-summary.dto';
 import { ImslpScoresService } from './imslp-scores.service';
-import { Roles } from '../../common/decorators/roles.decorator';
-import { Curator } from '../../common/auth/curator.guard';
 import { WorksService } from './works.service';
 
 const MEDIA_TYPES = [
@@ -291,22 +289,26 @@ export class WorksController {
     };
   }
 
-  @ApiBearerAuth('access-token')
-  @Roles('USER')
-  @Curator()
+  @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post(':id/scores/refresh')
   @ApiOperation({
     summary: 'Relê as partituras da obra no IMSLP, na hora',
     description:
-      'O botão "Atualizar do IMSLP" da página da obra, para administrador e professor ' +
-      'aprovado (os curadores do catálogo). Lê a página agora, sem fila, mesmo com a obra ' +
-      'marcada como lida ou com falha: grava os arquivos que faltam e reescreve a ficha ' +
-      'dos que já existem. É o conserto da leitura que falhou sem avisar.',
+      'O botão "Atualizar do IMSLP" da página da obra, aberto a qualquer visitante. Lê a ' +
+      'página agora, sem fila, mesmo com a obra marcada como lida ou com falha: grava os ' +
+      'arquivos que faltam, reescreve a ficha dos que já existem e limpa o cache só desta ' +
+      'obra (na API e no front). Uma vez por obra a cada dois minutos; robô não; ' +
+      'respeita a pausa do IMSLP fora do ar.',
   })
   @ApiOkResponse({ type: RefreshWorkScoresResponseDto })
-  refreshScores(@Param('id') id: string) {
-    return this.imslpScores.refresh(id);
+  refreshScores(
+    @Param('id') id: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.imslpScores.refresh(id, {
+      robot: isRobotUserAgent(userAgent),
+    });
   }
 
   @ApiBearerAuth('access-token')

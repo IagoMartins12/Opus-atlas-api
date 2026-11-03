@@ -1,9 +1,13 @@
 import {
   BadGatewayException,
   ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma, ScoreSource } from '@prisma/client';
@@ -11,6 +15,7 @@ import { Queue } from 'bullmq';
 import { isMongoId } from 'class-validator';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
+import { workDetailCacheKey, workTag } from './work-cache-keys';
 import { buildIdempotencyKey, envelope } from '../../common/queue/job-contract';
 import {
   JOB_IMSLP_SCORES,
@@ -85,6 +90,10 @@ export const imslpScoresJobId = (workId: string) =>
 const triedKey = (workId: string) => `imslp-scores:tried:${workId}`;
 const lockKey = (workId: string) => `imslp-scores:lock:${workId}`;
 const retryKey = (workId: string) => `imslp-scores:retry:${workId}`;
+const forcedKey = (workId: string) => `imslp-scores:forced:${workId}`;
+
+/** Um "Atualizar do IMSLP" por obra a cada dois minutos. */
+const FORCED_COOLDOWN_MS = 2 * 60 * 1000;
 const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
 const BREAKER_OPEN = 'imslp-scores:breaker:open';
 
@@ -371,17 +380,39 @@ export class ImslpScoresService {
    */
   async refresh(
     workId: string,
+    options: { robot?: boolean } = {},
   ): Promise<{ created: number; updated: number; total: number }> {
     const permlink = isMongoId(workId) ? await this.permlinkOf(workId) : null;
 
     if (!permlink) {
       throw new NotFoundException('Obra sem página no IMSLP');
     }
+    // Aberto a qualquer visitante (decisão do dono, 02/11) — robô não, e o
+    // IMSLP em pausa segue em pausa: forçar uma leitura que vai falhar só
+    // empurra a volta dele para mais longe.
+    if (options.robot) {
+      throw new ForbiddenException('Atualização só a pedido de uma pessoa.');
+    }
+    if (await this.breakerOpen()) {
+      throw new ServiceUnavailableException(
+        'O IMSLP está fora do ar agora. Tente de novo em alguns minutos.',
+      );
+    }
 
-    // A mesma trava da fila: a leitura do worker e o "atualizar" não gravam
-    // juntos. Pedido de uma pessoa, fura a pausa do disjuntor e a marca de
-    // "lida hoje" — é justamente o conserto de quando ela estava errada.
+    // Uma vez por obra a cada dois minutos, venha de quem vier: o botão é de
+    // todos, e o IMSLP é de terceiros.
     const redis = await this.redis();
+    if (
+      !(await redis.set(forcedKey(workId), '1', 'PX', FORCED_COOLDOWN_MS, 'NX'))
+    ) {
+      throw new HttpException(
+        'Esta obra acabou de ser atualizada. Tente de novo em dois minutos.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    // A mesma trava da fila: a leitura do worker e o "atualizar" não gravam
+    // juntos. Fura a marca de "lida hoje" — é justamente o conserto de quando
+    // ela estava errada.
     if (!(await redis.set(lockKey(workId), '1', 'PX', LOCK_TTL_MS, 'NX'))) {
       throw new ConflictException(
         'As partituras desta obra estão sendo lidas agora. Tente em um minuto.',
@@ -389,8 +420,7 @@ export class ImslpScoresService {
     }
     try {
       return await this.refreshLocked(workId, permlink);
-    } catch (error: unknown) {
-      if (error instanceof NotFoundException) throw error;
+    } catch {
       await this.mark(workId, 'failed', FAILED_TTL_MS);
       throw new BadGatewayException(
         'O IMSLP não respondeu agora. Tente de novo em alguns minutos.',
@@ -437,12 +467,9 @@ export class ImslpScoresService {
     }
 
     await this.mark(workId, 'done', TRIED_TTL_MS);
-    if (created || updated) {
-      await this.cache.invalidateMany([
-        CacheNamespace.WORKS,
-        CacheNamespace.COMPOSERS,
-      ]);
-    }
+    // Sempre, mudando ou não: quem apertou quer ver a página como o IMSLP
+    // está. Só esta obra — a ficha na API e a página no front (`work:<id>`).
+    await this.cache.forget([workDetailCacheKey(workId)], [workTag(workId)]);
     return { created, updated, total: parsed.scores.length };
   }
 
