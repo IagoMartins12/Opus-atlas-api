@@ -49,6 +49,21 @@ export class ContributionLimitService {
     }
   }
 
+  /**
+   * Quantos envios ainda cabem no plano — para o lote (a importação de obras
+   * do IMSLP), que precisa saber até onde ir. Recusa como `assertWithinLimit`
+   * quando não cabe nenhum; `Infinity` no plano sem teto.
+   */
+  async remaining(userId: string): Promise<number> {
+    await this.assertWithinLimit(userId);
+    const access = await this.subscriptions.checkFeatureAccess(
+      userId,
+      'uploadLimit',
+    );
+    if (access.limit === undefined || access.limit < 0) return Infinity;
+    return access.limit - (await this.countContributions(userId));
+  }
+
   countContributions(userId: string): Promise<number> {
     return Promise.all([
       this.prisma.composer.count({ where: { createdBy: userId } }),

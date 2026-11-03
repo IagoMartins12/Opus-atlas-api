@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ContributionLimitService } from '../../uploads/shared/contribution-limit.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CATALOG_NAMESPACES } from '../../common/cache/cache-keys';
@@ -65,12 +66,15 @@ export class ImslpImportService {
     private readonly prisma: PrismaService,
     private readonly scraper: ImslpWorkScraper,
     private readonly cache: AppCacheService,
+    private readonly limit: ContributionLimitService,
   ) {}
 
   async importWorks(input: {
     composerId: string;
     urls: string[];
     userId: string;
+    /** Administrador: sem teto de envios. */
+    unlimited?: boolean;
   }): Promise<ImportSummary> {
     if (input.urls.length === 0 || input.urls.length > MAX_IMPORT_BATCH) {
       throw new BadRequestException(
@@ -81,6 +85,14 @@ export class ImslpImportService {
     const composer = await this.requireComposer(input.composerId);
     const fallbackInstrumentId = await this.fallbackInstrument();
 
+    // Aberta a toda pessoa logada (decisão do dono, 02/11): cada obra
+    // importada é um envio dela e conta no teto do plano. Sem vaga nenhuma,
+    // recusa como o envio comum (e-mail confirmado também); com menos vagas
+    // que obras, importa até o teto e devolve o resto com o motivo.
+    let room = input.unlimited
+      ? Infinity
+      : await this.limit.remaining(input.userId);
+
     const outcomes: ImportOutcome[] = [];
 
     // Uma obra de cada vez: cada uma é uma requisição ao IMSLP, e disparar
@@ -88,14 +100,24 @@ export class ImslpImportService {
     // bloqueado. O legado processava três em paralelo com uma pausa de um
     // segundo entre os lotes — a pausa dentro da requisição HTTP.
     for (const url of input.urls) {
-      outcomes.push(
-        await this.importOne({
-          url,
-          composer,
-          userId: input.userId,
-          fallbackInstrumentId,
-        }),
-      );
+      if (room <= 0) {
+        outcomes.push({
+          imslpUrl: url,
+          title: url,
+          status: 'failed',
+          reason:
+            'Limite de envios do seu plano atingido. Assine o Plus para importar sem limite.',
+        });
+        continue;
+      }
+      const outcome = await this.importOne({
+        url,
+        composer,
+        userId: input.userId,
+        fallbackInstrumentId,
+      });
+      if (outcome.status === 'imported') room--;
+      outcomes.push(outcome);
     }
 
     const imported = outcomes.filter(

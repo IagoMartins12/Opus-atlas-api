@@ -38,6 +38,7 @@ const MY_COMPOSER_SELECT = {
   createdAt: true,
   updatedAt: true,
   imslpId: true,
+  permLinkImslp: true,
   dataQuality: true,
   verificationStatus: true,
   epoch: { select: { name: true } },
@@ -418,6 +419,9 @@ export class UploadHistoryQueryService {
         updatedAt: composer.updatedAt.toISOString(),
         isIMSLP: !!composer.imslpId,
         imslpId: composer.imslpId ?? undefined,
+        // No compositor o campo é `permLinkImslp`; sem ele aqui, o "Importar
+        // obras do IMSLP" do cartão nunca aparecia.
+        imslpPermlink: composer.permLinkImslp ?? undefined,
         epochName: composer.epoch?.name,
         dataQuality: composer.dataQuality ?? undefined,
         verificationStatus: composer.verificationStatus ?? undefined,
