@@ -953,6 +953,13 @@ export class AdminCatalogService {
             },
       );
     }
+    if (query.imslpScores) {
+      and.push(
+        query.imslpScores === 'never'
+          ? { imslpScoresStatus: null }
+          : { imslpScoresStatus: query.imslpScores },
+      );
+    }
     if (query.hasScore !== undefined) {
       and.push({
         cachedScores: query.hasScore ? { some: {} } : { none: {} },

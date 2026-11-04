@@ -319,6 +319,15 @@ export class ListWorksQueryDto extends PaginationQuery {
   hasVideo?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'Como foi a leitura das partituras no IMSLP: `failed` (erro), `none` (leu e não achou nada), `found` (achou) ou `never` (nunca tentada).',
+    enum: ['failed', 'none', 'found', 'never'],
+  })
+  @IsOptional()
+  @IsIn(['failed', 'none', 'found', 'never'])
+  imslpScores?: 'failed' | 'none' | 'found' | 'never';
+
+  @ApiPropertyOptional({
     description: 'Cadastrada pela comunidade (true) ou importada (false).',
   })
   @IsOptional()

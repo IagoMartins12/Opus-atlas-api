@@ -495,8 +495,33 @@ export class ImslpScoresService {
     });
   }
 
-  private mark(workId: string, value: TriedMark, ttlMs: number) {
-    return this.cache.set(triedKey(workId), value, ttlMs);
+  private async mark(workId: string, value: TriedMark, ttlMs: number) {
+    await this.cache.set(triedKey(workId), value, ttlMs);
+    await this.persistStatus(workId, value);
+  }
+
+  /**
+   * O resultado da leitura fica na obra (o cache expira): o admin filtra as
+   * obras com erro e as que o IMSLP não tinha nada. Falhar aqui não derruba
+   * a leitura.
+   */
+  private async persistStatus(workId: string, value: TriedMark) {
+    try {
+      const status =
+        value === 'failed'
+          ? 'failed'
+          : (await this.storedCount(workId)) > 0
+            ? 'found'
+            : 'none';
+      await this.prisma.work.update({
+        where: { id: workId },
+        data: { imslpScoresStatus: status, imslpScoresCheckedAt: new Date() },
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `IMSLP: não gravei o resultado da obra ${workId}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   /** Lê e interpreta a página; o resultado alimenta o disjuntor. */
