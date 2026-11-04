@@ -23,6 +23,7 @@ import {
 import { verificationChange, verificationCore } from './verification';
 import { porMes, topPorContagem } from '../metrics/raw-aggregate';
 import { WorkCountFiltersService } from './work-count-filters.service';
+import { imslpComposerLink } from '../../common/imslp-link';
 
 const COMPOSER_SELECT = {
   id: true,
@@ -297,6 +298,7 @@ export class AdminCatalogService {
         alternativeNames: true,
         wikipediaLink: true,
         permLinkImslp: true,
+        imslpId: true,
         dataSource: true,
         dataCompleteness: true,
         startingWorkIds: true,
@@ -352,9 +354,11 @@ export class AdminCatalogService {
       .map((id) => topoObras.find((w) => w.id === id))
       .filter((w): w is (typeof topoObras)[number] => !!w);
 
-    const { createdByUser, startingWorkIds, ...resto } = composer;
+    const { createdByUser, startingWorkIds, imslpId, ...resto } = composer;
     return {
       ...resto,
+      // Sem o link guardado (Satie), a categoria do IMSLP dá o mesmo endereço.
+      permLinkImslp: imslpComposerLink(resto.permLinkImslp, imslpId),
       startingWorks: await this.startingWorks(startingWorkIds),
       bioLength: composer.bio?.length ?? 0,
       bioEnLength: composer.bioEn?.length ?? 0,

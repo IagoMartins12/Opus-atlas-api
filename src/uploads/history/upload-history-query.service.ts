@@ -7,6 +7,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, ScoreSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListHistoryQueryDto } from './dto/list-history-query.dto';
+import { imslpComposerLink } from '../../common/imslp-link';
 import { ListMyUploadsQueryDto } from './dto/list-my-uploads-query.dto';
 import {
   MyUploadItemDto,
@@ -421,7 +422,9 @@ export class UploadHistoryQueryService {
         imslpId: composer.imslpId ?? undefined,
         // No compositor o campo é `permLinkImslp`; sem ele aqui, o "Importar
         // obras do IMSLP" do cartão nunca aparecia.
-        imslpPermlink: composer.permLinkImslp ?? undefined,
+        imslpPermlink:
+          imslpComposerLink(composer.permLinkImslp, composer.imslpId) ??
+          undefined,
         epochName: composer.epoch?.name,
         dataQuality: composer.dataQuality ?? undefined,
         verificationStatus: composer.verificationStatus ?? undefined,
