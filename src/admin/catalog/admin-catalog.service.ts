@@ -852,6 +852,8 @@ export class AdminCatalogService {
       select: {
         id: true,
         imslpPermlink: true,
+        imslpScoresStatus: true,
+        imslpScoresCheckedAt: true,
         youtubeVideoUrl: true,
         instrumentation: true,
         compositionYear: true,
