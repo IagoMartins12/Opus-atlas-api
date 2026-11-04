@@ -27,6 +27,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/api-key.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { PublicCache } from '../../common/decorators/public-cache.decorator';
 import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
@@ -287,6 +288,20 @@ export class WorksController {
         robot: isRobotUserAgent(userAgent),
       }),
     };
+  }
+
+  @ApiBearerAuth('access-token')
+  @Roles('SUPER_ADMIN')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get(':id/scores/imslp-preview')
+  @ApiOperation({
+    summary: 'Prévia da leitura das partituras no IMSLP (admin)',
+    description:
+      'Lê a página da obra no IMSLP e diz o que a leitura criaria e atualizaria, sem gravar ' +
+      'nada. A confirmação é o `POST scores/refresh`.',
+  })
+  imslpPreview(@Param('id') id: string) {
+    return this.imslpScores.preview(id);
   }
 
   @Public()

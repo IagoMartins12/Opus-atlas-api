@@ -47,6 +47,7 @@ describe('ImslpScoresService', () => {
       createMany: jest.Mock;
       create: jest.Mock;
       findUnique: jest.Mock;
+      findMany: jest.Mock;
       update: jest.Mock;
     };
     work: { findUnique: jest.Mock };
@@ -75,6 +76,7 @@ describe('ImslpScoresService', () => {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
         create: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue({}),
       },
       work: {
@@ -282,6 +284,44 @@ describe('ImslpScoresService', () => {
   });
 
   // O botão "Atualizar do IMSLP" da página da obra, aberto a todos (02/11).
+  describe('prévia (o admin vê antes de confirmar)', () => {
+    it('obra sem partitura: tudo a criar, e nada é gravado nem marcado', async () => {
+      const preview = await service.preview(WORK);
+
+      expect(preview.stored).toBe(0);
+      expect(preview.toCreate.length).toBeGreaterThan(31);
+      expect(preview.toUpdate).toEqual([]);
+      expect(prisma.workScore.create).not.toHaveBeenCalled();
+      expect(prisma.workScore.update).not.toHaveBeenCalled();
+      expect(cache.set).not.toHaveBeenCalled();
+      expect(cache.forget).not.toHaveBeenCalled();
+      // Não gasta a pausa do "atualizar".
+      expect(redis.store.size).toBe(0);
+    });
+
+    it('o que já existe e mudou vai para "atualizar", dizendo o que muda', async () => {
+      const first = (await service.preview(WORK)).toCreate[0];
+      prisma.workScore.findMany.mockResolvedValue([
+        { sourceId: '86550', title: 'Título antigo', type: first.type },
+        { sourceId: 'sumiu', title: 'Outro', type: 'FULL_SCORE' },
+      ]);
+
+      const preview = await service.preview(WORK);
+
+      expect(preview.stored).toBe(2);
+      expect(preview.notOnPage).toBe(1);
+      const changed = preview.toUpdate.find((u) =>
+        u.changed.includes('título'),
+      );
+      expect(changed).toBeDefined();
+    });
+
+    it('obra sem página no IMSLP: não lê', async () => {
+      prisma.work.findUnique.mockResolvedValue({ imslpPermlink: null });
+      await expect(service.preview(WORK)).rejects.toThrow('sem página');
+    });
+  });
+
   describe('atualizar na hora (qualquer visitante)', () => {
     it('lê mesmo com a obra marcada como lida e limpa só o cache desta obra', async () => {
       cache.get.mockResolvedValue('done');

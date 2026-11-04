@@ -104,6 +104,36 @@ const isDuplicate = (error: unknown) =>
 /** O que a marca de tentativa guarda: deu certo (com ou sem arquivo) ou falhou. */
 type TriedMark = 'done' | 'failed';
 
+/** Os campos da partitura que a leitura reescreve, e como o admin os chama. */
+const FIELD_LABELS: readonly (readonly [string, string])[] = [
+  ['title', 'título'],
+  ['downloadUrl', 'arquivo'],
+  ['pageCount', 'páginas'],
+  ['fileSize', 'tamanho'],
+  ['editor', 'editor'],
+  ['publisher', 'editora'],
+  ['copyright', 'copyright'],
+  ['type', 'tipo'],
+  ['groupTitle', 'grupo'],
+];
+
+/** O que a leitura do IMSLP faria numa obra (`preview`). */
+export interface ImslpScoresPreview {
+  permlink: string;
+  /** Partituras do IMSLP que a obra tem hoje. */
+  stored: number;
+  /** Arquivos lidos na página agora. */
+  onPage: number;
+  /** O total que a página anuncia, por tipo. */
+  pageTotals: Record<string, number>;
+  toCreate: { title: string; type: string; publisher: string | null }[];
+  toUpdate: { title: string; type: string; changed: string[] }[];
+  unchanged: number;
+  /** Guardadas aqui que a página não lista mais (não são apagadas). */
+  notOnPage: number;
+  status: 'found' | 'none' | 'failed' | null;
+}
+
 export interface ImslpScoresJobPayload {
   workId: string;
 }
@@ -428,6 +458,77 @@ export class ImslpScoresService {
     } finally {
       await redis.del(lockKey(workId)).catch(() => undefined);
     }
+  }
+
+  /**
+   * O que a leitura faria, sem fazer: lê a página do IMSLP e compara com o que
+   * a obra tem. É o "antes de confirmar" do admin — não grava, não marca a
+   * obra como lida, não limpa cache e não gasta a pausa do "atualizar".
+   */
+  async preview(workId: string): Promise<ImslpScoresPreview> {
+    const permlink = isMongoId(workId) ? await this.permlinkOf(workId) : null;
+    if (!permlink) throw new NotFoundException('Obra sem página no IMSLP');
+    if (await this.breakerOpen()) {
+      throw new ServiceUnavailableException(
+        'O IMSLP está fora do ar agora. Tente de novo em alguns minutos.',
+      );
+    }
+    let parsed: Awaited<ReturnType<ImslpScoresService['fetchScores']>>;
+    try {
+      parsed = await this.fetchScores(permlink);
+    } catch {
+      throw new BadGatewayException(
+        'O IMSLP não respondeu agora. Tente de novo em alguns minutos.',
+      );
+    }
+    const totals = JSON.stringify(parsed.totals);
+    const stored = await this.prisma.workScore.findMany({
+      where: { workId, source: ScoreSource.IMSLP },
+    });
+    const bySource = new Map(stored.map((s) => [s.sourceId, s]));
+    const onPageIds = new Set(parsed.scores.map((s) => s.sourceId));
+
+    const toCreate: ImslpScoresPreview['toCreate'] = [];
+    const toUpdate: ImslpScoresPreview['toUpdate'] = [];
+    let unchanged = 0;
+    for (const score of parsed.scores) {
+      const current = bySource.get(score.sourceId);
+      if (!current) {
+        toCreate.push({
+          title: score.title,
+          type: score.type,
+          publisher: score.publisher ?? null,
+        });
+        continue;
+      }
+      const next = this.fields(score, totals) as Record<string, unknown>;
+      const changed = FIELD_LABELS.filter(
+        ([key]) =>
+          JSON.stringify(next[key] ?? null) !==
+          JSON.stringify((current as Record<string, unknown>)[key] ?? null),
+      ).map(([, label]) => label);
+      if (changed.length) {
+        toUpdate.push({ title: score.title, type: score.type, changed });
+      } else {
+        unchanged++;
+      }
+    }
+    return {
+      permlink,
+      stored: stored.length,
+      onPage: parsed.scores.length,
+      pageTotals: parsed.totals,
+      toCreate,
+      toUpdate,
+      unchanged,
+      notOnPage: stored.filter((s) => !onPageIds.has(s.sourceId)).length,
+      status: (
+        await this.prisma.work.findUnique({
+          where: { id: workId },
+          select: { imslpScoresStatus: true },
+        })
+      )?.imslpScoresStatus as ImslpScoresPreview['status'],
+    };
   }
 
   private async refreshLocked(
