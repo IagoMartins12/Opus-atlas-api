@@ -16,6 +16,7 @@ import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAdmin } from '../../common/auth/roles';
 import {
   PLAN_FEATURES,
   PlanFeatureSet,
@@ -131,11 +132,26 @@ export class SubscriptionsService {
     const { plan } = await this.effectivePlan(userId);
     const numeric = typeof PLAN_FEATURES[plan][feature] === 'number';
 
+    // Administração não tem teto de plano: envios, vídeos, alunos — tudo
+    // ilimitado, qualquer que seja a assinatura (decisão do dono, 04/11).
+    if (await this.isAdminUser(userId)) {
+      return { plan, hasAccess: true, limit: numeric ? -1 : undefined };
+    }
+
     return {
       plan,
       hasAccess: hasFeature(plan, feature),
       limit: numeric ? getFeatureLimit(plan, feature) : undefined,
     };
+  }
+
+  /** A pessoa é da administração (`role` ≥ ADMIN)? */
+  async isAdminUser(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    return isAdmin(user?.role);
   }
 
   /**

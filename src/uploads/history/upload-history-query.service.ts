@@ -306,7 +306,7 @@ export class UploadHistoryQueryService {
    * atual, mas a linha de histórico do envio permanece.
    */
   async contributionTotals(userId: string) {
-    const [composers, works, scores, pendingReports, videos, effective] =
+    const [composers, works, scores, pendingReports, videos, effective, admin] =
       await Promise.all([
         this.prisma.composer.count({ where: { createdBy: userId } }),
         this.prisma.work.count({ where: { createdBy: userId } }),
@@ -316,12 +316,13 @@ export class UploadHistoryQueryService {
         }),
         countPerformanceVideos(this.prisma, userId),
         this.subscriptions.effectivePlan(userId),
+        this.subscriptions.isAdminUser(userId),
       ]);
 
     // O teto do plano que vale (`-1` é ilimitado → `null`): a tela mostra
     // "x de 20" e avisa antes, em vez de deixar a pessoa preencher o
     // formulário e só então receber o 403.
-    const ceiling = (n: number) => (n < 0 ? null : n);
+    const ceiling = (n: number) => (admin || n < 0 ? null : n);
     const features = PLAN_FEATURES[effective.plan];
 
     return {

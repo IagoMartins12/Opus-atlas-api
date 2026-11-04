@@ -18,7 +18,7 @@ describe('UploadHistoryQueryService', () => {
     uploadModeration: { count: jest.Mock };
     learned: { count: jest.Mock };
   };
-  let subscriptions: { effectivePlan: jest.Mock };
+  let subscriptions: { effectivePlan: jest.Mock; isAdminUser: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -35,6 +35,7 @@ describe('UploadHistoryQueryService', () => {
     };
     subscriptions = {
       effectivePlan: jest.fn().mockResolvedValue({ plan: 'FREE' }),
+      isAdminUser: jest.fn().mockResolvedValue(false),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -125,6 +126,14 @@ describe('UploadHistoryQueryService', () => {
       expect(totals.limit).toBeNull();
       expect(totals.performanceVideos.limit).toBeNull();
     });
+  });
+
+  // Administração não tem teto, qualquer que seja o plano.
+  it('administração: sem teto de envios nem de vídeos', async () => {
+    subscriptions.isAdminUser.mockResolvedValue(true);
+    const totals = await service.contributionTotals('u1');
+    expect(totals.limit).toBeNull();
+    expect(totals.performanceVideos.limit).toBeNull();
   });
 
   describe('recent', () => {
