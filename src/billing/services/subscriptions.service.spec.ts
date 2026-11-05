@@ -306,10 +306,19 @@ describe('SubscriptionsService', () => {
       });
     });
 
-    it('com plano valendo, ou se o vencido não incluía o painel, não tranca', async () => {
+    it('com plano valendo, ou sem nenhuma assinatura, não tranca', async () => {
       prisma.subscription.findFirst.mockResolvedValueOnce(subscription());
       await expect(service.lapsedTeacherPlan(USER)).resolves.toBeNull();
 
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toBeNull();
+    });
+
+    // O Plus vencido também tranca: antes só os planos com painel contavam, e
+    // o professor que deixou o Plus vencer seguia com o portal aberto.
+    it('o Plus vencido tranca o painel como qualquer outro plano', async () => {
       prisma.subscription.findFirst
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
@@ -318,7 +327,11 @@ describe('SubscriptionsService', () => {
           trialEndDate: null,
           updatedAt: ended,
         });
-      await expect(service.lapsedTeacherPlan(USER)).resolves.toBeNull();
+      await expect(service.lapsedTeacherPlan(USER)).resolves.toEqual({
+        plan: 'PLUS',
+        endedAt: ended,
+        trial: false,
+      });
     });
   });
 

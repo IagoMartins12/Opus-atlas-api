@@ -256,7 +256,9 @@ export class SubscriptionsService {
    * plano pago —, quando a pessoa não tem outro valendo. É o que tranca o
    * painel do professor (decisão do dono, 02/11): quem nunca assinou segue
    * na RN-1 (professor é papel, não plano); quem assinou e deixou vencer vê
-   * "regularize para voltar". Plano que não inclui o painel (Plus) não conta.
+   * "regularize para voltar". Vale para qualquer plano pago ou teste que
+   * venceu, o Plus inclusive (05/11: a conta de teste do dono tinha só um Plus
+   * vencido e o painel seguia aberto).
    */
   async lapsedTeacherPlan(
     userId: string,
@@ -276,7 +278,7 @@ export class SubscriptionsService {
         updatedAt: true,
       },
     });
-    if (!last || !hasFeature(last.planType, 'teacherDashboard')) return null;
+    if (!last) return null;
     // Acabou junto com o teste: nunca chegou a ser paga.
     const trial = Boolean(
       last.trialEndDate && (!last.endDate || last.endDate <= last.trialEndDate),
