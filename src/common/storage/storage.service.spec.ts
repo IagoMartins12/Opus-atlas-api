@@ -204,6 +204,20 @@ describe('StorageService', () => {
 
       expect(cloudinary.deleteAsset).toHaveBeenCalledWith('antigo', 'IMAGE');
     });
+
+    // A miniatura da partitura sobe antes de a partitura existir: sem
+    // entidade, trocar "pelo dono" apagava a miniatura de todas as outras
+    // partituras dele (a da anterior sumia ao enviar a seguinte).
+    it('sem entidade, só a foto de perfil substitui pelo dono', async () => {
+      prisma.storedAsset.findMany.mockResolvedValue([{ id: 'de-outra' }]);
+
+      await service.uploadFile(
+        { ...target, kind: StorageAssetKind.SCORE_THUMBNAIL },
+        { buffer: pngBuffer(), originalName: 't.png', size: 1024 },
+      );
+
+      expect(cloudinary.deleteAsset).not.toHaveBeenCalled();
+    });
   });
 
   describe('createSignedUpload', () => {

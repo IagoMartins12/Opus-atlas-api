@@ -354,6 +354,13 @@ export class StorageService {
     target: UploadTarget,
     keepAssetId: string,
   ): Promise<void> {
+    // Sem entidade (o arquivo sobe antes de o compositor ou a partitura
+    // existir), só a foto de perfil é "uma por dono". Para o resto, trocar
+    // pelo dono apagava os arquivos de TODAS as outras entidades dele: a
+    // miniatura de cada partitura nova levava a da anterior (04/11).
+    const hasEntity = Boolean(target.entityType && target.entityId);
+    if (!hasEntity && target.kind !== StorageAssetKind.PROFILE_IMAGE) return;
+
     const previous = await this.prisma.storedAsset.findMany({
       where: {
         kind: target.kind,

@@ -168,6 +168,21 @@ export class ScoreUploadsService {
       changed.thumbnailUrl = thumbnail.secureUrl;
 
       await this.attachAssetsToScore(scoreId, [thumbnail.id]);
+
+      // A miniatura nova substitui a desta partitura (e só desta).
+      const previous = await this.prisma.storedAsset.findMany({
+        where: {
+          kind: StorageAssetKind.SCORE_THUMBNAIL,
+          entityType: 'workScore',
+          entityId: scoreId,
+          status: 'ACTIVE',
+          id: { not: thumbnail.id },
+        },
+        select: { id: true },
+      });
+      for (const old of previous) {
+        await this.storage.deleteAsset(old.id).catch(() => undefined);
+      }
     }
 
     const score = await this.prisma.workScore.update({
