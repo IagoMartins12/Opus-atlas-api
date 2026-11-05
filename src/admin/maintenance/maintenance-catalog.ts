@@ -28,6 +28,7 @@ export const MAINTENANCE_TASK_IDS = [
   'mail.events.prune',
   'search.reindex',
   'catalog.rank-works',
+  'catalog.recheck-imslp-scores',
   'database.backup',
 ] as const;
 
@@ -179,6 +180,19 @@ export const MAINTENANCE_CATALOG: readonly MaintenanceTask[] = [
     impact: 'medium',
     destructive: false,
     suggestedCron: '0 5 * * 1',
+  },
+  {
+    id: 'catalog.recheck-imslp-scores',
+    name: 'Conferir as partituras do IMSLP',
+    description:
+      'A mesma rotina de `/admin/rotinas`, gravando, em lotes de 300 obras: ' +
+      'relê no IMSLP as obras com arquivo faltando ou com a ficha da edição ' +
+      'suja e corrige. É a rede para a leitura que falha sem avisar — a ' +
+      'obra que ficou com menos partituras do que o IMSLP tem.',
+    category: 'database',
+    impact: 'low',
+    destructive: false,
+    suggestedCron: '0 4 * * 0',
   },
 ];
 

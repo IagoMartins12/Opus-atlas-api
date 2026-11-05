@@ -1057,25 +1057,28 @@ model WorkGenre {
 }
 
 model Work {
-  id                String    @id @default(auto()) @map("_id") @db.ObjectId
-  title             String
-  composerId        String    @db.ObjectId
-  instrumentId      String    @db.ObjectId
-  epochId           String    @db.ObjectId
-  videoUrl          String?
-  imslpPermlink     String
+  id                   String    @id @default(auto()) @map("_id") @db.ObjectId
+  title                String
+  composerId           String    @db.ObjectId
+  instrumentId         String    @db.ObjectId
+  epochId              String    @db.ObjectId
+  videoUrl             String?
+  imslpPermlink        String
   /// Quando a ficha das edições das partituras foi relida no IMSLP (rotina de edições).
-  editionsCheckedAt DateTime?
-  imslpId           String
-  opOrCatalog       String?
-  compositionYear   String?
-  firstPublishDate  String?
-  tone              String?
-  mediaDuration     String?
-  workStyle         String?
-  moviment          String?
-  categoryNames     String[]  @default([])
-  workGenresArr     String[]  @default([])
+  editionsCheckedAt    DateTime?
+  /// Como foi a última leitura das partituras no IMSLP: `found` (achou e gravou), `none` (leu e não havia nada) ou `failed` (erro). Vazio: nunca tentada.
+  imslpScoresStatus    String?
+  imslpScoresCheckedAt DateTime?
+  imslpId              String
+  opOrCatalog          String?
+  compositionYear      String?
+  firstPublishDate     String?
+  tone                 String?
+  mediaDuration        String?
+  workStyle            String?
+  moviment             String?
+  categoryNames        String[]  @default([])
+  workGenresArr        String[]  @default([])
 
   dedicateTo      String?
   instrumentation String?
@@ -1099,8 +1102,8 @@ model Work {
   /// bergamasque. Shown as "Inclui …" and searched like the title.
   famousParts   String[] @default([])
   famousPartsEn String[] @default([])
-  subtitle  String?
-  imslpTags String[] @default([])
+  subtitle      String?
+  imslpTags     String[] @default([])
 
   // MÍDIA SIMPLIFICADA E MELHORADA
   spotifyTrackId      String? // ID da track

@@ -49,7 +49,10 @@ describe('SubscriptionsService · plano efetivo', () => {
       teacher: {
         findUnique: jest.fn().mockResolvedValue(opts.teacherProfile ?? null),
       },
-      user: { update: jest.fn().mockResolvedValue({}) },
+      user: {
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ role: 0 }),
+      },
     };
     const service = new SubscriptionsService(
       prisma as never,

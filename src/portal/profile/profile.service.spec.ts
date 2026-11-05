@@ -10,7 +10,7 @@ import { PortalProfileService } from './profile.service';
 
 describe('PortalProfileService', () => {
   let service: PortalProfileService;
-  let activities: { record: jest.Mock };
+  let activities: { record: jest.Mock; recordCollapsing: jest.Mock };
   let prisma: {
     student: { findUnique: jest.Mock; create: jest.Mock };
     teacher: { findUnique: jest.Mock; create: jest.Mock };
@@ -32,7 +32,10 @@ describe('PortalProfileService', () => {
       lesson: { findMany: jest.fn().mockResolvedValue([]) },
     };
     // A trilha escolar é efeito colateral: o dublê só registra a chamada.
-    activities = { record: jest.fn().mockResolvedValue(undefined) };
+    activities = {
+      record: jest.fn().mockResolvedValue(undefined),
+      recordCollapsing: jest.fn().mockResolvedValue(undefined),
+    };
     service = new PortalProfileService(
       prisma as unknown as PrismaService,
       activities as unknown as SchoolActivitiesService,
@@ -240,13 +243,14 @@ describe('PortalProfileService', () => {
         { isTeacher: true, isStudent: false },
         { professor: ['bio'] },
       );
-      expect(activities.record).toHaveBeenLastCalledWith(
+      expect(activities.recordCollapsing).toHaveBeenLastCalledWith(
         expect.objectContaining({
           userId: 'user-1',
           userType: 'teacher',
           action: SchoolActivityAction.TEACHER_PROFILE_UPDATED,
           changes: { professor: ['bio'] },
         }),
+        expect.any(Number),
       );
 
       await service.recordProfileChange(
@@ -254,11 +258,12 @@ describe('PortalProfileService', () => {
         { isTeacher: true, isStudent: true },
         { aluno: ['level'] },
       );
-      expect(activities.record).toHaveBeenLastCalledWith(
+      expect(activities.recordCollapsing).toHaveBeenLastCalledWith(
         expect.objectContaining({
           userType: 'student',
           action: SchoolActivityAction.STUDENT_PROFILE_UPDATED,
         }),
+        expect.any(Number),
       );
 
       await service.recordProfileChange(
@@ -266,11 +271,37 @@ describe('PortalProfileService', () => {
         { isTeacher: false, isStudent: true },
         { conta: ['city'] },
       );
-      expect(activities.record).toHaveBeenLastCalledWith(
+      expect(activities.recordCollapsing).toHaveBeenLastCalledWith(
         expect.objectContaining({
           userType: 'student',
           action: SchoolActivityAction.USER_PROFILE_UPDATED,
         }),
+        expect.any(Number),
+      );
+    });
+
+    // Alternar lista/grade salva `listView` pelo perfil: não é mudança de
+    // perfil e enchia o histórico do professor de "Atualizou o perfil".
+    it('preferência de tela não entra no histórico', async () => {
+      await service.recordProfileChange(
+        'user-1',
+        { isTeacher: true, isStudent: false },
+        { conta: ['listView'] },
+      );
+      expect(activities.recordCollapsing).not.toHaveBeenCalled();
+
+      await service.recordProfileChange(
+        'user-1',
+        { isTeacher: true, isStudent: false },
+        { conta: ['listView', 'phone', 'city'] },
+      );
+      expect(activities.recordCollapsing).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          changes: { conta: ['phone', 'city'] },
+          description: 'Telefone, Cidade',
+          entityId: 'user-1',
+        }),
+        expect.any(Number),
       );
     });
 
@@ -281,7 +312,7 @@ describe('PortalProfileService', () => {
         { conta: ['city'] },
       );
 
-      expect(activities.record).not.toHaveBeenCalled();
+      expect(activities.recordCollapsing).not.toHaveBeenCalled();
     });
   });
 

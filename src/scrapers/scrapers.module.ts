@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { BillingModule } from '../billing/billing.module';
+import { ContributionLimitService } from '../uploads/shared/contribution-limit.service';
 import { AuditorioIbirapueraScraperService } from './auditorio-ibirapuera/auditorio-ibirapuera-scraper.service';
 import { CidadeDasArtesScraperService } from './cidade-das-artes/cidade-das-artes-scraper.service';
 import { ComposerWorksService } from './imslp/composer-works.service';
@@ -38,9 +40,12 @@ import { WikipediaController } from './wikipedia/wikipedia.controller';
  * `ScraperRunService` é exportado porque o processor no `WorkerModule` o chama.
  */
 @Module({
-  imports: [PrismaModule],
+  // `BillingModule` e o limite de envios: a importação em lote de obras é de
+  // qualquer pessoa logada, e conta no teto do plano como um envio comum.
+  imports: [PrismaModule, BillingModule],
   controllers: [ScrapersController, ImslpController, WikipediaController],
   providers: [
+    ContributionLimitService,
     OsespScraperService,
     TheatroMunicipalScraperService,
     SalaCeciliaMeirelesScraperService,

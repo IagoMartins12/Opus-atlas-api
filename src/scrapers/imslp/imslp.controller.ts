@@ -12,6 +12,7 @@ import {
 } from '@nestjs/swagger';
 import { Audited } from '../../common/audit/audit.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { isAdmin } from '../../common/auth/roles';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
@@ -118,7 +119,7 @@ export class ImslpController {
   }
 
   @Get('composers/:id/works')
-  @Roles('ADMIN')
+  @Roles('USER')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Audited({
     action: 'imslp.composer.discover',
@@ -146,7 +147,7 @@ export class ImslpController {
   }
 
   @Post('composers/:id/works/import')
-  @Roles('ADMIN')
+  @Roles('USER')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Audited({
     action: 'imslp.works.import',
@@ -186,6 +187,8 @@ export class ImslpController {
       composerId,
       urls: dto.urls,
       userId: user.sub,
+      // Qualquer pessoa logada importa; só o administrador não tem teto.
+      unlimited: isAdmin(user.role),
     });
   }
 }

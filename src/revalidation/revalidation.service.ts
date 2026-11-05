@@ -81,6 +81,7 @@ export class RevalidationService implements OnModuleDestroy {
     if (!this.enabled) return Promise.resolve();
 
     event.namespaces.forEach((namespace) => this.pending.add(tagOf(namespace)));
+    event.tags?.forEach((tag) => this.pending.add(tag));
 
     this.batch ??= new Promise<void>((resolve) => {
       this.timer = setTimeout(() => {

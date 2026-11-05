@@ -93,6 +93,47 @@ export interface ProfileRoles {
  * seções daqui. Antes eram dois `PATCH /profile` em dois controllers — e o
  * do portal nunca respondia, porque o módulo de perfil registrava primeiro.
  */
+/** Preferências de tela salvas pelo perfil: não entram no histórico. */
+const UI_PREFERENCES = new Set(['listView']);
+
+/** O nome de cada campo do perfil no histórico. */
+const FIELD_LABEL: Record<string, string> = {
+  firstName: 'Nome',
+  lastName: 'Sobrenome',
+  bio: 'Bio',
+  city: 'Cidade',
+  state: 'Estado',
+  country: 'País',
+  phone: 'Telefone',
+  userType: 'Perfil de uso',
+  experienceLevel: 'Nível',
+  favoriteComposerId: 'Compositor favorito',
+  favoriteEpochId: 'Época favorita',
+  practiceTimePerWeek: 'Tempo de estudo',
+  studyHorizon: 'Objetivo de estudo',
+  profilePublic: 'Perfil público',
+  showLocation: 'Mostrar localização',
+  instruments: 'Instrumentos',
+  publicBio: 'Bio pública',
+  specialties: 'Especialidades',
+  experience: 'Experiência',
+  education: 'Formação',
+  achievements: 'Conquistas',
+  website: 'Site',
+  socialMedia: 'Redes sociais',
+  isPublicProfile: 'Perfil público de professor',
+  defaultLessonDuration: 'Duração padrão da aula',
+  maxStudentsPerWeek: 'Alunos por semana',
+  timezone: 'Fuso horário',
+  teachingMethod: 'Método',
+  ageGroups: 'Faixas etárias',
+  skillLevels: 'Níveis atendidos',
+  level: 'Nível',
+  mainInstrument: 'Instrumento principal',
+  goals: 'Objetivos',
+  weeklyGoalMinutes: 'Meta semanal',
+};
+
 @Injectable()
 export class PortalProfileService {
   constructor(
@@ -142,11 +183,24 @@ export class PortalProfileService {
   async recordProfileChange(
     userId: string,
     roles: ProfileRoles,
-    changed: Record<string, string[]>,
+    changes: Record<string, string[]>,
   ): Promise<void> {
     if (!roles.isTeacher && !roles.isStudent) {
       return;
     }
+
+    // Preferência de tela não é mudança de perfil: alternar lista/grade nas
+    // listas do site salvava `listView` e enchia o histórico de "Atualizou o
+    // perfil" (42 de 48 entradas, 05/11).
+    const changed = Object.fromEntries(
+      Object.entries(changes)
+        .map(([group, fields]) => [
+          group,
+          fields.filter((f) => !UI_PREFERENCES.has(f)),
+        ])
+        .filter(([, fields]) => fields.length > 0),
+    ) as Record<string, string[]>;
+    if (Object.keys(changed).length === 0) return;
 
     const userType = changed.professor
       ? 'teacher'
@@ -156,18 +210,33 @@ export class PortalProfileService {
           ? 'teacher'
           : 'student';
 
-    await this.activities.record({
-      userId,
-      userType,
-      action: changed.professor
-        ? SchoolActivityAction.TEACHER_PROFILE_UPDATED
-        : changed.aluno
-          ? SchoolActivityAction.STUDENT_PROFILE_UPDATED
-          : SchoolActivityAction.USER_PROFILE_UPDATED,
-      entityType: 'profile',
-      title: 'Atualizou o perfil',
-      changes: changed,
-    });
+    // O que mudou, em palavras, na linha do histórico ("Telefone, Cidade").
+    const labels = [
+      ...new Set(
+        Object.values(changed)
+          .flat()
+          .map((f) => FIELD_LABEL[f] ?? 'Outros dados'),
+      ),
+    ];
+
+    // Salvar a mesma tela duas vezes seguidas vira uma linha só.
+    await this.activities.recordCollapsing(
+      {
+        userId,
+        userType,
+        action: changed.professor
+          ? SchoolActivityAction.TEACHER_PROFILE_UPDATED
+          : changed.aluno
+            ? SchoolActivityAction.STUDENT_PROFILE_UPDATED
+            : SchoolActivityAction.USER_PROFILE_UPDATED,
+        entityType: 'profile',
+        entityId: userId,
+        title: 'Atualizou o perfil',
+        description: labels.join(', '),
+        changes: changed,
+      },
+      10 * 60_000,
+    );
   }
 
   // -------------------------------------------------------------------

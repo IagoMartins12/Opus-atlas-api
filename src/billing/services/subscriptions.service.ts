@@ -16,6 +16,7 @@ import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
 import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAdmin } from '../../common/auth/roles';
 import {
   PLAN_FEATURES,
   PlanFeatureSet,
@@ -131,11 +132,26 @@ export class SubscriptionsService {
     const { plan } = await this.effectivePlan(userId);
     const numeric = typeof PLAN_FEATURES[plan][feature] === 'number';
 
+    // Administração não tem teto de plano: envios, vídeos, alunos — tudo
+    // ilimitado, qualquer que seja a assinatura (decisão do dono, 04/11).
+    if (await this.isAdminUser(userId)) {
+      return { plan, hasAccess: true, limit: numeric ? -1 : undefined };
+    }
+
     return {
       plan,
       hasAccess: hasFeature(plan, feature),
       limit: numeric ? getFeatureLimit(plan, feature) : undefined,
     };
+  }
+
+  /** A pessoa é da administração (`role` ≥ ADMIN)? */
+  async isAdminUser(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    return isAdmin(user?.role);
   }
 
   /**
@@ -233,6 +249,52 @@ export class SubscriptionsService {
       },
     });
     return count > 0;
+  }
+
+  /**
+   * O plano de professor que venceu sem renovação — o teste de 7 dias ou o
+   * plano pago —, quando a pessoa não tem outro valendo. É o que tranca o
+   * painel do professor (decisão do dono, 02/11): quem nunca assinou segue
+   * na RN-1 (professor é papel, não plano); quem assinou e deixou vencer vê
+   * "regularize para voltar". Vale para qualquer plano pago ou teste que
+   * venceu, o Plus inclusive (05/11: a conta de teste do dono tinha só um Plus
+   * vencido e o painel seguia aberto).
+   */
+  async lapsedTeacherPlan(
+    userId: string,
+  ): Promise<{ plan: PlanType; endedAt: Date; trial: boolean } | null> {
+    if (await this.getCurrentSubscription(userId)) return null;
+    const now = new Date();
+    const last = await this.prisma.subscription.findFirst({
+      where: {
+        userId,
+        planType: { not: 'FREE' },
+        OR: [
+          { status: { in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'] } },
+          // Vencida, mas o cron ainda não a expirou — ou concedida pela
+          // equipe com vencimento já passado. Sem data, não vence: a
+          // concessão sem vencimento não entra aqui (e vale, acima).
+          { status: { in: ACTIVE_STATUSES }, endDate: { lt: now } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        planType: true,
+        endDate: true,
+        trialEndDate: true,
+        updatedAt: true,
+      },
+    });
+    if (!last) return null;
+    // Acabou junto com o teste: nunca chegou a ser paga.
+    const trial = Boolean(
+      last.trialEndDate && (!last.endDate || last.endDate <= last.trialEndDate),
+    );
+    return {
+      plan: last.planType,
+      endedAt: last.endDate ?? last.trialEndDate ?? last.updatedAt,
+      trial,
+    };
   }
 
   async getCurrent(userId: string): Promise<CurrentSubscriptionResponseDto> {

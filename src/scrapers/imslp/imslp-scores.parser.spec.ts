@@ -4,6 +4,7 @@ import { join } from 'path';
 import {
   absoluteImslpUrl,
   directFileUrl,
+  editionText,
   parseImslpScores,
 } from './imslp-scores.parser';
 
@@ -84,6 +85,45 @@ describe('parseImslpScores — página real', () => {
   it('os grupos são numerados por aba', () => {
     expect(scores[0].groupIndex).toBe(0);
     expect(new Set(scores.map((score) => score.groupIndex)).size).toBe(29);
+  });
+
+  // Os Cadernos de Anna Magdalena Bach repetem o manuscrito em duas seções;
+  // gravado duas vezes, o arquivo batia no índice único.
+  it('arquivo repetido na página entra uma vez só', () => {
+    const $ = cheerio.load(html);
+    const $tab = $('#tabScore1');
+    $tab.append($tab.children('.we').first().clone());
+
+    const ids = parseImslpScores($).scores.map((score) => score.sourceId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.filter((id) => id === '86550')).toHaveLength(1);
+  });
+});
+
+// As células da ficha, como vêm da página dos Cadernos de Anna Magdalena Bach.
+describe('ficha da edição', () => {
+  const cell = (inner: string) => {
+    const $ = cheerio.load(`<table><tr><td id="c">${inner}</td></tr></table>`);
+    return editionText($, $('#c'));
+  };
+
+  it('a caixa de aviso não vira editora e a quebra de linha não some', () => {
+    expect(
+      cell(
+        '<a href="#"><i>Neue Bach-Ausgabe</i></a><i>, Serie V, Band 4</i> (pp.45-138)<br>Kassel: <a href="#">Bärenreiter Verlag</a>, 1957.  Plate BA 5008.' +
+          '<div style="border:1px gray solid; padding:4px"><center><b>URTEXT EDITION</b><span class="expandline"><p>This is an urtext edition…</p><span style="color:crimson"><b>Please obey the copyright laws of your country.</b></span></span></center></div>',
+      ),
+    ).toBe(
+      'Neue Bach-Ausgabe, Serie V, Band 4 (pp.45-138) · Kassel: Bärenreiter Verlag, 1957. Plate BA 5008.',
+    );
+  });
+
+  it('o copyright dentro de div.plainlinks fica; o [tag/del] sai', () => {
+    expect(
+      cell(
+        '<div class="plainlinks"><a href="#">Public Domain</a>&nbsp;- <b><span style="color:red">Non-PD US</span></b>&nbsp;<span class="noanon"><small>[<a href="#">tag</a>/<a href="#">del</a>]</small></span></div>',
+      ),
+    ).toBe('Public Domain - Non-PD US');
   });
 });
 

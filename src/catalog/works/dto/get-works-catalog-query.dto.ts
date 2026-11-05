@@ -128,7 +128,7 @@ export class GetWorksCatalogQueryDto {
   @ApiPropertyOptional({
     enum: WORK_CATALOG_SORTS,
     description:
-      'Ordem. Sem ela: as mais recentes sem filtro, A–Z com filtro (como antes).',
+      'Ordem. Sem ela: as mais recentes sem filtro, A–Z com filtro (como antes) e, com busca, a relevância — que é também o que "featured" quer dizer numa busca.',
   })
   @IsOptional()
   @IsIn(WORK_CATALOG_SORTS)

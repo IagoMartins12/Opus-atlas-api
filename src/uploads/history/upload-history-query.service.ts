@@ -7,6 +7,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, ScoreSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListHistoryQueryDto } from './dto/list-history-query.dto';
+import { imslpComposerLink } from '../../common/imslp-link';
 import { ListMyUploadsQueryDto } from './dto/list-my-uploads-query.dto';
 import {
   MyUploadItemDto,
@@ -38,6 +39,7 @@ const MY_COMPOSER_SELECT = {
   createdAt: true,
   updatedAt: true,
   imslpId: true,
+  permLinkImslp: true,
   dataQuality: true,
   verificationStatus: true,
   epoch: { select: { name: true } },
@@ -304,7 +306,7 @@ export class UploadHistoryQueryService {
    * atual, mas a linha de histórico do envio permanece.
    */
   async contributionTotals(userId: string) {
-    const [composers, works, scores, pendingReports, videos, effective] =
+    const [composers, works, scores, pendingReports, videos, effective, admin] =
       await Promise.all([
         this.prisma.composer.count({ where: { createdBy: userId } }),
         this.prisma.work.count({ where: { createdBy: userId } }),
@@ -314,12 +316,13 @@ export class UploadHistoryQueryService {
         }),
         countPerformanceVideos(this.prisma, userId),
         this.subscriptions.effectivePlan(userId),
+        this.subscriptions.isAdminUser(userId),
       ]);
 
     // O teto do plano que vale (`-1` é ilimitado → `null`): a tela mostra
     // "x de 20" e avisa antes, em vez de deixar a pessoa preencher o
     // formulário e só então receber o 403.
-    const ceiling = (n: number) => (n < 0 ? null : n);
+    const ceiling = (n: number) => (admin || n < 0 ? null : n);
     const features = PLAN_FEATURES[effective.plan];
 
     return {
@@ -418,6 +421,11 @@ export class UploadHistoryQueryService {
         updatedAt: composer.updatedAt.toISOString(),
         isIMSLP: !!composer.imslpId,
         imslpId: composer.imslpId ?? undefined,
+        // No compositor o campo é `permLinkImslp`; sem ele aqui, o "Importar
+        // obras do IMSLP" do cartão nunca aparecia.
+        imslpPermlink:
+          imslpComposerLink(composer.permLinkImslp, composer.imslpId) ??
+          undefined,
         epochName: composer.epoch?.name,
         dataQuality: composer.dataQuality ?? undefined,
         verificationStatus: composer.verificationStatus ?? undefined,

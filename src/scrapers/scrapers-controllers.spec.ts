@@ -159,6 +159,8 @@ describe('ImslpController e WikipediaController', () => {
       composerId: 'c1',
       urls: ['u1'],
       userId: 'a1',
+      // `role: 1` não é administrador: importa dentro do teto do plano.
+      unlimited: false,
     });
 
     const wikipedia = { scrape: jest.fn().mockResolvedValue('wiki') };
@@ -169,9 +171,9 @@ describe('ImslpController e WikipediaController', () => {
     ).resolves.toBe('wiki');
   });
 
-  // Decisão de 15/09: raspar uma página é de quem contribui (basta login);
-  // descobrir e importar em lote segue só administrador.
-  it('raspar é aberto a quem tem login; descobrir e importar, só ADMIN', () => {
+  // Decisão de 15/09: raspar uma página é de quem contribui (basta login).
+  // Em 02/11 descobrir e importar em lote também (dentro do teto do plano).
+  it('raspar, descobrir e importar são de quem tem login', () => {
     const roles = (
       method: 'scrapeComposer' | 'scrapeWork' | 'discoverWorks' | 'importWorks',
     ) =>
@@ -184,8 +186,8 @@ describe('ImslpController e WikipediaController', () => {
     expect(Reflect.getMetadata('roles', WikipediaController)).toBeUndefined();
     expect(roles('scrapeComposer')).toBeUndefined();
     expect(roles('scrapeWork')).toBeUndefined();
-    expect(roles('discoverWorks')).toEqual(['ADMIN']);
-    expect(roles('importWorks')).toEqual(['ADMIN']);
+    expect(roles('discoverWorks')).toEqual(['USER']);
+    expect(roles('importWorks')).toEqual(['USER']);
   });
 });
 

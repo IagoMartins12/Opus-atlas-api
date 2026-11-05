@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { ContributionLimitService } from '../../uploads/shared/contribution-limit.service';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { composerMismatch, ImslpImportService } from './imslp-import.service';
@@ -41,6 +42,7 @@ describe('ImslpImportService', () => {
   };
   let scraper: { scrape: jest.Mock };
   let cache: { invalidateMany: jest.Mock };
+  let limit: { remaining: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -66,6 +68,7 @@ describe('ImslpImportService', () => {
 
     scraper = { scrape: jest.fn().mockResolvedValue(scrapedWork()) };
     cache = { invalidateMany: jest.fn().mockResolvedValue(undefined) };
+    limit = { remaining: jest.fn().mockResolvedValue(Infinity) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,6 +76,7 @@ describe('ImslpImportService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ImslpWorkScraper, useValue: scraper },
         { provide: AppCacheService, useValue: cache },
+        { provide: ContributionLimitService, useValue: limit },
       ],
     }).compile();
 
@@ -281,6 +285,48 @@ describe('ImslpImportService', () => {
       await importar(['https://imslp.org/wiki/X']);
 
       expect(cache.invalidateMany).not.toHaveBeenCalled();
+    });
+  });
+  // Aberta a toda pessoa logada (02/11): cada obra é um envio dela.
+  describe('teto de envios do plano', () => {
+    it('importa até o teto e devolve o resto com o motivo', async () => {
+      limit.remaining.mockResolvedValue(1);
+      prisma.work.create
+        .mockResolvedValueOnce({ id: 'w1' })
+        .mockResolvedValueOnce({ id: 'w2' });
+
+      const summary = await service.importWorks({
+        composerId: 'comp-1',
+        urls: ['https://imslp.org/wiki/A', 'https://imslp.org/wiki/B'],
+        userId: 'u1',
+      });
+
+      expect(summary.imported).toBe(1);
+      expect(summary.outcomes[1]).toMatchObject({
+        status: 'failed',
+        reason: expect.stringContaining('Limite de envios'),
+      });
+      expect(scraper.scrape).toHaveBeenCalledTimes(1);
+    });
+
+    it('sem vaga nenhuma, recusa antes de ler o IMSLP; administrador não tem teto', async () => {
+      limit.remaining.mockRejectedValue(new Error('O plano Free permite 20'));
+      await expect(
+        service.importWorks({
+          composerId: 'comp-1',
+          urls: ['https://imslp.org/wiki/A'],
+          userId: 'u1',
+        }),
+      ).rejects.toThrow('O plano Free permite 20');
+      expect(scraper.scrape).not.toHaveBeenCalled();
+
+      await service.importWorks({
+        composerId: 'comp-1',
+        urls: ['https://imslp.org/wiki/A'],
+        userId: 'admin',
+        unlimited: true,
+      });
+      expect(limit.remaining).toHaveBeenCalledTimes(1);
     });
   });
 });

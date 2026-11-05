@@ -51,7 +51,9 @@ export class CreateComposerContributionDto {
   @ApiPropertyOptional({ example: 'Mozart, W. A.; Amadé Mozart' })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  // 2000: os nomes lidos do IMSLP passam de 500 em compositores antigos
+  // (Rameau tem 1.024), e o teto antigo impedia editar a ficha deles.
+  @MaxLength(2000)
   alternativeNames?: string;
 
   @ApiPropertyOptional({ example: '1756-01-27' })

@@ -22,6 +22,7 @@ import { TextIndexService } from '../../common/search/text-index.service';
 import { findTask, MaintenanceTaskId } from './maintenance-catalog';
 import { idsQueExistem, OWNER_TYPES } from './orphan-owners';
 import { work as rankWorks } from '../../catalog/jobs/rank-works.job';
+import { work as recheckScores } from '../../catalog/jobs/recheck-imslp-scores.job';
 
 /** Assinantes por página na varredura de órfãos. */
 const SWEEP_PAGE = 500;
@@ -132,6 +133,8 @@ export class MaintenanceTasksService {
         return this.backup();
       case 'catalog.rank-works':
         return this.rankWorks(dryRun);
+      case 'catalog.recheck-imslp-scores':
+        return this.recheckScores(dryRun);
     }
   }
 
@@ -142,6 +145,24 @@ export class MaintenanceTasksService {
       apply: !dryRun,
       logger: this.logger,
       args: {},
+      progress: () => undefined,
+      shouldStop: () => false,
+    });
+    return { summary: outcome?.summary ?? {}, sample: outcome?.sample };
+  }
+
+  /**
+   * The catalog routine `recheck-imslp-scores`, in batches: 300 works a run
+   * at one request each (~8 minutes), the most downloaded first.
+   */
+  private async recheckScores(
+    dryRun: boolean,
+  ): Promise<MaintenanceTaskOutcome> {
+    const outcome = await recheckScores({
+      prisma: this.prisma,
+      apply: !dryRun,
+      logger: this.logger,
+      args: { limit: dryRun ? 20 : 300 },
       progress: () => undefined,
       shouldStop: () => false,
     });

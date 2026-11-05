@@ -33,6 +33,11 @@ export const CACHE_INVALIDATED_EVENT = 'cache.invalidated';
 
 export interface CacheInvalidatedEvent {
   namespaces: CacheNamespaceValue[];
+  /**
+   * Tags do front fora dos namespaces — a de uma obra só (`work:<id>`), para
+   * limpar a página dela sem esvaziar o cache de todas.
+   */
+  tags?: string[];
 }
 
 /** O namespace de uma chave (`works:detail:1` → `works`), se for conhecido. */

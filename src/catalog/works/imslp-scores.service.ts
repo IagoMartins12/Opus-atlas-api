@@ -1,10 +1,21 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Prisma, ScoreSource } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { isMongoId } from 'class-validator';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { CacheNamespace } from '../../common/cache/cache-keys';
+import { workDetailCacheKey, workTag } from './work-cache-keys';
 import { buildIdempotencyKey, envelope } from '../../common/queue/job-contract';
 import {
   JOB_IMSLP_SCORES,
@@ -79,11 +90,49 @@ export const imslpScoresJobId = (workId: string) =>
 const triedKey = (workId: string) => `imslp-scores:tried:${workId}`;
 const lockKey = (workId: string) => `imslp-scores:lock:${workId}`;
 const retryKey = (workId: string) => `imslp-scores:retry:${workId}`;
+const forcedKey = (workId: string) => `imslp-scores:forced:${workId}`;
+
+/** Um "Atualizar do IMSLP" por obra a cada dois minutos. */
+const FORCED_COOLDOWN_MS = 2 * 60 * 1000;
 const BREAKER_FAILURES = 'imslp-scores:breaker:failures';
 const BREAKER_OPEN = 'imslp-scores:breaker:open';
 
+const isDuplicate = (error: unknown) =>
+  error instanceof Prisma.PrismaClientKnownRequestError &&
+  error.code === 'P2002';
+
 /** O que a marca de tentativa guarda: deu certo (com ou sem arquivo) ou falhou. */
 type TriedMark = 'done' | 'failed';
+
+/** Os campos da partitura que a leitura reescreve, e como o admin os chama. */
+const FIELD_LABELS: readonly (readonly [string, string])[] = [
+  ['title', 'título'],
+  ['downloadUrl', 'arquivo'],
+  ['pageCount', 'páginas'],
+  ['fileSize', 'tamanho'],
+  ['editor', 'editor'],
+  ['publisher', 'editora'],
+  ['copyright', 'copyright'],
+  ['type', 'tipo'],
+  ['groupTitle', 'grupo'],
+];
+
+/** O que a leitura do IMSLP faria numa obra (`preview`). */
+export interface ImslpScoresPreview {
+  permlink: string;
+  /** Partituras do IMSLP que a obra tem hoje. */
+  stored: number;
+  /** Arquivos lidos na página agora. */
+  onPage: number;
+  /** O total que a página anuncia, por tipo. */
+  pageTotals: Record<string, number>;
+  toCreate: { title: string; type: string; publisher: string | null }[];
+  toUpdate: { title: string; type: string; changed: string[] }[];
+  unchanged: number;
+  /** Guardadas aqui que a página não lista mais (não são apagadas). */
+  notOnPage: number;
+  status: 'found' | 'none' | 'failed' | null;
+}
 
 export interface ImslpScoresJobPayload {
   workId: string;
@@ -301,28 +350,48 @@ export class ImslpScoresService {
             })),
           });
         } catch (error: unknown) {
-          // Outra gravação chegou primeiro (índice único): o resultado é o mesmo.
-          if (
-            !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-            error.code !== 'P2002'
-          ) {
-            throw error;
+          if (!isDuplicate(error)) throw error;
+          // Outra gravação chegou primeiro (índice único) e o resultado é o
+          // mesmo — a menos que nada tenha entrado: aí a duplicata era da
+          // própria página, e um arquivo repetido não pode deixar a obra
+          // inteira sem partitura. Uma a uma, pulando a que já existe.
+          if ((await this.storedCount(workId)) === 0) {
+            for (const score of parsed.scores) {
+              await this.prisma.workScore
+                .create({ data: { workId, ...this.fields(score, totals) } })
+                .catch((e: unknown) => {
+                  if (!isDuplicate(e)) throw e;
+                });
+            }
           }
         }
       }
 
+      const stored = await this.storedCount(workId);
+      // A página diz ter arquivos e nada ficou gravado: o problema é nosso
+      // (página que mudou de formato, gravação recusada), não do IMSLP.
+      // Marcar "lida" deixava a obra sem partitura por um dia inteiro; como
+      // falha, a próxima visita tenta de novo em uma hora.
+      const onPage = Object.values(parsed.totals).reduce((a, b) => a + b, 0);
+      if (stored === 0 && (onPage > 0 || parsed.scores.length > 0)) {
+        await this.mark(workId, 'failed', FAILED_TTL_MS);
+        this.logger.error(
+          `IMSLP: a página da obra ${workId} diz ter ${onPage} arquivo(s), ${parsed.scores.length} lidos, e nenhum foi gravado`,
+        );
+        return 0;
+      }
       await this.mark(workId, 'done', TRIED_TTL_MS);
       // A página da obra (e a contagem no compositor) mostra as novas.
-      if (parsed.scores.length > 0) {
+      if (stored > 0) {
         await this.cache.invalidateMany([
           CacheNamespace.WORKS,
           CacheNamespace.COMPOSERS,
         ]);
       }
       this.logger.log(
-        `IMSLP: ${parsed.scores.length} partitura(s) gravadas para a obra ${workId}`,
+        `IMSLP: ${stored} partitura(s) gravadas para a obra ${workId}`,
       );
-      return parsed.scores.length;
+      return stored;
     } catch (error: unknown) {
       await this.mark(workId, 'failed', FAILED_TTL_MS);
       this.logger.warn(
@@ -341,13 +410,131 @@ export class ImslpScoresService {
    */
   async refresh(
     workId: string,
+    options: { robot?: boolean } = {},
   ): Promise<{ created: number; updated: number; total: number }> {
-    const permlink = await this.permlinkOf(workId);
+    const permlink = isMongoId(workId) ? await this.permlinkOf(workId) : null;
 
     if (!permlink) {
       throw new NotFoundException('Obra sem página no IMSLP');
     }
+    // Aberto a qualquer visitante (decisão do dono, 02/11) — robô não, e o
+    // IMSLP em pausa segue em pausa: forçar uma leitura que vai falhar só
+    // empurra a volta dele para mais longe.
+    if (options.robot) {
+      throw new ForbiddenException('Atualização só a pedido de uma pessoa.');
+    }
+    if (await this.breakerOpen()) {
+      throw new ServiceUnavailableException(
+        'O IMSLP está fora do ar agora. Tente de novo em alguns minutos.',
+      );
+    }
 
+    // Uma vez por obra a cada dois minutos, venha de quem vier: o botão é de
+    // todos, e o IMSLP é de terceiros.
+    const redis = await this.redis();
+    if (
+      !(await redis.set(forcedKey(workId), '1', 'PX', FORCED_COOLDOWN_MS, 'NX'))
+    ) {
+      throw new HttpException(
+        'Esta obra acabou de ser atualizada. Tente de novo em dois minutos.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    // A mesma trava da fila: a leitura do worker e o "atualizar" não gravam
+    // juntos. Fura a marca de "lida hoje" — é justamente o conserto de quando
+    // ela estava errada.
+    if (!(await redis.set(lockKey(workId), '1', 'PX', LOCK_TTL_MS, 'NX'))) {
+      throw new ConflictException(
+        'As partituras desta obra estão sendo lidas agora. Tente em um minuto.',
+      );
+    }
+    try {
+      return await this.refreshLocked(workId, permlink);
+    } catch {
+      await this.mark(workId, 'failed', FAILED_TTL_MS);
+      throw new BadGatewayException(
+        'O IMSLP não respondeu agora. Tente de novo em alguns minutos.',
+      );
+    } finally {
+      await redis.del(lockKey(workId)).catch(() => undefined);
+    }
+  }
+
+  /**
+   * O que a leitura faria, sem fazer: lê a página do IMSLP e compara com o que
+   * a obra tem. É o "antes de confirmar" do admin — não grava, não marca a
+   * obra como lida, não limpa cache e não gasta a pausa do "atualizar".
+   */
+  async preview(workId: string): Promise<ImslpScoresPreview> {
+    const permlink = isMongoId(workId) ? await this.permlinkOf(workId) : null;
+    if (!permlink) throw new NotFoundException('Obra sem página no IMSLP');
+    if (await this.breakerOpen()) {
+      throw new ServiceUnavailableException(
+        'O IMSLP está fora do ar agora. Tente de novo em alguns minutos.',
+      );
+    }
+    let parsed: Awaited<ReturnType<ImslpScoresService['fetchScores']>>;
+    try {
+      parsed = await this.fetchScores(permlink);
+    } catch {
+      throw new BadGatewayException(
+        'O IMSLP não respondeu agora. Tente de novo em alguns minutos.',
+      );
+    }
+    const totals = JSON.stringify(parsed.totals);
+    const stored = await this.prisma.workScore.findMany({
+      where: { workId, source: ScoreSource.IMSLP },
+    });
+    const bySource = new Map(stored.map((s) => [s.sourceId, s]));
+    const onPageIds = new Set(parsed.scores.map((s) => s.sourceId));
+
+    const toCreate: ImslpScoresPreview['toCreate'] = [];
+    const toUpdate: ImslpScoresPreview['toUpdate'] = [];
+    let unchanged = 0;
+    for (const score of parsed.scores) {
+      const current = bySource.get(score.sourceId);
+      if (!current) {
+        toCreate.push({
+          title: score.title,
+          type: score.type,
+          publisher: score.publisher ?? null,
+        });
+        continue;
+      }
+      const next = this.fields(score, totals) as Record<string, unknown>;
+      const changed = FIELD_LABELS.filter(
+        ([key]) =>
+          JSON.stringify(next[key] ?? null) !==
+          JSON.stringify((current as Record<string, unknown>)[key] ?? null),
+      ).map(([, label]) => label);
+      if (changed.length) {
+        toUpdate.push({ title: score.title, type: score.type, changed });
+      } else {
+        unchanged++;
+      }
+    }
+    return {
+      permlink,
+      stored: stored.length,
+      onPage: parsed.scores.length,
+      pageTotals: parsed.totals,
+      toCreate,
+      toUpdate,
+      unchanged,
+      notOnPage: stored.filter((s) => !onPageIds.has(s.sourceId)).length,
+      status: (
+        await this.prisma.work.findUnique({
+          where: { id: workId },
+          select: { imslpScoresStatus: true },
+        })
+      )?.imslpScoresStatus as ImslpScoresPreview['status'],
+    };
+  }
+
+  private async refreshLocked(
+    workId: string,
+    permlink: string,
+  ): Promise<{ created: number; updated: number; total: number }> {
     const parsed = await this.fetchScores(permlink);
     const totals = JSON.stringify(parsed.totals);
     let created = 0;
@@ -381,12 +568,9 @@ export class ImslpScoresService {
     }
 
     await this.mark(workId, 'done', TRIED_TTL_MS);
-    if (created || updated) {
-      await this.cache.invalidateMany([
-        CacheNamespace.WORKS,
-        CacheNamespace.COMPOSERS,
-      ]);
-    }
+    // Sempre, mudando ou não: quem apertou quer ver a página como o IMSLP
+    // está. Só esta obra — a ficha na API e a página no front (`work:<id>`).
+    await this.cache.forget([workDetailCacheKey(workId)], [workTag(workId)]);
     return { created, updated, total: parsed.scores.length };
   }
 
@@ -412,8 +596,33 @@ export class ImslpScoresService {
     });
   }
 
-  private mark(workId: string, value: TriedMark, ttlMs: number) {
-    return this.cache.set(triedKey(workId), value, ttlMs);
+  private async mark(workId: string, value: TriedMark, ttlMs: number) {
+    await this.cache.set(triedKey(workId), value, ttlMs);
+    await this.persistStatus(workId, value);
+  }
+
+  /**
+   * O resultado da leitura fica na obra (o cache expira): o admin filtra as
+   * obras com erro e as que o IMSLP não tinha nada. Falhar aqui não derruba
+   * a leitura.
+   */
+  private async persistStatus(workId: string, value: TriedMark) {
+    try {
+      const status =
+        value === 'failed'
+          ? 'failed'
+          : (await this.storedCount(workId)) > 0
+            ? 'found'
+            : 'none';
+      await this.prisma.work.update({
+        where: { id: workId },
+        data: { imslpScoresStatus: status, imslpScoresCheckedAt: new Date() },
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `IMSLP: não gravei o resultado da obra ${workId}: ${errorMessage(error)}`,
+      );
+    }
   }
 
   /** Lê e interpreta a página; o resultado alimenta o disjuntor. */

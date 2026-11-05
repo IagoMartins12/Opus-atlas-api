@@ -27,6 +27,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { AccessTokenPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/api-key.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { PublicCache } from '../../common/decorators/public-cache.decorator';
 import { Audited } from '../../common/audit/audit.decorator';
 import { ErrorResponseDto } from '../../common/dto/error-response.dto';
@@ -52,7 +53,6 @@ import { isRobotUserAgent } from '../../common/utils/robot.util';
 import { WorksCatalogResponseDto } from './dto/works-catalog-response.dto';
 import { WorkSummaryDto } from './dto/work-summary.dto';
 import { ImslpScoresService } from './imslp-scores.service';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { WorksService } from './works.service';
 
 const MEDIA_TYPES = [
@@ -291,18 +291,39 @@ export class WorksController {
   }
 
   @ApiBearerAuth('access-token')
-  @Roles('ADMIN')
+  @Roles('SUPER_ADMIN')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get(':id/scores/imslp-preview')
+  @ApiOperation({
+    summary: 'Prévia da leitura das partituras no IMSLP (admin)',
+    description:
+      'Lê a página da obra no IMSLP e diz o que a leitura criaria e atualizaria, sem gravar ' +
+      'nada. A confirmação é o `POST scores/refresh`.',
+  })
+  imslpPreview(@Param('id') id: string) {
+    return this.imslpScores.preview(id);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post(':id/scores/refresh')
   @ApiOperation({
-    summary: 'Relê as partituras da obra no IMSLP',
+    summary: 'Relê as partituras da obra no IMSLP, na hora',
     description:
-      'Grava os arquivos novos e atualiza os que já existem. A listagem pública ' +
-      'já busca sozinha, uma vez, as obras sem nenhuma partitura; esta rota é ' +
-      'para quando o IMSLP ganha arquivo novo numa obra que já tinha.',
+      'O botão "Atualizar do IMSLP" da página da obra, aberto a qualquer visitante. Lê a ' +
+      'página agora, sem fila, mesmo com a obra marcada como lida ou com falha: grava os ' +
+      'arquivos que faltam, reescreve a ficha dos que já existem e limpa o cache só desta ' +
+      'obra (na API e no front). Uma vez por obra a cada dois minutos; robô não; ' +
+      'respeita a pausa do IMSLP fora do ar.',
   })
   @ApiOkResponse({ type: RefreshWorkScoresResponseDto })
-  refreshScores(@Param('id') id: string) {
-    return this.imslpScores.refresh(id);
+  refreshScores(
+    @Param('id') id: string,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.imslpScores.refresh(id, {
+      robot: isRobotUserAgent(userAgent),
+    });
   }
 
   @ApiBearerAuth('access-token')

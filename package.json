@@ -75,6 +75,8 @@
     "catalog:sync-annotation-counts": "node dist/scripts/sync-annotation-counts.js",
     "catalog:rank-works": "node dist/scripts/rank-works.js",
     "catalog:rank-works:apply": "node dist/scripts/rank-works.js --apply",
+    "catalog:recheck-scores": "node dist/scripts/recheck-imslp-scores.js",
+    "catalog:recheck-scores:apply": "node dist/scripts/recheck-imslp-scores.js --apply",
     "catalog:sync-annotation-counts:apply": "node dist/scripts/sync-annotation-counts.js --apply",
     "prebuild": "rimraf dist tsconfig.build.tsbuildinfo",
     "prisma:push:raw": "node --env-file=.env.local node_modules/prisma/build/index.js db push",

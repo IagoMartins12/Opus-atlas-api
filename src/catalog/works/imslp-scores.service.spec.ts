@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { Prisma } from '@prisma/client';
 import { Job, Queue } from 'bullmq';
 import { AppCacheService } from '../../common/cache/cache.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -41,7 +42,14 @@ function fakeRedis() {
 
 describe('ImslpScoresService', () => {
   let prisma: {
-    workScore: { count: jest.Mock; createMany: jest.Mock };
+    workScore: {
+      count: jest.Mock;
+      createMany: jest.Mock;
+      create: jest.Mock;
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+    };
     work: { findUnique: jest.Mock };
   };
   let fetcher: { load: jest.Mock };
@@ -50,6 +58,7 @@ describe('ImslpScoresService', () => {
     set: jest.Mock;
     del: jest.Mock;
     invalidateMany: jest.Mock;
+    forget: jest.Mock;
   };
   let redis: ReturnType<typeof fakeRedis>;
   let queue: {
@@ -65,6 +74,10 @@ describe('ImslpScoresService', () => {
       workScore: {
         count: jest.fn().mockResolvedValue(0),
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        create: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockResolvedValue({}),
       },
       work: {
         findUnique: jest.fn().mockResolvedValue({
@@ -79,6 +92,7 @@ describe('ImslpScoresService', () => {
       set: jest.fn().mockResolvedValue(undefined),
       del: jest.fn().mockResolvedValue(undefined),
       invalidateMany: jest.fn().mockResolvedValue(undefined),
+      forget: jest.fn().mockResolvedValue(undefined),
     };
     redis = fakeRedis();
     queue = {
@@ -269,15 +283,112 @@ describe('ImslpScoresService', () => {
     });
   });
 
+  // O botão "Atualizar do IMSLP" da página da obra, aberto a todos (02/11).
+  describe('prévia (o admin vê antes de confirmar)', () => {
+    it('obra sem partitura: tudo a criar, e nada é gravado nem marcado', async () => {
+      const preview = await service.preview(WORK);
+
+      expect(preview.stored).toBe(0);
+      expect(preview.toCreate.length).toBeGreaterThan(31);
+      expect(preview.toUpdate).toEqual([]);
+      expect(prisma.workScore.create).not.toHaveBeenCalled();
+      expect(prisma.workScore.update).not.toHaveBeenCalled();
+      expect(cache.set).not.toHaveBeenCalled();
+      expect(cache.forget).not.toHaveBeenCalled();
+      // Não gasta a pausa do "atualizar".
+      expect(redis.store.size).toBe(0);
+    });
+
+    it('o que já existe e mudou vai para "atualizar", dizendo o que muda', async () => {
+      const first = (await service.preview(WORK)).toCreate[0];
+      prisma.workScore.findMany.mockResolvedValue([
+        { sourceId: '86550', title: 'Título antigo', type: first.type },
+        { sourceId: 'sumiu', title: 'Outro', type: 'FULL_SCORE' },
+      ]);
+
+      const preview = await service.preview(WORK);
+
+      expect(preview.stored).toBe(2);
+      expect(preview.notOnPage).toBe(1);
+      const changed = preview.toUpdate.find((u) =>
+        u.changed.includes('título'),
+      );
+      expect(changed).toBeDefined();
+    });
+
+    it('obra sem página no IMSLP: não lê', async () => {
+      prisma.work.findUnique.mockResolvedValue({ imslpPermlink: null });
+      await expect(service.preview(WORK)).rejects.toThrow('sem página');
+    });
+  });
+
+  describe('atualizar na hora (qualquer visitante)', () => {
+    it('lê mesmo com a obra marcada como lida e limpa só o cache desta obra', async () => {
+      cache.get.mockResolvedValue('done');
+
+      const result = await service.refresh(WORK);
+
+      expect(fetcher.load).toHaveBeenCalled();
+      expect(result.created).toBeGreaterThan(31);
+      expect(cache.forget).toHaveBeenCalledWith(
+        [`works:detail:${WORK}`],
+        [`work:${WORK}`],
+      );
+      // O cache de todas as obras fica: cada clique não esvazia o site.
+      expect(cache.invalidateMany).not.toHaveBeenCalled();
+      expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
+    });
+
+    it('uma vez por obra a cada dois minutos', async () => {
+      await service.refresh(WORK);
+      await expect(service.refresh(WORK)).rejects.toThrow(
+        'acabou de ser atualizada',
+      );
+      expect(fetcher.load).toHaveBeenCalledTimes(1);
+    });
+
+    it('robô não atualiza; IMSLP em pausa segue em pausa', async () => {
+      await expect(service.refresh(WORK, { robot: true })).rejects.toThrow(
+        'pedido de uma pessoa',
+      );
+      redis.store.set('imslp-scores:breaker:open', '1');
+      await expect(service.refresh(WORK)).rejects.toThrow('fora do ar');
+      expect(fetcher.load).not.toHaveBeenCalled();
+    });
+
+    it('com a leitura da fila em curso, pede para esperar', async () => {
+      redis.store.set(`imslp-scores:lock:${WORK}`, '1');
+
+      await expect(service.refresh(WORK)).rejects.toThrow('sendo lidas agora');
+      expect(fetcher.load).not.toHaveBeenCalled();
+    });
+
+    it('IMSLP fora: erro claro, marca de falha e trava solta', async () => {
+      fetcher.load.mockRejectedValue(new Error('502'));
+
+      await expect(service.refresh(WORK)).rejects.toThrow(
+        'IMSLP não respondeu',
+      );
+      expect(cache.set).toHaveBeenCalledWith(
+        `imslp-scores:tried:${WORK}`,
+        'failed',
+        60 * 60 * 1000,
+      );
+      expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
+    });
+  });
+
   describe('raspar (o worker)', () => {
     it('lê o IMSLP, grava tudo, marca o dia e solta a trava', async () => {
+      prisma.workScore.count.mockResolvedValueOnce(0).mockResolvedValue(40);
       const stored = await service.scrape(WORK);
 
-      // A fixture tem a aba de partituras inteira e 3 grupos de arranjos.
-      expect(stored).toBeGreaterThan(31);
+      expect(stored).toBe(40);
       const [{ data }] = prisma.workScore.createMany.mock.calls[0] as [
         { data: Array<Record<string, unknown>> },
       ];
+      // A fixture tem a aba de partituras inteira e 3 grupos de arranjos.
+      expect(data.length).toBeGreaterThan(31);
       expect(data[0]).toMatchObject({
         workId: WORK,
         sourceId: '86550',
@@ -292,6 +403,46 @@ describe('ImslpScoresService', () => {
       expect(redis.store.has(`imslp-scores:lock:${WORK}`)).toBe(false);
       // A obra e o compositor mostram as partituras novas já na próxima página.
       expect(cache.invalidateMany).toHaveBeenCalledWith(['works', 'composers']);
+    });
+
+    // O lote batia no índice único por um arquivo repetido na própria página,
+    // o erro era tomado por "outra gravação chegou antes" e a obra ficava sem
+    // partitura nenhuma (Cadernos de Anna Magdalena Bach).
+    it('lote recusado por duplicata sem nada gravado: grava uma a uma', async () => {
+      const duplicate = new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prisma.workScore.createMany.mockRejectedValue(duplicate);
+      prisma.workScore.create
+        .mockRejectedValueOnce(duplicate)
+        .mockResolvedValue({});
+      prisma.workScore.count
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValue(39);
+
+      await expect(service.scrape(WORK)).resolves.toBe(39);
+      expect(prisma.workScore.create.mock.calls.length).toBeGreaterThan(31);
+      expect(cache.invalidateMany).toHaveBeenCalled();
+    });
+
+    // Sem isso a obra ficava um dia como "sem partitura" sempre que a leitura
+    // ou a gravação falhasse em silêncio.
+    it('a página tem arquivos e nada foi gravado: é falha, tenta em uma hora', async () => {
+      prisma.workScore.count.mockResolvedValue(0);
+
+      await expect(service.scrape(WORK)).resolves.toBe(0);
+      expect(cache.set).toHaveBeenCalledWith(
+        `imslp-scores:tried:${WORK}`,
+        'failed',
+        60 * 60 * 1000,
+      );
+      expect(cache.set).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'done',
+        expect.anything(),
+      );
     });
 
     it('com a trava tomada (o admin relendo), não raspa', async () => {
