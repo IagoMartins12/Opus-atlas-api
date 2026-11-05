@@ -264,11 +264,18 @@ export class SubscriptionsService {
     userId: string,
   ): Promise<{ plan: PlanType; endedAt: Date; trial: boolean } | null> {
     if (await this.getCurrentSubscription(userId)) return null;
+    const now = new Date();
     const last = await this.prisma.subscription.findFirst({
       where: {
         userId,
         planType: { not: 'FREE' },
-        status: { in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'] },
+        OR: [
+          { status: { in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'] } },
+          // Vencida, mas o cron ainda não a expirou — ou concedida pela
+          // equipe com vencimento já passado. Sem data, não vence: a
+          // concessão sem vencimento não entra aqui (e vale, acima).
+          { status: { in: ACTIVE_STATUSES }, endDate: { lt: now } },
+        ],
       },
       orderBy: { createdAt: 'desc' },
       select: {

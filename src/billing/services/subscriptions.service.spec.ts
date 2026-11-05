@@ -285,8 +285,8 @@ describe('SubscriptionsService', () => {
         trial: true,
       });
       const [{ where }] = prisma.subscription.findFirst.mock.calls[1];
-      expect(where.status).toEqual({
-        in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'],
+      expect(where.OR[0]).toEqual({
+        status: { in: ['EXPIRED', 'CANCELLED', 'PAST_DUE'] },
       });
     });
 
@@ -318,6 +318,23 @@ describe('SubscriptionsService', () => {
 
     // O Plus vencido também tranca: antes só os planos com painel contavam, e
     // o professor que deixou o Plus vencer seguia com o portal aberto.
+    // Plano concedido pela equipe: com data já passada tranca, mesmo que o cron
+    // ainda não o tenha expirado; sem data, nunca vence e não tranca.
+    it('procura também a ativa com vencimento passado, e só com data', async () => {
+      prisma.subscription.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      await service.lapsedTeacherPlan(USER);
+
+      const where = prisma.subscription.findFirst.mock.calls[1][0].where;
+      expect(where.OR).toContainEqual({
+        status: { in: ['TRIAL', 'ACTIVE'] },
+        endDate: { lt: expect.any(Date) },
+      });
+      // `endDate: null` não casa com `lt`: a concessão sem vencimento fica de fora.
+      expect(JSON.stringify(where)).not.toContain('"endDate":null');
+    });
+
     it('o Plus vencido tranca o painel como qualquer outro plano', async () => {
       prisma.subscription.findFirst
         .mockResolvedValueOnce(null)
